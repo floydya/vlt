@@ -340,14 +340,14 @@ func TestStoreSetActiveProfilePersistsResolvedSelection(t *testing.T) {
 			want:     "beta",
 		},
 		{
-			name: "numeric name takes precedence",
+			name: "numeric selector uses sorted position despite name collision",
 			profiles: []profile.Profile{
 				testProfile("zulu"),
 				testProfile("2"),
 				testProfile("alpha"),
 			},
 			selector: "2",
-			want:     "2",
+			want:     "alpha",
 		},
 	}
 

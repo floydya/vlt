@@ -35,29 +35,44 @@ func (s Service) Find(name string) (Profile, error) {
 	return Profile{}, errors.New("profile not found")
 }
 
-// Resolve finds an exact name first, then treats a canonical ASCII decimal as
-// a one-based index into List's deterministic order.
+// Resolve treats a canonical ASCII decimal as a one-based index into List's
+// deterministic order. Noncanonical decimals are rejected, while nonnumeric
+// selectors are matched by exact name.
 func (s Service) Resolve(selector string) (Profile, error) {
-	if candidate, err := s.Find(selector); err == nil {
-		return candidate, nil
+	if isCanonicalIndex(selector) {
+		index, err := strconv.ParseUint(selector, 10, 64)
+		if err != nil {
+			return Profile{}, errors.New("profile selector is out of range")
+		}
+		profiles := s.List()
+		if index > uint64(len(profiles)) {
+			return Profile{}, errors.New("profile selector is out of range")
+		}
+		return profiles[index-1], nil
 	}
 
 	if selector == "0" {
 		return Profile{}, errors.New("profile selector is out of range")
 	}
-	if !isCanonicalIndex(selector) {
+	if isASCIIDecimal(selector) {
 		return Profile{}, errors.New("profile selector is invalid")
 	}
+	if candidate, err := s.Find(selector); err == nil {
+		return candidate, nil
+	}
+	return Profile{}, errors.New("profile selector is invalid")
+}
 
-	index, err := strconv.ParseUint(selector, 10, 64)
-	if err != nil {
-		return Profile{}, errors.New("profile selector is out of range")
+func isASCIIDecimal(selector string) bool {
+	if selector == "" {
+		return false
 	}
-	profiles := s.List()
-	if index > uint64(len(profiles)) {
-		return Profile{}, errors.New("profile selector is out of range")
+	for index := 0; index < len(selector); index++ {
+		if selector[index] < '0' || selector[index] > '9' {
+			return false
+		}
 	}
-	return profiles[index-1], nil
+	return true
 }
 
 func isCanonicalIndex(selector string) bool {
