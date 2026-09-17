@@ -30,6 +30,7 @@ const (
 const RedactedValue = "[REDACTED]"
 
 // EnvironmentOverlay describes variables to replace and variables to remove.
+// Keys are matched case-insensitively for consistent, Windows-safe behavior.
 type EnvironmentOverlay struct {
 	Set   map[string]string
 	Unset []string
@@ -179,22 +180,23 @@ func (e *Executor) Execute(ctx context.Context, invocation Invocation) (Result, 
 
 	diagnostic := strings.TrimSpace(string(result.Stderr))
 	safeError := redact(runErr.Error())
+	exitCode := ExitCode(runErr)
 	if diagnostic == "" {
-		return result, &ProcessError{message: "run Vault CLI: " + safeError, err: runErr}
+		return result, &ProcessError{message: "run Vault CLI: " + safeError, exitCode: exitCode}
 	}
 	return result, &ProcessError{
-		message: fmt.Sprintf("run Vault CLI: %s: %s", safeError, diagnostic),
-		err:     runErr,
+		message:  fmt.Sprintf("run Vault CLI: %s: %s", safeError, diagnostic),
+		exitCode: exitCode,
 	}
 }
 
 func applyEnvironment(base []string, overlay EnvironmentOverlay) []string {
 	replaced := make(map[string]struct{}, len(overlay.Set)+len(overlay.Unset))
 	for key := range overlay.Set {
-		replaced[key] = struct{}{}
+		replaced[strings.ToUpper(key)] = struct{}{}
 	}
 	for _, key := range overlay.Unset {
-		replaced[key] = struct{}{}
+		replaced[strings.ToUpper(key)] = struct{}{}
 	}
 
 	result := make([]string, 0, len(base)+len(overlay.Set))
@@ -203,7 +205,7 @@ func applyEnvironment(base []string, overlay EnvironmentOverlay) []string {
 		if separator := strings.IndexByte(entry, '='); separator >= 0 {
 			key = entry[:separator]
 		}
-		if _, found := replaced[key]; !found {
+		if _, found := replaced[strings.ToUpper(key)]; !found {
 			result = append(result, entry)
 		}
 	}
@@ -219,15 +221,15 @@ func applyEnvironment(base []string, overlay EnvironmentOverlay) []string {
 	return result
 }
 
-// ProcessError preserves the original process error for exit-status handling
-// while exposing only a redacted diagnostic message.
+// ProcessError exposes only a redacted diagnostic while retaining the
+// process exit code needed by the caller.
 type ProcessError struct {
-	message string
-	err     error
+	message  string
+	exitCode int
 }
 
 func (e *ProcessError) Error() string { return e.message }
-func (e *ProcessError) Unwrap() error { return e.err }
+func (e *ProcessError) ExitCode() int { return e.exitCode }
 
 // ExitCode converts a process failure to the code vlt should return. Normal
 // exit codes are unchanged; signal termination uses the conventional 128+N on
@@ -286,7 +288,7 @@ func (OSRunner) Run(ctx context.Context, command Command) (Result, error) {
 }
 
 var (
-	credentialFieldPattern = regexp.MustCompile(`(?i)(\b(?:client_token|vault_token|token)\b["']?\s*[=:]\s*["']?)([^\s,"'}]+)`)
+	credentialFieldPattern = regexp.MustCompile(`(?i)(\b(?:client_token|vault_token|token)\b["']?\s*(?:->|[=:])\s*["']?)([^\s,"'}]+)`)
 	vaultTokenPattern      = regexp.MustCompile(`\b(?:hvs|hvb|hvg|hvr|s)\.[A-Za-z0-9_-]+\b`)
 )
 

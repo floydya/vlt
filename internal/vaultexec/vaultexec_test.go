@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"reflect"
 	"strings"
@@ -78,6 +79,38 @@ func TestExecutorPreservesArgumentVectorAndProfileEnvironment(t *testing.T) {
 	}
 }
 
+func TestExecutorEnvironmentOverlayIsCaseInsensitive(t *testing.T) {
+	runner := &recordingRunner{}
+	executor := NewExecutor(Dependencies{
+		LookPath: func(string) (string, error) { return `C:\\vault.exe`, nil },
+		Environment: func() []string {
+			return []string{
+				"Vault_Addr=https://inherited.example",
+				"vault_token=inherited-token",
+				"VaUlT_NaMeSpAcE=inherited-namespace",
+				"OTHER=preserved",
+			}
+		},
+		Runner: runner,
+	})
+
+	_, err := executor.Execute(context.Background(), Invocation{
+		Environment: ProfileEnvironment("https://profile.example", "profile-token", ""),
+		Mode:        Delegated,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	want := []string{
+		"OTHER=preserved",
+		"VAULT_ADDR=https://profile.example",
+		"VAULT_TOKEN=profile-token",
+	}
+	if !reflect.DeepEqual(runner.command.Environment, want) {
+		t.Fatalf("environment = %#v, want %#v", runner.command.Environment, want)
+	}
+}
+
 func TestExecutorDelegatesStreams(t *testing.T) {
 	runner := &recordingRunner{}
 	executor := newTestExecutor(runner)
@@ -112,8 +145,8 @@ func TestExecutorReturnsCapturedOutputAndPreservesNonZeroExit(t *testing.T) {
 		Arguments: []string{"token", "lookup", "-format=json"},
 		Mode:      Captured,
 	})
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("Execute() error = %v, want wrapped %v", err, wantErr)
+	if errors.Is(err, wantErr) {
+		t.Fatalf("Execute() error retained original runner error: %v", err)
 	}
 	if ExitCode(err) != 23 {
 		t.Errorf("ExitCode(error) = %d, want 23", ExitCode(err))
@@ -137,6 +170,20 @@ func TestRedactDiagnosticRemovesTokenLikeValues(t *testing.T) {
 	}
 	if count := strings.Count(got, RedactedValue); count != 4 {
 		t.Errorf("RedactDiagnostic() markers = %d, want 4 in %q", count, got)
+	}
+}
+
+func TestRedactDiagnosticRemovesOpaqueCredentialsAfterArrowSeparators(t *testing.T) {
+	canaries := []string{"opaque-arrow-secret", "quoted-arrow-secret", "client-arrow-secret"}
+	input := "token -> " + canaries[0] + ` VAULT_TOKEN->'` + canaries[1] + `' client_token -> "` + canaries[2] + `"`
+	got := RedactDiagnostic(input)
+	for _, canary := range canaries {
+		if strings.Contains(got, canary) {
+			t.Errorf("RedactDiagnostic() leaked %q in %q", canary, got)
+		}
+	}
+	if count := strings.Count(got, RedactedValue); count != len(canaries) {
+		t.Errorf("RedactDiagnostic() markers = %d, want %d in %q", count, len(canaries), got)
 	}
 }
 
@@ -171,6 +218,34 @@ func TestExecutorRedactsSensitiveFailureDiagnostics(t *testing.T) {
 	// diagnostics derived from it are safe for display.
 	if got := RedactDiagnostic(string(runner.result.Stderr), token); strings.Contains(got, token) {
 		t.Errorf("RedactDiagnostic() leaked token: %q", got)
+	}
+}
+
+func TestProcessErrorDoesNotExposeOriginalRunnerError(t *testing.T) {
+	const canary = "opaque-runner-error-canary"
+	runnerErr := &sensitiveExitError{code: 31, message: "runner failed with " + canary}
+	executor := newTestExecutor(&recordingRunner{err: runnerErr})
+
+	_, err := executor.Execute(context.Background(), Invocation{
+		Mode:            Captured,
+		SensitiveValues: []string{canary},
+	})
+	if err == nil {
+		t.Fatal("Execute() error = nil, want failure")
+	}
+	if strings.Contains(err.Error(), canary) {
+		t.Fatalf("Execute() error leaked runner canary: %q", err)
+	}
+	for unwrapped := errors.Unwrap(err); unwrapped != nil; unwrapped = errors.Unwrap(unwrapped) {
+		if strings.Contains(unwrapped.Error(), canary) {
+			t.Fatalf("unwrap chain leaked runner canary: %q", unwrapped)
+		}
+	}
+	if errors.Is(err, runnerErr) {
+		t.Fatal("ProcessError retained the original runner error in its unwrap chain")
+	}
+	if got := ExitCode(err); got != 31 {
+		t.Fatalf("ExitCode(error) = %d, want 31", got)
 	}
 }
 
@@ -246,15 +321,18 @@ func TestOSRunnerUsesArgumentVectorAndSupportsStreamModes(t *testing.T) {
 		Arguments:   arguments,
 		Environment: append(os.Environ(), "GO_WANT_VAULTEXEC_HELPER=1"),
 		Mode:        Delegated,
-		Stdin:       strings.NewReader(""),
+		Stdin:       strings.NewReader("delegated input\n"),
 		Stdout:      &stdout,
 		Stderr:      &stderr,
 	})
 	if err != nil {
 		t.Fatalf("delegated Run() error = %v; stderr = %q", err, stderr.String())
 	}
-	if got, want := stdout.String(), "first\na b\n$(echo not-a-shell)\n; exit 99\n"; got != want {
+	if got, want := stdout.String(), "first\na b\n$(echo not-a-shell)\n; exit 99\nstdin: delegated input\n"; got != want {
 		t.Errorf("delegated stdout = %q, want %q", got, want)
+	}
+	if got, want := stderr.String(), "helper stderr\n"; got != want {
+		t.Errorf("delegated stderr = %q, want %q", got, want)
 	}
 }
 
@@ -325,6 +403,15 @@ func TestVaultExecHelperProcess(t *testing.T) {
 	for _, argument := range os.Args[separator:] {
 		_, _ = os.Stdout.WriteString(argument + "\n")
 	}
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		_, _ = os.Stderr.WriteString("read stdin: " + err.Error() + "\n")
+		os.Exit(97)
+	}
+	if len(input) > 0 {
+		_, _ = os.Stdout.WriteString("stdin: " + string(input))
+	}
+	_, _ = os.Stderr.WriteString("helper stderr\n")
 	os.Exit(0)
 }
 
@@ -332,6 +419,14 @@ type exitError int
 
 func (e exitError) Error() string { return "test process failed" }
 func (e exitError) ExitCode() int { return int(e) }
+
+type sensitiveExitError struct {
+	code    int
+	message string
+}
+
+func (e *sensitiveExitError) Error() string { return e.message }
+func (e *sensitiveExitError) ExitCode() int { return e.code }
 
 func newTestExecutor(runner Runner) *Executor {
 	return NewExecutor(Dependencies{

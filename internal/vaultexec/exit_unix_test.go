@@ -4,6 +4,7 @@ package vaultexec
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"syscall"
@@ -20,6 +21,31 @@ func TestExitCodeUsesSignalConvention(t *testing.T) {
 	err = command.Run()
 	if err == nil {
 		t.Fatal("signal helper error = nil, want signal termination")
+	}
+	if got, want := ExitCode(err), 128+int(syscall.SIGTERM); got != want {
+		t.Errorf("ExitCode(error) = %d, want %d", got, want)
+	}
+}
+
+func TestExecutorPreservesSignalExitCodeWithoutExposingRunnerError(t *testing.T) {
+	path, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+	command := exec.CommandContext(context.Background(), path, "-test.run=TestVaultExecSignalHelper")
+	command.Env = append(os.Environ(), "GO_WANT_VAULTEXEC_SIGNAL_HELPER=1")
+	runErr := command.Run()
+	if runErr == nil {
+		t.Fatal("signal helper error = nil, want signal termination")
+	}
+
+	executor := newTestExecutor(&recordingRunner{err: runErr})
+	_, err = executor.Execute(context.Background(), Invocation{Mode: Captured})
+	if err == nil {
+		t.Fatal("Execute() error = nil, want process failure")
+	}
+	if errors.Is(err, runErr) {
+		t.Fatal("Execute() retained original runner error in unwrap chain")
 	}
 	if got, want := ExitCode(err), 128+int(syscall.SIGTERM); got != want {
 		t.Errorf("ExitCode(error) = %d, want %d", got, want)
