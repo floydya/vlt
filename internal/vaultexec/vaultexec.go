@@ -163,8 +163,10 @@ func (e *Executor) Execute(ctx context.Context, invocation Invocation) (Result, 
 		Stderr:      invocation.Stderr,
 	}
 	sensitiveValues := append([]string(nil), invocation.SensitiveValues...)
-	if token, found := invocation.Environment.Set["VAULT_TOKEN"]; found {
-		sensitiveValues = append(sensitiveValues, token)
+	for key, value := range invocation.Environment.Set {
+		if strings.EqualFold(key, "VAULT_TOKEN") {
+			sensitiveValues = append(sensitiveValues, value)
+		}
 	}
 	redact := func(value string) string {
 		return RedactDiagnostic(value, sensitiveValues...)

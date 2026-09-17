@@ -269,6 +269,35 @@ func TestExecutorAutomaticallyRedactsProfileToken(t *testing.T) {
 	}
 }
 
+func TestExecutorAutomaticallyRedactsCaseInsensitiveVaultTokenOverlay(t *testing.T) {
+	for _, key := range []string{"vault_token", "VaUlT_ToKeN"} {
+		t.Run(key, func(t *testing.T) {
+			const token = "opaque-overlay-token-canary"
+			const runnerCanary = "runner included opaque-overlay-token-canary"
+			const stderrCanary = "stderr included opaque-overlay-token-canary"
+			runner := &recordingRunner{
+				result: Result{Stderr: []byte(stderrCanary)},
+				err:    &sensitiveExitError{code: 2, message: runnerCanary},
+			}
+			executor := newTestExecutor(runner)
+
+			result, err := executor.Execute(context.Background(), Invocation{
+				Environment: EnvironmentOverlay{Set: map[string]string{key: token}},
+				Mode:        Captured,
+			})
+			if err == nil {
+				t.Fatal("Execute() error = nil, want failure")
+			}
+			if strings.Contains(err.Error(), token) {
+				t.Fatalf("Execute() error leaked mixed-case overlay token: %q", err)
+			}
+			if strings.Contains(string(result.Stderr), token) {
+				t.Fatalf("captured stderr leaked mixed-case overlay token: %q", result.Stderr)
+			}
+		})
+	}
+}
+
 func TestExecutorFailsActionablyBeforeStartingWhenVaultIsMissing(t *testing.T) {
 	runner := &recordingRunner{}
 	executor := NewExecutor(Dependencies{
