@@ -100,6 +100,43 @@ func (s *Store) Load(ctx context.Context) (Configuration, error) {
 	return configuration, nil
 }
 
+// SetActiveProfile resolves selector against one loaded snapshot and atomically
+// persists the resolved stable profile name.
+func (s *Store) SetActiveProfile(ctx context.Context, selector string) error {
+	configuration, err := s.Load(ctx)
+	if err != nil {
+		return fmt.Errorf("load profiles for active selection: %w", err)
+	}
+	selected, err := profile.NewService(configuration.Profiles).Resolve(selector)
+	if err != nil {
+		return fmt.Errorf("resolve active profile: %w", err)
+	}
+	if configuration.ActiveProfile == selected.Name {
+		return nil
+	}
+	configuration.ActiveProfile = selected.Name
+	if err := s.Save(ctx, configuration); err != nil {
+		return fmt.Errorf("persist active profile: %w", err)
+	}
+	return nil
+}
+
+// ClearActiveProfile removes the active selection without selecting a fallback.
+func (s *Store) ClearActiveProfile(ctx context.Context) error {
+	configuration, err := s.Load(ctx)
+	if err != nil {
+		return fmt.Errorf("load profiles for clearing active selection: %w", err)
+	}
+	if configuration.ActiveProfile == "" {
+		return nil
+	}
+	configuration.ActiveProfile = ""
+	if err := s.Save(ctx, configuration); err != nil {
+		return fmt.Errorf("persist cleared active profile: %w", err)
+	}
+	return nil
+}
+
 // Save validates and atomically replaces the persisted configuration.
 func (s *Store) Save(ctx context.Context, configuration Configuration) error {
 	if err := ctx.Err(); err != nil {

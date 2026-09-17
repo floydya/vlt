@@ -309,3 +309,169 @@ func TestStoreHonorsCanceledContextWithoutWriting(t *testing.T) {
 		t.Fatalf("Stat() error = %v, want file not to exist", err)
 	}
 }
+
+func TestStoreSetActiveProfilePersistsResolvedSelection(t *testing.T) {
+	tests := []struct {
+		name     string
+		profiles []profile.Profile
+		selector string
+		want     string
+	}{
+		{
+			name:     "one profile by name",
+			profiles: []profile.Profile{testProfile("team-a")},
+			selector: "team-a",
+			want:     "team-a",
+		},
+		{
+			name:     "one profile by number",
+			profiles: []profile.Profile{testProfile("team-a")},
+			selector: "1",
+			want:     "team-a",
+		},
+		{
+			name: "multiple profiles by sorted number",
+			profiles: []profile.Profile{
+				testProfile("zulu"),
+				testProfile("alpha"),
+				testProfile("beta"),
+			},
+			selector: "2",
+			want:     "beta",
+		},
+		{
+			name: "numeric name takes precedence",
+			profiles: []profile.Profile{
+				testProfile("zulu"),
+				testProfile("2"),
+				testProfile("alpha"),
+			},
+			selector: "2",
+			want:     "2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "vlt", "profiles.json")
+			store := NewStore(path)
+			if err := store.Save(context.Background(), Configuration{Profiles: tt.profiles}); err != nil {
+				t.Fatalf("initial Save() error = %v", err)
+			}
+
+			if err := store.SetActiveProfile(context.Background(), tt.selector); err != nil {
+				t.Fatalf("SetActiveProfile(%q) error = %v", tt.selector, err)
+			}
+			got, err := NewStore(path).Load(context.Background())
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if got.ActiveProfile != tt.want {
+				t.Fatalf("ActiveProfile = %q, want %q", got.ActiveProfile, tt.want)
+			}
+		})
+	}
+}
+
+func TestStoreSetActiveProfileFailureLeavesSelectionUnchanged(t *testing.T) {
+	selectors := []string{
+		"TEAM-A", "missing", "0", "3", "-1", "+1", "01", " 1", "1 ", "１", "1.0",
+		"999999999999999999999999999999999999999999999999999999999999999999",
+	}
+
+	for _, selector := range selectors {
+		t.Run(selector, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "vlt", "profiles.json")
+			store := NewStore(path)
+			original := Configuration{
+				Profiles:      []profile.Profile{testProfile("team-a"), testProfile("team-b")},
+				ActiveProfile: "team-a",
+			}
+			if err := store.Save(context.Background(), original); err != nil {
+				t.Fatalf("initial Save() error = %v", err)
+			}
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("ReadFile() error = %v", err)
+			}
+
+			if err := store.SetActiveProfile(context.Background(), selector); err == nil {
+				t.Fatalf("SetActiveProfile(%q) error = nil, want rejection", selector)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("ReadFile() after failed selection error = %v", err)
+			}
+			if !bytes.Equal(after, before) {
+				t.Fatalf("configuration changed after SetActiveProfile(%q) failure\nbefore: %s\nafter:  %s", selector, before, after)
+			}
+			got, err := NewStore(path).Load(context.Background())
+			if err != nil {
+				t.Fatalf("Load() after failed selection error = %v", err)
+			}
+			if got.ActiveProfile != original.ActiveProfile {
+				t.Fatalf("ActiveProfile after SetActiveProfile(%q) = %q, want %q", selector, got.ActiveProfile, original.ActiveProfile)
+			}
+		})
+	}
+}
+
+func TestStoreSetActiveProfileOnEmptyConfigurationDoesNotCreateFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vlt", "profiles.json")
+
+	if err := NewStore(path).SetActiveProfile(context.Background(), "1"); err == nil {
+		t.Fatal("SetActiveProfile() error = nil, want rejection")
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Stat() error = %v, want configuration not to exist", err)
+	}
+}
+
+func TestStoreClearActiveProfileLeavesProfilesWithoutFallback(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vlt", "profiles.json")
+	store := NewStore(path)
+	profiles := []profile.Profile{testProfile("alpha"), testProfile("beta"), testProfile("gamma")}
+	if err := store.Save(context.Background(), Configuration{Profiles: profiles, ActiveProfile: "beta"}); err != nil {
+		t.Fatalf("initial Save() error = %v", err)
+	}
+
+	if err := store.ClearActiveProfile(context.Background()); err != nil {
+		t.Fatalf("ClearActiveProfile() error = %v", err)
+	}
+	got, err := NewStore(path).Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.ActiveProfile != "" {
+		t.Fatalf("ActiveProfile = %q, want no active profile", got.ActiveProfile)
+	}
+	if !reflect.DeepEqual(got.Profiles, profiles) {
+		t.Fatalf("Profiles = %#v, want unchanged %#v", got.Profiles, profiles)
+	}
+}
+
+func TestStoreSaveRemovingActiveProfileDoesNotChooseFallback(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vlt", "profiles.json")
+	store := NewStore(path)
+	if err := store.Save(context.Background(), Configuration{
+		Profiles:      []profile.Profile{testProfile("alpha"), testProfile("beta"), testProfile("gamma")},
+		ActiveProfile: "beta",
+	}); err != nil {
+		t.Fatalf("initial Save() error = %v", err)
+	}
+
+	remaining := []profile.Profile{testProfile("alpha"), testProfile("gamma")}
+	if err := store.Save(context.Background(), Configuration{Profiles: remaining}); err != nil {
+		t.Fatalf("Save() after removing active profile error = %v", err)
+	}
+	got, err := NewStore(path).Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.ActiveProfile != "" {
+		t.Fatalf("ActiveProfile = %q, want no implicit fallback", got.ActiveProfile)
+	}
+	if !reflect.DeepEqual(got.Profiles, remaining) {
+		t.Fatalf("Profiles = %#v, want %#v", got.Profiles, remaining)
+	}
+}
