@@ -73,6 +73,17 @@ func TestValidateAddress(t *testing.T) {
 	}
 }
 
+func TestValidateAddressDoesNotExposeMalformedInput(t *testing.T) {
+	const canary = "TOKEN-CANARY-DO-NOT-LEAK"
+	err := ValidateAddress("https://[::1/" + canary)
+	if err == nil {
+		t.Fatal("ValidateAddress() error = nil, want malformed URL error")
+	}
+	if strings.Contains(err.Error(), canary) {
+		t.Fatalf("ValidateAddress() error exposed input: %q", err)
+	}
+}
+
 func TestProfileValidation(t *testing.T) {
 	valid := Profile{
 		Name:      "team-a",
@@ -91,13 +102,19 @@ func TestProfileValidation(t *testing.T) {
 		{name: "empty username", mutate: func(p *Profile) { p.Username = "" }, wantErr: "username"},
 		{name: "whitespace username", mutate: func(p *Profile) { p.Username = " \t\n" }, wantErr: "username"},
 		{name: "surrounding username whitespace is preserved", mutate: func(p *Profile) { p.Username = " example-user " }},
+		{name: "NUL in username", mutate: func(p *Profile) { p.Username = "example\x00user" }, wantErr: "username"},
+		{name: "control character in username", mutate: func(p *Profile) { p.Username = "example\nuser" }, wantErr: "username"},
 		{name: "empty auth path", mutate: func(p *Profile) { p.AuthPath = "" }, wantErr: "auth_path"},
 		{name: "whitespace auth path", mutate: func(p *Profile) { p.AuthPath = " \t" }, wantErr: "auth_path"},
 		{name: "nested auth path accepted", mutate: func(p *Profile) { p.AuthPath = "auth/oidc" }},
 		{name: "surrounding auth path whitespace is preserved", mutate: func(p *Profile) { p.AuthPath = " oidc " }},
+		{name: "NUL in auth path", mutate: func(p *Profile) { p.AuthPath = "oidc\x00path" }, wantErr: "auth_path"},
+		{name: "control character in auth path", mutate: func(p *Profile) { p.AuthPath = "oidc\rpath" }, wantErr: "auth_path"},
 		{name: "empty namespace is optional", mutate: func(p *Profile) { p.Namespace = "" }},
 		{name: "whitespace namespace", mutate: func(p *Profile) { p.Namespace = " \n" }, wantErr: "namespace"},
 		{name: "surrounding namespace whitespace is preserved", mutate: func(p *Profile) { p.Namespace = " engineering " }},
+		{name: "NUL in namespace", mutate: func(p *Profile) { p.Namespace = "engineering\x00team" }, wantErr: "namespace"},
+		{name: "control character in namespace", mutate: func(p *Profile) { p.Namespace = "engineering\tteam" }, wantErr: "namespace"},
 		{name: "invalid name", mutate: func(p *Profile) { p.Name = "bad name" }, wantErr: "name"},
 		{name: "invalid address", mutate: func(p *Profile) { p.Address = "vault.example.com" }, wantErr: "address"},
 	}

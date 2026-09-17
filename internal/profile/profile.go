@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
@@ -32,7 +33,7 @@ func ValidateName(name string) error {
 func ValidateAddress(address string) error {
 	parsed, err := url.Parse(address)
 	if err != nil {
-		return fmt.Errorf("address must be a valid absolute URL: %w", err)
+		return fmt.Errorf("address must be a valid absolute URL")
 	}
 	if !strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https") {
 		return fmt.Errorf("address scheme must be http or https")
@@ -63,11 +64,24 @@ func (p Profile) Validate() error {
 	if strings.TrimSpace(p.Username) == "" {
 		return fmt.Errorf("username must not be empty or whitespace-only")
 	}
+	if containsControl(p.Username) {
+		return fmt.Errorf("username must not contain control characters")
+	}
 	if strings.TrimSpace(p.AuthPath) == "" {
 		return fmt.Errorf("auth_path must not be empty or whitespace-only")
+	}
+	if containsControl(p.AuthPath) {
+		return fmt.Errorf("auth_path must not contain control characters")
 	}
 	if p.Namespace != "" && strings.TrimSpace(p.Namespace) == "" {
 		return fmt.Errorf("namespace must be empty or contain a non-whitespace character")
 	}
+	if containsControl(p.Namespace) {
+		return fmt.Errorf("namespace must not contain control characters")
+	}
 	return nil
+}
+
+func containsControl(value string) bool {
+	return strings.IndexFunc(value, unicode.IsControl) >= 0
 }

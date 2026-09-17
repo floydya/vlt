@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"vlt/internal/profile"
 )
@@ -38,13 +39,18 @@ type saveDocument struct {
 
 // Store loads and atomically saves a configuration at one path.
 type Store struct {
-	path       string
-	renameFile func(string, string) error
+	path          string
+	renameFile    func(string, string) error
+	syncDirectory func(string) error
 }
 
 // NewStore creates a configuration store for path.
 func NewStore(path string) *Store {
-	return &Store{path: path, renameFile: os.Rename}
+	return &Store{
+		path:          path,
+		renameFile:    os.Rename,
+		syncDirectory: syncDirectory,
+	}
 }
 
 // Load reads and strictly validates the configuration. A missing file is an
@@ -66,20 +72,23 @@ func (s *Store) Load(ctx context.Context) (Configuration, error) {
 	decoder.DisallowUnknownFields()
 	var stored document
 	if err := decoder.Decode(&stored); err != nil {
-		return Configuration{}, fmt.Errorf("decode configuration: %w", err)
+		if strings.HasPrefix(err.Error(), "json: unknown field ") {
+			return Configuration{}, errors.New("decode configuration: unknown field")
+		}
+		return Configuration{}, errors.New("decode configuration: invalid JSON or schema")
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		if err == nil {
 			return Configuration{}, errors.New("decode configuration: expected a single JSON document")
 		}
-		return Configuration{}, fmt.Errorf("decode configuration: expected a single JSON document: %w", err)
+		return Configuration{}, errors.New("decode configuration: expected a single JSON document")
 	}
 	if stored.Version == nil || *stored.Version != schemaVersion {
 		if stored.Version == nil {
 			return Configuration{}, errors.New("configuration version is required")
 		}
-		return Configuration{}, fmt.Errorf("configuration version %d is unsupported", *stored.Version)
+		return Configuration{}, errors.New("configuration version is unsupported")
 	}
 	configuration := Configuration{Profiles: stored.Profiles, ActiveProfile: stored.ActiveProfile}
 	if err := validate(configuration); err != nil {
@@ -152,6 +161,9 @@ func (s *Store) Save(ctx context.Context, configuration Configuration) error {
 		return fmt.Errorf("rename temporary configuration: %w", err)
 	}
 	keepTemporary = true // The temporary path is now the destination path.
+	if err := s.syncDirectory(directory); err != nil {
+		return fmt.Errorf("configuration was replaced but sync containing directory failed: %w", err)
+	}
 	return nil
 }
 
@@ -162,7 +174,7 @@ func validate(configuration Configuration) error {
 			return fmt.Errorf("profile %d: %w", index+1, err)
 		}
 		if _, found := names[candidate.Name]; found {
-			return fmt.Errorf("%w %q", ErrDuplicateProfile, candidate.Name)
+			return ErrDuplicateProfile
 		}
 		names[candidate.Name] = struct{}{}
 	}
@@ -171,7 +183,7 @@ func validate(configuration Configuration) error {
 			return fmt.Errorf("active profile: %w", err)
 		}
 		if _, found := names[configuration.ActiveProfile]; !found {
-			return fmt.Errorf("active profile %q does not exist", configuration.ActiveProfile)
+			return errors.New("active profile does not exist")
 		}
 	}
 	return nil

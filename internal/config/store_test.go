@@ -141,6 +141,45 @@ func TestStoreRejectsMalformedOrUnsafeConfiguration(t *testing.T) {
 	}
 }
 
+func TestStoreLoadErrorsDoNotExposeUntrustedValues(t *testing.T) {
+	const canary = "CANARYLEAK"
+	tests := []struct {
+		name     string
+		contents string
+	}{
+		{
+			name:     "unknown schema field",
+			contents: `{"version":1,"profiles":[],"` + canary + `":"value"}`,
+		},
+		{
+			name: "duplicate profile name",
+			contents: `{"version":1,"profiles":[` +
+				`{"name":"` + canary + `","address":"https://vault.example.com","username":"user","auth_path":"oidc"},` +
+				`{"name":"` + canary + `","address":"https://vault.example.com","username":"user","auth_path":"oidc"}]}`,
+		},
+		{
+			name:     "missing active profile",
+			contents: `{"version":1,"profiles":[],"active_profile":"` + canary + `"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "profiles.json")
+			if err := os.WriteFile(path, []byte(tt.contents), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			_, err := NewStore(path).Load(context.Background())
+			if err == nil {
+				t.Fatal("Load() error = nil, want error")
+			}
+			if strings.Contains(err.Error(), canary) {
+				t.Fatalf("Load() error exposed configuration content: %q", err)
+			}
+		})
+	}
+}
+
 func TestStoreRejectsDuplicateNamesWithoutChangingExistingConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "vlt", "profiles.json")
 	store := NewStore(path)
@@ -197,6 +236,36 @@ func TestStoreAtomicWriteFailurePreservesPriorConfiguration(t *testing.T) {
 	}
 	if len(matches) != 0 {
 		t.Fatalf("temporary files left after failed save: %v", matches)
+	}
+}
+
+func TestStoreReportsDirectorySyncFailureAfterReplacement(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vlt", "profiles.json")
+	store := NewStore(path)
+	original := Configuration{Profiles: []profile.Profile{testProfile("team-a")}, ActiveProfile: "team-a"}
+	if err := store.Save(context.Background(), original); err != nil {
+		t.Fatalf("initial Save() error = %v", err)
+	}
+
+	const injected = "injected directory sync failure"
+	store.syncDirectory = func(string) error { return errors.New(injected) }
+	replacement := Configuration{Profiles: []profile.Profile{testProfile("team-b")}, ActiveProfile: "team-b"}
+	err := store.Save(context.Background(), replacement)
+	if err == nil {
+		t.Fatal("Save() error = nil, want directory sync failure")
+	}
+	for _, want := range []string{"replaced", "directory", injected} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Save() error = %q, want %q", err, want)
+		}
+	}
+
+	got, loadErr := NewStore(path).Load(context.Background())
+	if loadErr != nil {
+		t.Fatalf("Load() after directory sync failure error = %v", loadErr)
+	}
+	if !reflect.DeepEqual(got, replacement) {
+		t.Fatalf("Load() after directory sync failure = %#v, want replacement %#v", got, replacement)
 	}
 }
 
