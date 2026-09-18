@@ -19,11 +19,7 @@ const schemaVersion = 1
 // ErrDuplicateProfile identifies a configuration containing repeated profile names.
 var ErrDuplicateProfile = errors.New("duplicate profile name")
 
-// Configuration is the persisted profile collection and active selection.
-type Configuration struct {
-	Profiles      []profile.Profile
-	ActiveProfile string
-}
+type Configuration = profile.Configuration
 
 type document struct {
 	Version       *int              `json:"version"`

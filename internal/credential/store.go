@@ -16,7 +16,7 @@ const serviceName = "vlt"
 
 var (
 	// ErrNotFound indicates that a profile has no stored credential.
-	ErrNotFound = errors.New("credential not found")
+	ErrNotFound = profile.ErrCredentialNotFound
 	// ErrUnavailable indicates that the native credential store could not
 	// complete an operation. Backend details are intentionally omitted because
 	// they may contain credential values.
