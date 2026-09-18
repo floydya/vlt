@@ -67,6 +67,9 @@ func (p *Preflight) Prepare(ctx context.Context, selected profile.Profile) (stri
 	})
 	if err != nil {
 		clear(result.Stdout)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
 		if explicitlyInvalid(result.Stderr, err) {
 			return p.authenticate(ctx, selected)
 		}
@@ -92,6 +95,9 @@ func (p *Preflight) Prepare(ctx context.Context, selected profile.Profile) (stri
 		Mode:        vaultexec.Captured,
 	})
 	clear(result.Stdout)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", ctxErr
+	}
 	if err == nil {
 		return token, nil
 	}

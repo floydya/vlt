@@ -17,8 +17,9 @@ import (
 const preflightToken = "synthetic-preflight-token"
 
 type preflightExecution struct {
-	result vaultexec.Result
-	err    error
+	result       vaultexec.Result
+	err          error
+	afterExecute func()
 }
 
 type fakePreflightExecutor struct {
@@ -33,7 +34,21 @@ func (f *fakePreflightExecutor) Execute(_ context.Context, invocation vaultexec.
 	}
 	execution := f.executions[0]
 	f.executions = f.executions[1:]
+	if execution.afterExecute != nil {
+		execution.afterExecute()
+	}
 	return execution.result, execution.err
+}
+
+type fakePreflightRunner struct {
+	result   vaultexec.Result
+	err      error
+	commands []vaultexec.Command
+}
+
+func (f *fakePreflightRunner) Run(_ context.Context, command vaultexec.Command) (vaultexec.Result, error) {
+	f.commands = append(f.commands, command)
+	return f.result, f.err
 }
 
 type fakePreflightStore struct {
@@ -349,6 +364,51 @@ func TestPreflightRejectsInvalidDependenciesAndInputsBeforeExternalCalls(t *test
 	}
 }
 
+func TestPreflightNetworkValidationFailureDoesNotAuthenticate(t *testing.T) {
+	runner := &fakePreflightRunner{
+		result: vaultexec.Result{Stderr: []byte("dial tcp: connection refused; VAULT_TOKEN=" + preflightToken)},
+		err:    errors.New("network request failed"),
+	}
+	executor := vaultexec.NewExecutor(vaultexec.Dependencies{
+		LookPath:    func(string) (string, error) { return "/test/vault", nil },
+		Environment: func() []string { return nil },
+		Runner:      runner,
+	})
+	store := &fakePreflightStore{token: preflightToken}
+	authenticator := &fakePreflightAuthenticator{store: store}
+	var warnings bytes.Buffer
+	preflight := NewPreflight(
+		executor,
+		store,
+		authenticator,
+		func() time.Time { return time.Date(2030, time.January, 2, 15, 4, 5, 0, time.UTC) },
+		&warnings,
+	)
+
+	_, err := preflight.Prepare(context.Background(), loginTestProfile())
+	if err == nil || !strings.Contains(err.Error(), "connection refused") {
+		t.Fatalf("Prepare() error = %v, want network failure", err)
+	}
+	if strings.Contains(err.Error(), preflightToken) {
+		t.Fatalf("Prepare() error exposed token: %q", err)
+	}
+	if authenticator.calls != 0 {
+		t.Errorf("Login() calls = %d, want 0", authenticator.calls)
+	}
+	if len(runner.commands) != 1 {
+		t.Fatalf("Vault calls = %d, want 1", len(runner.commands))
+	}
+	if got, want := runner.commands[0].Arguments, []string{"token", "lookup", "-format=json"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Vault arguments = %#v, want %#v", got, want)
+	}
+	if strings.Contains(strings.Join(runner.commands[0].Arguments, " "), preflightToken) {
+		t.Fatalf("Vault arguments exposed token: %#v", runner.commands[0].Arguments)
+	}
+	if warnings.Len() != 0 {
+		t.Errorf("warning = %q, want none", warnings.String())
+	}
+}
+
 func TestPreflightTreatsNegativeTTLAsExpired(t *testing.T) {
 	store := &fakePreflightStore{token: preflightToken}
 	executor := &fakePreflightExecutor{executions: []preflightExecution{{
@@ -372,6 +432,66 @@ func TestPreflightTreatsNegativeTTLAsExpired(t *testing.T) {
 	}
 	if authenticator.calls != 1 {
 		t.Errorf("Login() calls = %d, want 1", authenticator.calls)
+	}
+}
+
+func TestPreflightStopsWhenVaultExecutionCancelsContext(t *testing.T) {
+	now := time.Date(2030, time.January, 2, 15, 4, 5, 0, time.UTC)
+	lookup := []byte(`{"data":{"expire_time":"` + now.Add(time.Minute).Format(time.RFC3339Nano) + `","renewable":true}}`)
+
+	tests := []struct {
+		name       string
+		executions func(context.CancelFunc) []preflightExecution
+		wantCalls  int
+	}{
+		{
+			name: "validation",
+			executions: func(cancel context.CancelFunc) []preflightExecution {
+				return []preflightExecution{{
+					err:          errors.New("network request interrupted"),
+					afterExecute: cancel,
+				}}
+			},
+			wantCalls: 1,
+		},
+		{
+			name: "renewal",
+			executions: func(cancel context.CancelFunc) []preflightExecution {
+				return []preflightExecution{
+					{result: vaultexec.Result{Stdout: lookup}},
+					{err: errors.New("renewal interrupted"), afterExecute: cancel},
+				}
+			},
+			wantCalls: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			store := &fakePreflightStore{token: preflightToken}
+			executor := &fakePreflightExecutor{executions: tt.executions(cancel)}
+			authenticator := &fakePreflightAuthenticator{store: store}
+			var warnings bytes.Buffer
+			preflight := NewPreflight(executor, store, authenticator, func() time.Time { return now }, &warnings)
+
+			token, err := preflight.Prepare(ctx, loginTestProfile())
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("Prepare() error = %v, want context.Canceled", err)
+			}
+			if token != "" {
+				t.Errorf("Prepare() token = %q, want empty", token)
+			}
+			if authenticator.calls != 0 {
+				t.Errorf("Login() calls = %d, want 0", authenticator.calls)
+			}
+			if len(executor.invocations) != tt.wantCalls {
+				t.Errorf("Vault calls = %d, want %d", len(executor.invocations), tt.wantCalls)
+			}
+			if warnings.Len() != 0 {
+				t.Errorf("warning = %q, want none", warnings.String())
+			}
+		})
 	}
 }
 
