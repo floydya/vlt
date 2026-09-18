@@ -4,23 +4,64 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
+	"time"
 
 	"vlt/internal/cli"
+	"vlt/internal/config"
+	"vlt/internal/credential"
+	"vlt/internal/vaultexec"
 )
 
 func main() {
-	dispatcher := cli.NewDispatcher(cli.Dependencies{
-		Output:  os.Stdout,
-		Profile: unavailable("profile management"),
-		Switch:  unavailable("profile switching"),
-		Vault:   unavailable("Vault delegation"),
+	os.Exit(run(context.Background(), os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+}
+
+func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	dispatcher, err := newDispatcher(stdin, stdout, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "vlt: %v\n", err)
+		return 1
+	}
+	return dispatch(ctx, dispatcher, args, stderr)
+}
+
+func newDispatcher(stdin io.Reader, stdout, stderr io.Writer) (*cli.Dispatcher, error) {
+	configDirectory, err := os.UserConfigDir()
+	if err != nil {
+		return nil, fmt.Errorf("locate user configuration directory: %w", err)
+	}
+
+	profiles := config.NewStore(filepath.Join(configDirectory, "vlt", "profiles.json"))
+	vault := vaultexec.NewOSExecutor()
+	credentials := credential.NewNativeStore()
+	authenticator := credential.NewAuthenticator(vault, credentials)
+	preflight := credential.NewPreflight(vault, credentials, authenticator, time.Now, stderr)
+	delegate := cli.NewDelegateHandler(cli.DelegateDependencies{
+		Profiles:  profiles,
+		Preflight: preflight,
+		Vault:     vault,
+		Stdin:     stdin,
+		Stdout:    stdout,
+		Stderr:    stderr,
 	})
 
-	if err := dispatcher.Dispatch(context.Background(), os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "vlt: %v\n", err)
-		os.Exit(1)
+	return cli.NewDispatcher(cli.Dependencies{
+		Output:  stdout,
+		Profile: unavailable("profile management"),
+		Switch:  unavailable("profile switching"),
+		Vault:   delegate,
+	}), nil
+}
+
+func dispatch(ctx context.Context, dispatcher *cli.Dispatcher, args []string, stderr io.Writer) int {
+	if err := dispatcher.Dispatch(ctx, args); err != nil {
+		fmt.Fprintf(stderr, "vlt: %v\n", err)
+		return vaultexec.ExitCode(err)
 	}
+	return 0
 }
 
 func unavailable(capability string) cli.Handler {
