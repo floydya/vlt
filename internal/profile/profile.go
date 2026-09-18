@@ -9,7 +9,10 @@ import (
 	"unicode"
 )
 
-var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+var (
+	namePattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+	numericNamePattern = regexp.MustCompile(`^[0-9]+$`)
+)
 
 // Profile contains the non-secret metadata needed to use a Vault profile.
 type Profile struct {
@@ -24,6 +27,9 @@ type Profile struct {
 func ValidateName(name string) error {
 	if !namePattern.MatchString(name) {
 		return fmt.Errorf("name must match %s", namePattern.String())
+	}
+	if numericNamePattern.MatchString(name) {
+		return fmt.Errorf("name must not consist only of digits")
 	}
 	return nil
 }

@@ -57,7 +57,7 @@ Each profile has:
 - `auth_path`: required OIDC mount path, defaulting to `oidc` during creation;
 - `namespace`: optional Vault Enterprise namespace.
 
-Profile names must contain only ASCII letters, digits, hyphens, and underscores, must start with a letter or digit, and are case-sensitive. Secret values, including Vault tokens, must never be stored in profile configuration.
+Profile names must contain only ASCII letters, digits, hyphens, and underscores, must start with a letter or digit, must not consist entirely of digits, and are case-sensitive. Numeric-only names are invalid because they conflict with numbered profile selection. Secret values, including Vault tokens, must never be stored in profile configuration.
 
 #### Profile commands
 

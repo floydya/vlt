@@ -12,7 +12,10 @@ func TestValidateName(t *testing.T) {
 		valid bool
 	}{
 		{name: "single letter", value: "a", valid: true},
-		{name: "single digit", value: "7", valid: true},
+		{name: "single digit", value: "7", valid: false},
+		{name: "multiple digits", value: "123", valid: false},
+		{name: "digit-prefixed mixed name", value: "7team", valid: true},
+		{name: "digits with punctuation", value: "123-team", valid: true},
 		{name: "allowed punctuation", value: "team-A_2", valid: true},
 		{name: "case is preserved", value: "TeamA", valid: true},
 		{name: "empty", value: "", valid: false},

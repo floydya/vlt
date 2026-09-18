@@ -206,6 +206,31 @@ func TestStoreRejectsDuplicateNamesWithoutChangingExistingConfiguration(t *testi
 	}
 }
 
+func TestStoreRejectsNumericOnlyNameWithoutChangingExistingConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vlt", "profiles.json")
+	store := NewStore(path)
+	original := Configuration{Profiles: []profile.Profile{testProfile("team-a")}, ActiveProfile: "team-a"}
+	if err := store.Save(context.Background(), original); err != nil {
+		t.Fatalf("initial Save() error = %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	err = store.Save(context.Background(), Configuration{Profiles: []profile.Profile{testProfile("123")}})
+	if err == nil || !strings.Contains(err.Error(), "digits") {
+		t.Fatalf("numeric-name Save() error = %v, want digits validation error", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() after failed save error = %v", err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatalf("configuration changed after numeric name rejection\nbefore: %s\nafter:  %s", before, after)
+	}
+}
+
 func TestStoreAtomicWriteFailurePreservesPriorConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "vlt", "profiles.json")
 	store := NewStore(path)
@@ -338,16 +363,6 @@ func TestStoreSetActiveProfilePersistsResolvedSelection(t *testing.T) {
 			},
 			selector: "2",
 			want:     "beta",
-		},
-		{
-			name: "numeric selector uses sorted position despite name collision",
-			profiles: []profile.Profile{
-				testProfile("zulu"),
-				testProfile("2"),
-				testProfile("alpha"),
-			},
-			selector: "2",
-			want:     "alpha",
 		},
 	}
 

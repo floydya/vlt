@@ -66,9 +66,9 @@ func TestServiceListReturnsIndependentSnapshots(t *testing.T) {
 }
 
 func TestServiceFindUsesExactCaseSensitiveName(t *testing.T) {
-	service := NewService([]Profile{serviceTestProfile("Team"), serviceTestProfile("team"), serviceTestProfile("2")})
+	service := NewService([]Profile{serviceTestProfile("Team"), serviceTestProfile("team"), serviceTestProfile("2team")})
 
-	for _, name := range []string{"Team", "team", "2"} {
+	for _, name := range []string{"Team", "team", "2team"} {
 		got, err := service.Find(name)
 		if err != nil {
 			t.Fatalf("Find(%q) error = %v", name, err)
@@ -81,22 +81,6 @@ func TestServiceFindUsesExactCaseSensitiveName(t *testing.T) {
 		if _, err := service.Find(name); err == nil {
 			t.Fatalf("Find(%q) error = nil, want not found", name)
 		}
-	}
-}
-
-func TestServiceResolveCanonicalNumericSelectorUsesSortedIndex(t *testing.T) {
-	service := NewService([]Profile{
-		serviceTestProfile("zulu"),
-		serviceTestProfile("2"),
-		serviceTestProfile("alpha"),
-	})
-
-	got, err := service.Resolve("2")
-	if err != nil {
-		t.Fatalf("Resolve(%q) error = %v", "2", err)
-	}
-	if got.Name != "alpha" {
-		t.Fatalf("Resolve(%q).Name = %q, want profile at sorted index 2", "2", got.Name)
 	}
 }
 
