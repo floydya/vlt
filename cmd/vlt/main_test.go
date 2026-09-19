@@ -79,6 +79,72 @@ func TestDispatchReturnsSuccessWithoutErrorOutput(t *testing.T) {
 	}
 }
 
+func TestDispatchWritesAutomaticRootHelpToStderr(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	called := false
+	handler := func(context.Context, []string) error {
+		called = true
+		return nil
+	}
+	dispatcher := cli.NewDispatcher(cli.Dependencies{
+		Output:     &stdout,
+		Profile:    handler,
+		Switch:     handler,
+		Completion: handler,
+		Vault:      handler,
+	})
+
+	exitCode := dispatch(context.Background(), dispatcher, nil, &stderr)
+
+	if exitCode == 0 {
+		t.Fatal("exit code = 0, want failure")
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want empty", stdout.String())
+	}
+	if called {
+		t.Fatal("dispatch called a handler for automatic help")
+	}
+
+	var explicitHelp bytes.Buffer
+	explicitDispatcher := cli.NewDispatcher(cli.Dependencies{Output: &explicitHelp})
+	if err := explicitDispatcher.Dispatch(context.Background(), []string{"--help"}); err != nil {
+		t.Fatalf("explicit help error = %v", err)
+	}
+	if got, want := stderr.String(), explicitHelp.String(); got != want {
+		t.Errorf("stderr = %q, want exact help %q", got, want)
+	}
+}
+
+func TestDispatchWritesExplicitRootHelpToStdout(t *testing.T) {
+	var want string
+	for _, argument := range []string{"-h", "--help"} {
+		t.Run(argument, func(t *testing.T) {
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			dispatcher := cli.NewDispatcher(cli.Dependencies{Output: &stdout})
+
+			exitCode := dispatch(context.Background(), dispatcher, []string{argument}, &stderr)
+
+			if exitCode != 0 {
+				t.Errorf("exit code = %d, want 0", exitCode)
+			}
+			if stderr.Len() != 0 {
+				t.Errorf("stderr = %q, want empty", stderr.String())
+			}
+			if stdout.Len() == 0 {
+				t.Fatal("stdout is empty, want root help")
+			}
+			if want == "" {
+				want = stdout.String()
+			} else if got := stdout.String(); got != want {
+				t.Errorf("stdout = %q, want exact help %q", got, want)
+			}
+		})
+	}
+}
+
 func TestDispatchWritesProfileHelpToStdout(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

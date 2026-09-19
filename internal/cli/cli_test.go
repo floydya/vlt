@@ -88,7 +88,7 @@ func TestDispatcherRoutesCommands(t *testing.T) {
 }
 
 func TestDispatcherDisplaysHelpWithoutCallingAHandler(t *testing.T) {
-	for _, arguments := range [][]string{nil, {"--help"}, {"-h"}} {
+	for _, arguments := range [][]string{{"--help"}, {"-h"}} {
 		arguments := arguments
 		t.Run(strings.Join(arguments, "_"), func(t *testing.T) {
 			var output bytes.Buffer
@@ -116,6 +116,38 @@ func TestDispatcherDisplaysHelpWithoutCallingAHandler(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDispatcherReturnsAutomaticHelpWithoutCallingAHandler(t *testing.T) {
+	var output bytes.Buffer
+	called := false
+	handler := func(context.Context, []string) error {
+		called = true
+		return nil
+	}
+	dispatcher := NewDispatcher(Dependencies{
+		Output:     &output,
+		Profile:    handler,
+		Switch:     handler,
+		Completion: handler,
+		Vault:      handler,
+	})
+
+	err := dispatcher.Dispatch(context.Background(), nil)
+
+	var automaticHelp AutomaticHelp
+	if !errors.As(err, &automaticHelp) {
+		t.Fatalf("Dispatch() error = %v, want AutomaticHelp", err)
+	}
+	if got, want := automaticHelp.Text, helpText; got != want {
+		t.Errorf("automatic help = %q, want %q", got, want)
+	}
+	if output.Len() != 0 {
+		t.Errorf("output = %q, want empty", output.String())
+	}
+	if called {
+		t.Fatal("Dispatch() called a handler for automatic help")
 	}
 }
 

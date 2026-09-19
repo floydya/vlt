@@ -9,6 +9,14 @@ import (
 // Handler runs one command family with the arguments following its route.
 type Handler func(context.Context, []string) error
 
+type AutomaticHelp struct {
+	Text string
+}
+
+func (h AutomaticHelp) Error() string {
+	return h.Text
+}
+
 // Dependencies are the command handlers and output boundary used by Dispatcher.
 type Dependencies struct {
 	Output     io.Writer
@@ -30,7 +38,10 @@ func NewDispatcher(dependencies Dependencies) *Dispatcher {
 
 // Dispatch routes one invocation to the appropriate handler.
 func (d *Dispatcher) Dispatch(ctx context.Context, args []string) error {
-	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+	if len(args) == 0 {
+		return AutomaticHelp{Text: helpText}
+	}
+	if args[0] == "--help" || args[0] == "-h" {
 		_, err := fmt.Fprint(d.dependencies.Output, helpText)
 		return err
 	}

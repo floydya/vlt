@@ -71,6 +71,11 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 
 func dispatch(ctx context.Context, dispatcher *cli.Dispatcher, args []string, stderr io.Writer) int {
 	if err := dispatcher.Dispatch(ctx, args); err != nil {
+		var automaticHelp cli.AutomaticHelp
+		if errors.As(err, &automaticHelp) {
+			_, _ = fmt.Fprint(stderr, automaticHelp.Text)
+			return 1
+		}
 		_, _ = fmt.Fprintf(stderr, "vlt: %v\n", err)
 		return vaultexec.ExitCode(err)
 	}
