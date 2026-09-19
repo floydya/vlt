@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -227,6 +228,82 @@ func TestFakeBackedRemoveDeletesMetadataAndCredential(t *testing.T) {
 		t.Errorf("credential error = %v, want ErrNotFound", credentialErr)
 	}
 	harness.assertNoCredentialLeaks(t, err, token)
+}
+
+func TestGuidedOutputsPromptsCompletionAndFailuresDoNotExposeCredentials(t *testing.T) {
+	const token = "hvs.synthetic-guided-keyring-token"
+	harness := newComponentHarness(t, time.Date(2026, time.September, 19, 8, 0, 0, 0, time.UTC))
+	harness.addStoredProfile(t, "team-a", "https://team-a.example", token)
+	var surfaces []string
+
+	commands := [][]string{
+		{"profile", "list"},
+		{"profile", "show", "team-a"},
+		{"completion", "bash"},
+		{"completion", "zsh"},
+		{"completion", "fish"},
+		{"completion", "__profiles"},
+	}
+	for _, arguments := range commands {
+		harness.stdout.Reset()
+		if err := harness.dispatcher.Dispatch(context.Background(), arguments); err != nil {
+			t.Fatalf("Dispatch(%q) error = %v", arguments, err)
+		}
+		surfaces = append(surfaces, harness.stdout.String())
+	}
+	if len(harness.vaultRunner.commands) != 0 {
+		t.Fatalf("management output or completion invoked Vault: %#v", harness.vaultRunner.commandArguments())
+	}
+
+	var selectorOutput bytes.Buffer
+	selector := huhProfileSelector{input: strings.NewReader("\n"), output: &selectorOutput, accessible: true}
+	if _, err := selector.Select(context.Background(), []string{"team-a"}, "team-a"); err != nil {
+		t.Fatalf("selector prompt error = %v", err)
+	}
+	surfaces = append(surfaces, selectorOutput.String())
+
+	var formOutput bytes.Buffer
+	form := huhProfileForm{
+		input: &promptLineReader{lines: [][]byte{
+			[]byte("\n"), []byte("\n"), []byte("\n"), []byte("\n"),
+		}},
+		output: &formOutput, accessible: true,
+	}
+	if _, err := form.Run(context.Background(), ProfileFormRequest{Profile: managementTestProfile("team-a")}); err != nil {
+		t.Fatalf("profile form prompt error = %v", err)
+	}
+	surfaces = append(surfaces, formOutput.String())
+
+	var confirmOutput bytes.Buffer
+	confirmer := huhProfileRemovalConfirmer{
+		input: strings.NewReader("n\n"), output: &confirmOutput, accessible: true,
+	}
+	if _, err := confirmer.Confirm(context.Background(), ProfileRemovalConfirmation{Name: "team-a"}); err != nil {
+		t.Fatalf("removal prompt error = %v", err)
+	}
+	surfaces = append(surfaces, confirmOutput.String())
+
+	failureHandler := NewProfileHandler(ProfileDependencies{
+		Profiles: harness.profiles, Output: &bytes.Buffer{}, Terminal: switchTerminal{prompts: true},
+		Selector: &fakeProfileSelector{err: errors.New("selector failed with VAULT_TOKEN=" + token)},
+	})
+	failureErr := failureHandler(context.Background(), []string{"show"})
+	if failureErr == nil || !strings.Contains(failureErr.Error(), vaultexec.RedactedValue) {
+		t.Fatalf("guided failure = %v, want redacted diagnostic", failureErr)
+	}
+	surfaces = append(surfaces, failureErr.Error())
+
+	for _, surface := range surfaces {
+		if strings.Contains(surface, token) {
+			t.Errorf("guided CLI surface exposed keyring credential: %q", surface)
+		}
+	}
+	if got := harness.credentials.values["team-a"]; got != token {
+		t.Errorf("stored credential = %q, want unchanged", got)
+	}
+	if len(harness.vaultRunner.commands) != 0 {
+		t.Fatalf("prompt or failure invoked Vault: %#v", harness.vaultRunner.commandArguments())
+	}
 }
 
 type componentExitError int

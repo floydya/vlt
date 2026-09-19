@@ -16,7 +16,7 @@ The following checks passed from a clean local clone with isolated writable Go b
 
 The clean module cache resolved only the versions pinned by `go.mod` and `go.sum`.
 
-The release-checkpoint refinements also passed `just check`, `just build-all`, `go mod verify`, and `golangci-lint run --build-tags=gms_pure_go ./...` in the current worktree.
+The release-checkpoint refinements also passed `just check`, `just build-all`, `go mod verify`, and `golangci-lint run --build-tags=gms_pure_go ./...` in the current worktree. The guided CLI regression suite covers the complete interactive, presentation, and completion boundaries without a live Vault or desktop keyring. Bash and Zsh completion passed installed-shell syntax checks. Fish was not installed, so its generated script remains covered by exact-output and semantic unit tests rather than a local Fish parser.
 
 ## Runtime verification
 
@@ -47,10 +47,17 @@ Cross-compilation does not certify macOS or Windows runtime behavior.
 | 9. Fail safely for missing dependencies, invalid data, and partial updates | `TestExecutorFailsActionablyBeforeStartingWhenVaultIsMissing`, `TestStoreContractReturnsActionableRedactedBackendFailures`, `TestAuthenticatorLoginRejectsMalformedOrMissingClientToken`, the profile validation tests, and the mutation rollback tests |
 | 10. Pass automated functional and security gates | The clean-clone `just check` result above covers formatting, unit and component tests, race tests, vet, and the local build |
 | 11. Cross-compile and complete a real Linux login/read flow | The clean-clone `just build-all` result and Linux runtime check above |
+| 12. Provide contextual management guidance and one clear typo suggestion | `TestProfileHandlerDisplaysContextualHelpWithoutCallingServices`, `TestProfileHandlerSuggestsOneClearSubcommandTypo`, `TestManagementErrorsIncludeContextualGuidance`, and `TestDispatchWritesProfileGuidanceToStderr` |
+| 13. Present profile metadata and active state without credentials or unwanted ANSI | `TestProfileHandlerListUsesStableNumberedOrder`, `TestProfileHandlerShowPrintsOnlyProfileMetadata`, `TestProfilePresentationStylesOnlyEligibleTerminals`, and `TestFakeBackedCompletionNoColorAndDelegationStayIndependent` |
+| 14. Select profiles interactively on a TTY and fail promptly outside one | `TestFakeBackedGuidedManagementFlowUsesExistingServices`, `TestFakeBackedNonTTYManagementFlowsStopBeforeServices`, and `TestHuhProfileSelectorShowsSortedNamesAndPreselectsActive` |
+| 15. Validate interactive add and update fields through the existing services | `TestHuhProfileFormPreservesDefaultsAndCorrectsInvalidFields`, `TestProfileHandlerUpdateUsesPopulatedReadOnlyNameForm`, and `TestFakeBackedGuidedManagementFlowUsesExistingServices` |
+| 16. Preserve metadata, active selection, and credentials after cancellation or decline | `TestFakeBackedInteractiveCancellationAndDeclineLeaveStateUnchanged`, `TestProfileHandlerAddCancelAndInterruptDoNotMutate`, `TestProfileHandlerUpdateFormFailureDoesNotMutate`, and `TestProfileHandlerRemoveStopsBeforeMutationWhenNotConfirmed` |
+| 17. Generate valid Bash, Zsh, and Fish completion with stored profile names | `TestCompletionHandlerWritesScripts`, `TestCompletionHandlerEmitsSortedProfileNamesOnly`, `TestCompletionScriptsDescribeOnlyVLTCommands`, and `TestCompletionScriptsHaveValidInstalledShellSyntax` |
+| 18. Keep completion and presentation separate from Vault delegation and credentials | `TestFakeBackedCompletionNoColorAndDelegationStayIndependent`, `TestGuidedOutputsPromptsCompletionAndFailuresDoNotExposeCredentials`, and `TestDelegateUsesActiveProfileAndPreservesOpaqueInvocation` |
 
 ## Dependency review
 
-`github.com/zalando/go-keyring v0.2.6` is the only direct third-party dependency. The four indirect requirements recorded in `go.mod` are dependencies of that approved keyring module. `go mod verify` passed, and no additional direct dependency was introduced.
+The approved direct integrations are `github.com/zalando/go-keyring v0.2.6`, `charm.land/huh/v2 v2.0.3`, and `charm.land/lipgloss/v2 v2.0.6`. The terminal boundary also imports the pinned `colorprofile` and `x/term` support modules, while tests import `x/ansi`; these modules already belong to the approved terminal dependency graph. Bubble Tea remains indirect and application code does not import it. `go mod verify` passed.
 
 ## Release approval
 

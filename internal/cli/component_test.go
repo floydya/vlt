@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/colorprofile"
 
 	"vlt/internal/config"
 	"vlt/internal/credential"
@@ -214,6 +217,8 @@ type componentHarness struct {
 	profiles    *config.Store
 	credentials *componentCredentialStore
 	vaultRunner *componentVaultRunner
+	mutations   ProfileMutator
+	vault       Handler
 	dispatcher  *Dispatcher
 	stdin       *bytes.Buffer
 	stdout      bytes.Buffer
@@ -235,17 +240,50 @@ func newComponentHarness(t *testing.T, now time.Time) *componentHarness {
 		Runner:      harness.vaultRunner,
 	})
 	authenticator := credential.NewAuthenticator(vault, harness.credentials)
-	mutations := profile.NewMutationService(harness.profiles, harness.credentials, authenticator)
+	harness.mutations = profile.NewMutationService(harness.profiles, harness.credentials, authenticator)
 	preflight := credential.NewPreflight(vault, harness.credentials, authenticator, func() time.Time { return now }, &harness.stderr)
-	harness.dispatcher = NewDispatcher(Dependencies{
-		Output:  &harness.stdout,
-		Profile: NewProfileHandler(ProfileDependencies{Profiles: harness.profiles, Mutations: mutations, Output: &harness.stdout}),
-		Switch:  NewSwitchHandler(SwitchDependencies{Profiles: harness.profiles, Output: &harness.stdout}),
-		Vault: NewDelegateHandler(DelegateDependencies{
-			Profiles: harness.profiles, Preflight: preflight, Vault: vault,
-			Stdin: harness.stdin, Stdout: &harness.stdout, Stderr: &harness.stderr,
-		}),
+	harness.vault = NewDelegateHandler(DelegateDependencies{
+		Profiles: harness.profiles, Preflight: preflight, Vault: vault,
+		Stdin: harness.stdin, Stdout: &harness.stdout, Stderr: &harness.stderr,
 	})
+	harness.wireHandlers(nil, nil, nil, nil)
+	return harness
+}
+
+func (h *componentHarness) wireHandlers(
+	terminal Terminal,
+	selector ProfileSelector,
+	form ProfileForm,
+	confirmer ProfileRemovalConfirmer,
+) {
+	h.dispatcher = NewDispatcher(Dependencies{
+		Output: &h.stdout,
+		Profile: NewProfileHandler(ProfileDependencies{
+			Profiles: h.profiles, Mutations: h.mutations, Output: &h.stdout, Terminal: terminal,
+			Selector: selector, Form: form, RemovalConfirmer: confirmer,
+		}),
+		Switch:     NewSwitchHandler(SwitchDependencies{Profiles: h.profiles, Output: &h.stdout, Terminal: terminal, Selector: selector}),
+		Completion: NewCompletionHandler(CompletionDependencies{Profiles: h.profiles, Output: &h.stdout}),
+		Vault:      h.vault,
+	})
+}
+
+type guidedComponentHarness struct {
+	*componentHarness
+	selector  *fakeProfileSelector
+	form      *fakeProfileForm
+	confirmer *fakeProfileRemovalConfirmer
+}
+
+func newGuidedComponentHarness(t *testing.T) *guidedComponentHarness {
+	t.Helper()
+	harness := &guidedComponentHarness{
+		componentHarness: newComponentHarness(t, time.Date(2026, time.September, 19, 8, 0, 0, 0, time.UTC)),
+		selector:         &fakeProfileSelector{},
+		form:             &fakeProfileForm{},
+		confirmer:        &fakeProfileRemovalConfirmer{},
+	}
+	harness.wireHandlers(switchTerminal{prompts: true}, harness.selector, harness.form, harness.confirmer)
 	return harness
 }
 
@@ -280,4 +318,240 @@ func (h *componentHarness) assertNoCredentialLeaks(t *testing.T, operationErr er
 			}
 		}
 	}
+}
+
+func TestFakeBackedGuidedManagementFlowUsesExistingServices(t *testing.T) {
+	harness := newGuidedComponentHarness(t)
+	harness.vaultRunner.tokensByAddress = map[string]string{
+		"https://team-a.example":         "synthetic-team-a-token",
+		"https://team-a-updated.example": "synthetic-team-a-updated-token",
+		"https://team-b.example":         "synthetic-team-b-token",
+	}
+	harness.form.result = profile.Profile{
+		Name: "team-a", Address: "https://team-a.example", Username: "alice", AuthPath: "oidc",
+	}
+
+	if err := harness.dispatcher.Dispatch(context.Background(), []string{"profile", "add"}); err != nil {
+		t.Fatalf("interactive add error = %v", err)
+	}
+	if err := harness.dispatcher.Dispatch(context.Background(), []string{
+		"profile", "add", "team-b", "--address", "https://team-b.example", "--username", "bob",
+	}); err != nil {
+		t.Fatalf("explicit add error = %v", err)
+	}
+
+	harness.selector.selected = "team-a"
+	if err := harness.dispatcher.Dispatch(context.Background(), []string{"switch"}); err != nil {
+		t.Fatalf("interactive switch error = %v", err)
+	}
+	if err := harness.dispatcher.Dispatch(context.Background(), []string{"profile", "show"}); err != nil {
+		t.Fatalf("interactive show error = %v", err)
+	}
+
+	harness.form.result = profile.Profile{
+		Name: "team-a", Address: "https://team-a-updated.example", Username: "alice", AuthPath: "oidc",
+		Namespace: "engineering",
+	}
+	if err := harness.dispatcher.Dispatch(context.Background(), []string{"profile", "update"}); err != nil {
+		t.Fatalf("interactive update error = %v", err)
+	}
+
+	harness.selector.selected = "team-b"
+	harness.confirmer.result = true
+	if err := harness.dispatcher.Dispatch(context.Background(), []string{"profile", "remove"}); err != nil {
+		t.Fatalf("interactive remove error = %v", err)
+	}
+
+	configuration, err := harness.profiles.Load(context.Background())
+	if err != nil {
+		t.Fatalf("load profiles: %v", err)
+	}
+	wantProfile := harness.form.result
+	if !reflect.DeepEqual(configuration, config.Configuration{
+		Profiles: []profile.Profile{wantProfile}, ActiveProfile: "team-a",
+	}) {
+		t.Errorf("configuration = %#v, want updated active team-a only", configuration)
+	}
+	wantCredentials := map[string]string{"team-a": "synthetic-team-a-updated-token"}
+	if !reflect.DeepEqual(harness.credentials.values, wantCredentials) {
+		t.Errorf("credentials = %#v, want %#v", harness.credentials.values, wantCredentials)
+	}
+	if harness.form.calls != 2 || harness.selector.calls != 4 || harness.confirmer.calls != 1 {
+		t.Errorf("interactive calls: form=%d selector=%d confirmer=%d, want 2/4/1", harness.form.calls, harness.selector.calls, harness.confirmer.calls)
+	}
+	if harness.vaultRunner.loginCalls != 3 {
+		t.Errorf("login calls = %d, want add, explicit add, and update", harness.vaultRunner.loginCalls)
+	}
+	harness.assertNoCredentialLeaks(t, nil,
+		"synthetic-team-a-token", "synthetic-team-a-updated-token", "synthetic-team-b-token",
+	)
+}
+
+func TestFakeBackedNonTTYManagementFlowsStopBeforeServices(t *testing.T) {
+	tests := []struct {
+		name      string
+		arguments []string
+	}{
+		{name: "add", arguments: []string{"profile", "add"}},
+		{name: "switch", arguments: []string{"switch"}},
+		{name: "show", arguments: []string{"profile", "show"}},
+		{name: "update", arguments: []string{"profile", "update"}},
+		{name: "remove", arguments: []string{"profile", "remove"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			harness := newComponentHarness(t, time.Date(2026, time.September, 19, 8, 0, 0, 0, time.UTC))
+
+			err := harness.dispatcher.Dispatch(context.Background(), tt.arguments)
+			if err == nil || !strings.Contains(err.Error(), "interactive terminal") {
+				t.Fatalf("Dispatch(%q) error = %v, want terminal guidance", tt.arguments, err)
+			}
+			configuration, loadErr := harness.profiles.Load(context.Background())
+			if loadErr != nil {
+				t.Fatalf("load profiles: %v", loadErr)
+			}
+			if len(configuration.Profiles) != 0 || configuration.ActiveProfile != "" || len(harness.credentials.values) != 0 {
+				t.Errorf("non-TTY command changed state: config=%#v credentials=%#v", configuration, harness.credentials.values)
+			}
+			if len(harness.vaultRunner.commands) != 0 || harness.stdout.Len() != 0 {
+				t.Errorf("non-TTY command used services: Vault=%#v stdout=%q", harness.vaultRunner.commandArguments(), harness.stdout.String())
+			}
+		})
+	}
+}
+
+func TestFakeBackedInteractiveCancellationAndDeclineLeaveStateUnchanged(t *testing.T) {
+	tests := []struct {
+		name      string
+		arguments []string
+		configure func(*guidedComponentHarness)
+		wantError bool
+	}{
+		{
+			name: "add cancellation", arguments: []string{"profile", "add"}, wantError: true,
+			configure: func(h *guidedComponentHarness) { h.form.err = context.Canceled },
+		},
+		{
+			name: "switch cancellation", arguments: []string{"switch"}, wantError: true,
+			configure: func(h *guidedComponentHarness) { h.selector.err = context.Canceled },
+		},
+		{
+			name: "show cancellation", arguments: []string{"profile", "show"}, wantError: true,
+			configure: func(h *guidedComponentHarness) { h.selector.err = context.Canceled },
+		},
+		{
+			name: "update cancellation", arguments: []string{"profile", "update"}, wantError: true,
+			configure: func(h *guidedComponentHarness) {
+				h.selector.selected = "team-a"
+				h.form.err = context.Canceled
+			},
+		},
+		{
+			name: "remove cancellation", arguments: []string{"profile", "remove"}, wantError: true,
+			configure: func(h *guidedComponentHarness) {
+				h.selector.selected = "team-a"
+				h.confirmer.err = context.Canceled
+			},
+		},
+		{
+			name: "remove decline", arguments: []string{"profile", "remove"},
+			configure: func(h *guidedComponentHarness) { h.selector.selected = "team-a" },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const token = "synthetic-cancelled-flow-token"
+			harness := newGuidedComponentHarness(t)
+			original := config.Configuration{
+				Profiles: []profile.Profile{{
+					Name: "team-a", Address: "https://team-a.example", Username: "alice", AuthPath: "oidc",
+				}},
+				ActiveProfile: "team-a",
+			}
+			if err := harness.profiles.Save(context.Background(), original); err != nil {
+				t.Fatalf("seed profiles: %v", err)
+			}
+			if err := harness.credentials.Set(context.Background(), "team-a", token); err != nil {
+				t.Fatalf("seed credential: %v", err)
+			}
+			tt.configure(harness)
+
+			err := harness.dispatcher.Dispatch(context.Background(), tt.arguments)
+			if (err != nil) != tt.wantError {
+				t.Fatalf("Dispatch(%q) error = %v, wantError=%t", tt.arguments, err, tt.wantError)
+			}
+			configuration, loadErr := harness.profiles.Load(context.Background())
+			if loadErr != nil {
+				t.Fatalf("load profiles: %v", loadErr)
+			}
+			if !reflect.DeepEqual(configuration, original) || !reflect.DeepEqual(harness.credentials.values, map[string]string{"team-a": token}) {
+				t.Errorf("cancelled command changed state: config=%#v credentials=%#v", configuration, harness.credentials.values)
+			}
+			if len(harness.vaultRunner.commands) != 0 || harness.stdout.Len() != 0 {
+				t.Errorf("cancelled command used services: Vault=%#v stdout=%q", harness.vaultRunner.commandArguments(), harness.stdout.String())
+			}
+			harness.assertNoCredentialLeaks(t, err, token)
+		})
+	}
+}
+
+func TestFakeBackedCompletionNoColorAndDelegationStayIndependent(t *testing.T) {
+	const token = "synthetic-completion-boundary-token"
+	harness := newComponentHarness(t, time.Date(2026, time.September, 19, 8, 0, 0, 0, time.UTC))
+	harness.addStoredProfile(t, "team-a", "https://team-a.example", token)
+	noColorTerminal := newTerminal(
+		terminalTestReader(10), terminalTestWriter(20), []string{"NO_COLOR=1"},
+		func(uintptr) bool { return true },
+		func(io.Writer, []string) colorprofile.Profile { return colorprofile.TrueColor },
+	)
+	harness.wireHandlers(noColorTerminal, nil, nil, nil)
+
+	for _, shell := range []string{"bash", "zsh", "fish"} {
+		harness.stdout.Reset()
+		if err := harness.dispatcher.Dispatch(context.Background(), []string{"completion", shell}); err != nil {
+			t.Fatalf("completion %s error = %v", shell, err)
+		}
+		if harness.stdout.Len() == 0 {
+			t.Errorf("completion %s output is empty", shell)
+		}
+		if len(harness.vaultRunner.commands) != 0 {
+			t.Fatalf("completion %s invoked Vault: %#v", shell, harness.vaultRunner.commandArguments())
+		}
+	}
+
+	harness.stdout.Reset()
+	if err := harness.dispatcher.Dispatch(context.Background(), []string{"completion", "__profiles"}); err != nil {
+		t.Fatalf("completion candidates error = %v", err)
+	}
+	if got, want := harness.stdout.String(), "team-a\n"; got != want {
+		t.Errorf("completion candidates = %q, want %q", got, want)
+	}
+	if len(harness.vaultRunner.commands) != 0 {
+		t.Fatalf("dynamic completion invoked Vault: %#v", harness.vaultRunner.commandArguments())
+	}
+
+	harness.stdout.Reset()
+	if err := harness.dispatcher.Dispatch(context.Background(), []string{"profile", "list"}); err != nil {
+		t.Fatalf("profile list error = %v", err)
+	}
+	if strings.Contains(harness.stdout.String(), "\x1b[") {
+		t.Errorf("NO_COLOR profile list contains ANSI: %q", harness.stdout.String())
+	}
+
+	harness.stdout.Reset()
+	arguments := []string{"read", "secret/example", "-format=json"}
+	if err := harness.dispatcher.Dispatch(context.Background(), arguments); err != nil {
+		t.Fatalf("delegated command error = %v", err)
+	}
+	if got, want := harness.vaultRunner.commandArguments(), [][]string{
+		{"token", "lookup", "-format=json"}, arguments,
+	}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Vault commands = %#v, want unchanged delegation %#v", got, want)
+	}
+	if got, want := harness.stdout.String(), "delegated read secret/example -format=json\n"; got != want {
+		t.Errorf("delegated output = %q, want %q", got, want)
+	}
+	harness.assertNoCredentialLeaks(t, nil, token)
 }
