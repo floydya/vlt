@@ -274,27 +274,26 @@ func favoriteList(ctx context.Context, dependencies FavoriteDependencies, args [
 	if err != nil {
 		return safeManagementError(fmt.Errorf("list favorites: load configuration: %w", err))
 	}
-	ordered := favorite.NewService(configuration.Favorites).List()
-	if _, err := io.WriteString(dependencies.Output, favoriteListOutput(ordered, dependencies.Terminal)); err != nil {
+	if _, err := io.WriteString(dependencies.Output, favoriteListOutput(configuration.Favorites, dependencies.Terminal)); err != nil {
 		return fmt.Errorf("display favorites: %w", err)
 	}
 	return nil
 }
 
 func favoriteListOutput(favorites []favorite.Favorite, terminal Terminal) string {
-	rows := [][]profileTableCell{{
-		{value: "#", header: true},
-		{value: "OPERATION", header: true},
-		{value: "PROFILE", header: true},
-		{value: "PATH", header: true},
-		{value: "NOTE", header: true},
+	rows := [][]presentationCell{{
+		{value: "#", role: presentationHeading},
+		{value: "OPERATION", role: presentationHeading},
+		{value: "PROFILE", role: presentationHeading},
+		{value: "PATH", role: presentationHeading},
+		{value: "NOTE", role: presentationHeading},
 	}}
-	for index, candidate := range favorites {
+	for index, candidate := range favorite.NewService(favorites).List() {
 		note := candidate.Note
 		if note == "" {
 			note = "-"
 		}
-		rows = append(rows, []profileTableCell{
+		rows = append(rows, []presentationCell{
 			{value: strconv.Itoa(index + 1)},
 			{value: sanitizeFavoriteDisplay(candidate.Operation)},
 			{value: sanitizeFavoriteDisplay(candidate.Profile)},
@@ -302,7 +301,7 @@ func favoriteListOutput(favorites []favorite.Favorite, terminal Terminal) string
 			{value: sanitizeFavoriteDisplay(note)},
 		})
 	}
-	return newProfilePresentation(terminal).table(rows)
+	return newPresentation(terminal).renderTable(rows)
 }
 
 func sanitizeFavoriteDisplay(value string) string {

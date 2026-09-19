@@ -47,20 +47,6 @@ type presentationDetail struct {
 	role  presentationRole
 }
 
-type profilePresentation struct {
-	presentation presentation
-}
-
-type profileTableCell struct {
-	value  string
-	header bool
-	active bool
-}
-
-func newProfilePresentation(terminal Terminal) profilePresentation {
-	return profilePresentation{presentation: newPresentation(terminal)}
-}
-
 func newPresentation(terminal Terminal) presentation {
 	styles := presentationStyles{
 		plain:    lipgloss.NewStyle(),
@@ -263,39 +249,4 @@ func profileShowOutput(candidate profile.Profile, active bool, terminal Terminal
 		{label: "Active", value: activeValue, role: activeRole},
 	}
 	return newPresentation(terminal).renderDetails(rows)
-}
-
-func (p profilePresentation) table(rows [][]profileTableCell) string {
-	widths := make([]int, len(rows[0]))
-	for _, row := range rows {
-		for column, cell := range row {
-			widths[column] = max(widths[column], lipgloss.Width(cell.value))
-		}
-	}
-	var output strings.Builder
-	for _, row := range rows {
-		for column, cell := range row {
-			value := cell.value
-			switch {
-			case cell.header:
-				value = p.heading(value)
-			case cell.active:
-				value = p.selected(value)
-			}
-			output.WriteString(value)
-			if column < len(row)-1 {
-				output.WriteString(strings.Repeat(" ", widths[column]-lipgloss.Width(cell.value)+2))
-			}
-		}
-		output.WriteByte('\n')
-	}
-	return output.String()
-}
-
-func (p profilePresentation) heading(value string) string {
-	return p.presentation.render(presentationHeading, value)
-}
-
-func (p profilePresentation) selected(value string) string {
-	return p.presentation.render(presentationSelected, value)
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"vlt/internal/config"
+	"vlt/internal/favorite"
 	"vlt/internal/profile"
 )
 
@@ -105,6 +106,33 @@ func TestProfileShowPresentationPlainAndStyledAreExact(t *testing.T) {
 	}
 	if got := ansi.Strip(styled); got != plain {
 		t.Fatalf("unstyled profile show = %q, want plain output %q", got, plain)
+	}
+}
+
+func TestFavoriteListPresentationPlainAndStyledAreExact(t *testing.T) {
+	favorites := []favorite.Favorite{
+		{Profile: "team-b", Operation: favorite.OperationRead, Path: "secret/z"},
+		{Profile: "team-b", Operation: favorite.OperationRead, Path: "secret/a", Note: "line\nbreak\x1b[31m"},
+		{Profile: "team-a", Operation: favorite.OperationKVGet, Path: "secret/a", Note: "daily"},
+	}
+	want := "#  OPERATION  PROFILE  PATH      NOTE\n" +
+		"1  kv-get     team-a   secret/a  daily\n" +
+		"2  read       team-b   secret/a  line break [31m\n" +
+		"3  read       team-b   secret/z  -\n"
+
+	plain := favoriteListOutput(favorites, fixedTerminal{color: false})
+	if plain != want {
+		t.Fatalf("plain favorite list = %q, want %q", plain, want)
+	}
+	if strings.Contains(plain, "\x1b[") {
+		t.Fatalf("plain favorite list contains ANSI: %q", plain)
+	}
+	styled := favoriteListOutput(favorites, fixedTerminal{color: true})
+	if !strings.Contains(styled, "\x1b[") {
+		t.Fatalf("styled favorite list contains no ANSI: %q", styled)
+	}
+	if got := ansi.Strip(styled); got != plain {
+		t.Fatalf("unstyled favorite list = %q, want plain output %q", got, plain)
 	}
 }
 
