@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
+
+	"vlt/internal/profile"
 )
 
 const completionHelpText = `Generate shell completion for vlt commands.
@@ -25,10 +28,18 @@ Examples:
   vlt completion fish
 `
 
-func NewCompletionHandler(output io.Writer) Handler {
-	return func(_ context.Context, args []string) error {
+type CompletionDependencies struct {
+	Profiles ConfigurationLoader
+	Output   io.Writer
+}
+
+func NewCompletionHandler(dependencies CompletionDependencies) Handler {
+	return func(ctx context.Context, args []string) error {
 		if containsHelpFlag(args) {
-			return writeManagementHelp(output, "completion", completionHelpText)
+			return writeManagementHelp(dependencies.Output, "completion", completionHelpText)
+		}
+		if len(args) == 1 && args[0] == "__profiles" {
+			return writeCompletionProfiles(ctx, dependencies)
 		}
 		if len(args) == 0 {
 			return managementUsageError("completion SHELL is required", "vlt completion SHELL", "vlt completion")
@@ -40,14 +51,39 @@ func NewCompletionHandler(output io.Writer) Handler {
 		if err != nil {
 			return err
 		}
-		if output == nil {
+		if dependencies.Output == nil {
 			return fmt.Errorf("display completion script: output is not configured")
 		}
-		if _, err := io.WriteString(output, script); err != nil {
+		if _, err := io.WriteString(dependencies.Output, script); err != nil {
 			return fmt.Errorf("display completion script: %w", err)
 		}
 		return nil
 	}
+}
+
+func writeCompletionProfiles(ctx context.Context, dependencies CompletionDependencies) error {
+	if dependencies.Profiles == nil {
+		return nil
+	}
+	configuration, err := dependencies.Profiles.Load(ctx)
+	if err != nil {
+		return nil
+	}
+	profiles := profile.NewService(configuration.Profiles).List()
+	if len(profiles) == 0 {
+		return nil
+	}
+	var output strings.Builder
+	for _, candidate := range profiles {
+		fmt.Fprintln(&output, candidate.Name)
+	}
+	if dependencies.Output == nil {
+		return fmt.Errorf("display completion candidates: output is not configured")
+	}
+	if _, err := io.WriteString(dependencies.Output, output.String()); err != nil {
+		return fmt.Errorf("display completion candidates: %w", err)
+	}
+	return nil
 }
 
 func completionScript(shell string) (string, error) {

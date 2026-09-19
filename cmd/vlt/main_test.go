@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"vlt/internal/cli"
+	"vlt/internal/config"
+	"vlt/internal/profile"
 )
 
 func TestNewDispatcherWiresProfileManagement(t *testing.T) {
@@ -146,7 +149,7 @@ func TestDispatchWritesCompletionFailureToStderr(t *testing.T) {
 		Output:     &stdout,
 		Profile:    unavailable("profile management"),
 		Switch:     unavailable("profile switching"),
-		Completion: cli.NewCompletionHandler(&stdout),
+		Completion: cli.NewCompletionHandler(cli.CompletionDependencies{Output: &stdout}),
 		Vault:      unavailable("Vault delegation"),
 	})
 
@@ -162,6 +165,26 @@ func TestDispatchWritesCompletionFailureToStderr(t *testing.T) {
 		if !strings.Contains(stderr.String(), want) {
 			t.Errorf("stderr = %q, want text %q", stderr.String(), want)
 		}
+	}
+}
+
+func TestNewDispatcherWiresCompletionCandidates(t *testing.T) {
+	configDirectory := t.TempDir()
+	store := config.NewStore(filepath.Join(configDirectory, "vlt", "profiles.json"))
+	if err := store.Save(context.Background(), config.Configuration{Profiles: []profile.Profile{
+		{Name: "team-b", Address: "https://vault.example.net", Username: "bob", AuthPath: "oidc"},
+		{Name: "team-a", Address: "https://vault.example.com", Username: "alice", AuthPath: "oidc"},
+	}}); err != nil {
+		t.Fatalf("save profiles: %v", err)
+	}
+	var stdout bytes.Buffer
+	dispatcher := newDispatcherAt(configDirectory, strings.NewReader(""), &stdout, io.Discard)
+
+	if err := dispatcher.Dispatch(context.Background(), []string{"completion", "__profiles"}); err != nil {
+		t.Fatalf("completion candidates error = %v", err)
+	}
+	if got, want := stdout.String(), "team-a\nteam-b\n"; got != want {
+		t.Errorf("completion candidates = %q, want %q", got, want)
 	}
 }
 

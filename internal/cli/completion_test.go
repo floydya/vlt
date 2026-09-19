@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"vlt/internal/config"
+	"vlt/internal/profile"
 )
 
 type completionErrorWriter struct {
@@ -19,11 +23,22 @@ func (w completionErrorWriter) Write([]byte) (int, error) {
 	return 0, w.err
 }
 
+type completionProfileLoader struct {
+	configuration config.Configuration
+	err           error
+	loads         int
+}
+
+func (l *completionProfileLoader) Load(context.Context) (config.Configuration, error) {
+	l.loads++
+	return l.configuration, l.err
+}
+
 func TestCompletionHandlerWritesScripts(t *testing.T) {
 	for _, shell := range []string{"bash", "zsh", "fish"} {
 		t.Run(shell, func(t *testing.T) {
 			var output bytes.Buffer
-			handler := NewCompletionHandler(&output)
+			handler := NewCompletionHandler(CompletionDependencies{Output: &output})
 
 			if err := handler(context.Background(), []string{shell}); err != nil {
 				t.Fatalf("completion %s error = %v", shell, err)
@@ -42,7 +57,7 @@ func TestCompletionHandlerWritesScripts(t *testing.T) {
 func TestCompletionHandlerDisplaysHelp(t *testing.T) {
 	for _, arguments := range [][]string{{"-h"}, {"--help"}, {"bash", "--help"}} {
 		var output bytes.Buffer
-		handler := NewCompletionHandler(&output)
+		handler := NewCompletionHandler(CompletionDependencies{Output: &output})
 
 		if err := handler(context.Background(), arguments); err != nil {
 			t.Fatalf("completion help %v error = %v", arguments, err)
@@ -68,7 +83,7 @@ func TestCompletionHandlerRejectsInvalidFormsWithoutOutput(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var output bytes.Buffer
-			handler := NewCompletionHandler(&output)
+			handler := NewCompletionHandler(CompletionDependencies{Output: &output})
 
 			err := handler(context.Background(), tt.arguments)
 			if err == nil || !strings.Contains(err.Error(), tt.want) || !strings.Contains(err.Error(), "Usage: vlt completion") {
@@ -83,11 +98,107 @@ func TestCompletionHandlerRejectsInvalidFormsWithoutOutput(t *testing.T) {
 
 func TestCompletionHandlerReturnsOutputFailure(t *testing.T) {
 	wantErr := errors.New("synthetic write failure")
-	handler := NewCompletionHandler(completionErrorWriter{err: wantErr})
+	handler := NewCompletionHandler(CompletionDependencies{Output: completionErrorWriter{err: wantErr}})
 
 	err := handler(context.Background(), []string{"bash"})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("completion error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestCompletionHandlerEmitsSortedProfileNamesOnly(t *testing.T) {
+	loader := &completionProfileLoader{configuration: config.Configuration{Profiles: []profile.Profile{
+		{Name: "team-b", Address: "https://address-token.example", Username: "username-token", AuthPath: "keyring-token", Namespace: "namespace-token"},
+		{Name: "Alpha", Address: "https://other.example", Username: "other-user", AuthPath: "oidc"},
+		{Name: "team-a", Address: "https://third.example", Username: "third-user", AuthPath: "oidc"},
+	}}}
+	var output bytes.Buffer
+	handler := NewCompletionHandler(CompletionDependencies{Profiles: loader, Output: &output})
+
+	if err := handler(context.Background(), []string{"__profiles"}); err != nil {
+		t.Fatalf("completion candidates error = %v", err)
+	}
+	if got, want := output.String(), "Alpha\nteam-a\nteam-b\n"; got != want {
+		t.Errorf("completion candidates = %q, want %q", got, want)
+	}
+	for _, forbidden := range []string{"address-token", "username-token", "keyring-token", "namespace-token", "https://"} {
+		if strings.Contains(output.String(), forbidden) {
+			t.Errorf("completion candidates exposed %q: %q", forbidden, output.String())
+		}
+	}
+	if loader.loads != 1 {
+		t.Errorf("profile loads = %d, want 1", loader.loads)
+	}
+}
+
+func TestCompletionHandlerSilencesProfileLoadFailure(t *testing.T) {
+	loader := &completionProfileLoader{err: errors.New("load failed with hvs.synthetic-token")}
+	var output bytes.Buffer
+	handler := NewCompletionHandler(CompletionDependencies{Profiles: loader, Output: &output})
+
+	if err := handler(context.Background(), []string{"__profiles"}); err != nil {
+		t.Fatalf("completion candidates error = %v, want silent success", err)
+	}
+	if output.Len() != 0 {
+		t.Errorf("completion candidates = %q, want empty", output.String())
+	}
+}
+
+func TestBashCompletionUsesProfilesOnlyInManagementSelectors(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not installed")
+	}
+	script, err := completionScript("bash")
+	if err != nil {
+		t.Fatalf("completionScript(bash) error = %v", err)
+	}
+	tests := []struct {
+		name       string
+		words      string
+		wordIndex  int
+		wantNames  bool
+		wantOutput bool
+	}{
+		{name: "profile override", words: "vlt --profile ''", wordIndex: 2, wantNames: true, wantOutput: true},
+		{name: "switch", words: "vlt switch ''", wordIndex: 2, wantNames: true, wantOutput: true},
+		{name: "show", words: "vlt profile show ''", wordIndex: 3, wantNames: true, wantOutput: true},
+		{name: "update", words: "vlt profile update ''", wordIndex: 3, wantNames: true, wantOutput: true},
+		{name: "remove", words: "vlt profile remove ''", wordIndex: 3, wantNames: true, wantOutput: true},
+		{name: "add", words: "vlt profile add ''", wordIndex: 3, wantOutput: true},
+		{name: "delegated command", words: "vlt status ''", wordIndex: 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			invocation := script + `
+vlt() {
+    if [[ "$1 $2" == "completion __profiles" ]]; then
+        printf 'team-a\nteam-b\n'
+    else
+        printf 'unexpected-invocation\n'
+    fi
+}
+COMP_WORDS=(` + tt.words + `)
+COMP_CWORD=` + fmt.Sprint(tt.wordIndex) + `
+_vlt_completion
+printf '%s\n' "${COMPREPLY[@]}"
+`
+			output, err := exec.Command(bash, "-c", invocation).CombinedOutput()
+			if err != nil {
+				t.Fatalf("bash completion error = %v: %s", err, output)
+			}
+			got := string(output)
+			hasNames := strings.Contains(got, "team-a") || strings.Contains(got, "team-b")
+			if hasNames != tt.wantNames {
+				t.Errorf("bash completion output = %q, wantNames=%t", got, tt.wantNames)
+			}
+			if strings.Contains(got, "unexpected-invocation") {
+				t.Errorf("bash completion invoked unexpected command: %q", got)
+			}
+			if (got != "\n") != tt.wantOutput {
+				t.Errorf("bash completion output = %q, wantOutput=%t", got, tt.wantOutput)
+			}
+		})
 	}
 }
 
