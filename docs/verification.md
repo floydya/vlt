@@ -37,7 +37,7 @@ Cross-compilation does not certify macOS or Windows runtime behavior.
 | Criterion | Evidence |
 |---|---|
 | 1. Add two profiles through OIDC and store tokens only in the native keyring | `TestFakeBackedProfileFlowUsesActiveAndOneCommandProfiles`, `TestAuthenticatorLoginInvokesVaultAndStoresClientToken`, and the Linux OIDC/keyring check above |
-| 2. Display deterministic profile choices and persist name or number selection | `TestSwitchHandlerDisplaysActiveProfileAndProfileList`, `TestSwitchHandlerSelectsNamesAndNumbers`, `TestServiceListReturnsLexicographicallySortedProfiles`, and `TestStoreSetActiveProfilePersistsResolvedSelection` |
+| 2. Display deterministic profile choices and persist name or number selection | `TestProfileHandlerListUsesStableNumberedOrder`, `TestSwitchHandlerSelectsNamesAndNumbers`, `TestServiceListReturnsLexicographicallySortedProfiles`, and `TestStoreSetActiveProfilePersistsResolvedSelection` |
 | 3. Delegate unchanged arguments with the active profile | `TestFakeBackedProfileFlowUsesActiveAndOneCommandProfiles` and `TestDelegateUsesActiveProfileAndPreservesOpaqueInvocation` |
 | 4. Apply a one-command override without changing the active profile | `TestFakeBackedProfileFlowUsesActiveAndOneCommandProfiles` and `TestDelegateProfileOverrideAppliesOnceWithoutChangingActiveSelection` |
 | 5. Reuse, renew, or replace credentials according to token state | `TestPreflightMakesCredentialLifecycleDecisions`, `TestFakeBackedPreflightRenewsBeforeDelegation`, and `TestFakeBackedPreflightAuthenticatesInvalidCredentialBeforeDelegation` |
@@ -62,3 +62,5 @@ The approved direct integrations are `github.com/zalando/go-keyring v0.2.6`, `ch
 ## Release approval
 
 Human release approval: Approved by the project owner on 2026-09-19.
+
+Guided CLI readiness approval: Approved by the project owner on 2026-09-19.
