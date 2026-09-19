@@ -125,7 +125,10 @@ type FavoriteDependencies struct {
 func NewFavoriteHandler(dependencies FavoriteDependencies) Handler {
 	return func(ctx context.Context, args []string) error {
 		if len(args) == 0 {
-			return AutomaticHelp{Text: favoriteHelpText}
+			if dependencies.Terminal == nil || !dependencies.Terminal.PromptsEnabled() {
+				return AutomaticHelp{Text: favoriteHelpText}
+			}
+			return favoriteExecute(ctx, dependencies)
 		}
 		if isHelpFlag(args[0]) {
 			return writeManagementHelp(dependencies.Output, "favorite", favoriteHelpText)
@@ -148,6 +151,56 @@ func NewFavoriteHandler(dependencies FavoriteDependencies) Handler {
 			return safeManagementError(managementUsageError(diagnostic, favoriteUsage, "vlt favorite"))
 		}
 	}
+}
+
+func favoriteExecute(ctx context.Context, dependencies FavoriteDependencies) error {
+	if dependencies.Favorites == nil {
+		return errors.New("execute favorite: favorite configuration is not configured")
+	}
+	if dependencies.Selector == nil {
+		return errors.New("execute favorite: searchable selector is not configured")
+	}
+	if dependencies.Vault == nil {
+		return errors.New("execute favorite: Vault delegation is not configured")
+	}
+	configuration, err := dependencies.Favorites.Load(ctx)
+	if err != nil {
+		return safeManagementError(fmt.Errorf("execute favorite: load favorites: %w", err))
+	}
+	ordered := favorite.NewService(configuration.Favorites).List()
+	if len(ordered) == 0 {
+		return interactiveFavoriteError(errNoFavoritesConfigured, favoriteUsage, "vlt favorite")
+	}
+	selected, err := dependencies.Selector.Select(ctx, ordered)
+	if err != nil {
+		if errors.Is(err, ErrFavoriteSelectionCanceled) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		return safeManagementError(fmt.Errorf("execute favorite: %w", err))
+	}
+	resolved := favorite.Favorite{}
+	found := false
+	for _, candidate := range ordered {
+		if candidate.SameIdentity(selected) {
+			resolved = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		return errors.New("execute favorite: selected favorite is unavailable")
+	}
+
+	arguments := []string{"--profile", resolved.Profile}
+	switch resolved.Operation {
+	case favorite.OperationRead:
+		arguments = append(arguments, "read", resolved.Path)
+	case favorite.OperationKVGet:
+		arguments = append(arguments, "kv", "get", resolved.Path)
+	default:
+		return errors.New("execute favorite: stored operation is unsupported")
+	}
+	return dependencies.Vault(ctx, arguments)
 }
 
 func favoriteAdd(ctx context.Context, dependencies FavoriteDependencies, args []string) error {

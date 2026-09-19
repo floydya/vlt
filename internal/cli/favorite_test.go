@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"vlt/internal/config"
 	"vlt/internal/favorite"
 )
 
@@ -39,6 +40,19 @@ type recordingFavoriteMutator struct {
 type recordedFavoriteUpdate struct {
 	selector string
 	changes  favorite.FavoriteChanges
+}
+
+type fakeFavoriteExecutionSelector struct {
+	candidates []favorite.Favorite
+	selected   favorite.Favorite
+	err        error
+	calls      int
+}
+
+func (s *fakeFavoriteExecutionSelector) Select(_ context.Context, candidates []favorite.Favorite) (favorite.Favorite, error) {
+	s.calls++
+	s.candidates = append([]favorite.Favorite(nil), candidates...)
+	return s.selected, s.err
 }
 
 func (m *recordingFavoriteMutator) Add(_ context.Context, candidate favorite.Favorite) error {
@@ -425,5 +439,128 @@ func TestFavoriteHandlerRejectsUnknownCommandWithSuggestion(t *testing.T) {
 		if !strings.Contains(err.Error(), text) {
 			t.Errorf("handler error = %q, want %q", err, text)
 		}
+	}
+}
+
+func TestFavoriteExecutionDelegatesSelectedOperationExactlyOnce(t *testing.T) {
+	tests := []struct {
+		name     string
+		selected favorite.Favorite
+		wantArgs []string
+	}{
+		{
+			name: "read",
+			selected: favorite.Favorite{
+				Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/app",
+			},
+			wantArgs: []string{"--profile", "team-a", "read", "secret/app"},
+		},
+		{
+			name: "kv get",
+			selected: favorite.Favorite{
+				Profile: "team-b", Operation: favorite.OperationKVGet, Path: "secret/data/app",
+			},
+			wantArgs: []string{"--profile", "team-b", "kv", "get", "secret/data/app"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			other := favorite.Favorite{Profile: "team-z", Operation: favorite.OperationRead, Path: "secret/z"}
+			store := &fakeFavoriteStore{configuration: favorite.Configuration{Favorites: []favorite.Favorite{other, tt.selected}}}
+			selector := &fakeFavoriteExecutionSelector{selected: tt.selected}
+			var vaultCalls [][]string
+			vault := func(_ context.Context, arguments []string) error {
+				vaultCalls = append(vaultCalls, append([]string(nil), arguments...))
+				return nil
+			}
+			profiles := &fakeProfileStore{configuration: config.Configuration{ActiveProfile: "team-z"}}
+			handler := NewFavoriteHandler(FavoriteDependencies{
+				Profiles: profiles, Favorites: store, Terminal: switchTerminal{prompts: true},
+				Selector: selector, Vault: vault,
+			})
+
+			if err := handler(context.Background(), nil); err != nil {
+				t.Fatalf("favorite execution error = %v", err)
+			}
+			if !reflect.DeepEqual(selector.candidates, favorite.NewService([]favorite.Favorite{other, tt.selected}).List()) {
+				t.Fatalf("selector candidates = %#v, want sorted favorites", selector.candidates)
+			}
+			if !reflect.DeepEqual(vaultCalls, [][]string{tt.wantArgs}) {
+				t.Fatalf("Vault calls = %#v, want %#v", vaultCalls, [][]string{tt.wantArgs})
+			}
+			if profiles.loads != 0 || len(profiles.selectors) != 0 {
+				t.Fatalf("favorite execution changed or loaded active profile: %#v", profiles)
+			}
+		})
+	}
+}
+
+func TestFavoriteExecutionCancellationDoesNotDelegate(t *testing.T) {
+	store := &fakeFavoriteStore{configuration: favorite.Configuration{Favorites: []favorite.Favorite{{
+		Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/a",
+	}}}}
+	selector := &fakeFavoriteExecutionSelector{err: ErrFavoriteSelectionCanceled}
+	vaultCalls := 0
+	handler := NewFavoriteHandler(FavoriteDependencies{
+		Favorites: store, Terminal: switchTerminal{prompts: true}, Selector: selector,
+		Vault: func(context.Context, []string) error { vaultCalls++; return nil },
+	})
+
+	err := handler(context.Background(), nil)
+	if !errors.Is(err, ErrFavoriteSelectionCanceled) {
+		t.Fatalf("favorite execution error = %v, want ErrFavoriteSelectionCanceled", err)
+	}
+	if vaultCalls != 0 {
+		t.Fatalf("Vault calls = %d, want 0", vaultCalls)
+	}
+}
+
+func TestFavoriteExecutionEmptyStateGivesAddGuidanceBeforeSelection(t *testing.T) {
+	selector := &fakeFavoriteExecutionSelector{}
+	vaultCalls := 0
+	handler := NewFavoriteHandler(FavoriteDependencies{
+		Favorites: &fakeFavoriteStore{}, Terminal: switchTerminal{prompts: true}, Selector: selector,
+		Vault: func(context.Context, []string) error { vaultCalls++; return nil },
+	})
+
+	err := handler(context.Background(), nil)
+	if err == nil || !strings.Contains(err.Error(), "vlt favorite add") {
+		t.Fatalf("favorite execution error = %v, want add guidance", err)
+	}
+	if selector.calls != 0 || vaultCalls != 0 {
+		t.Fatalf("empty execution used selector or Vault: selector=%d Vault=%d", selector.calls, vaultCalls)
+	}
+}
+
+func TestFavoriteExecutionOutsideTerminalReturnsAutomaticHelp(t *testing.T) {
+	store := &fakeFavoriteStore{}
+	selector := &fakeFavoriteExecutionSelector{}
+	vaultCalls := 0
+	handler := NewFavoriteHandler(FavoriteDependencies{
+		Favorites: store, Terminal: switchTerminal{}, Selector: selector,
+		Vault: func(context.Context, []string) error { vaultCalls++; return nil },
+	})
+
+	err := handler(context.Background(), nil)
+	requireAutomaticHelp(t, err, favoriteHelpText)
+	if store.loadCalls != 0 || selector.calls != 0 || vaultCalls != 0 {
+		t.Fatalf("non-TTY execution used dependencies: loads=%d selector=%d Vault=%d", store.loadCalls, selector.calls, vaultCalls)
+	}
+}
+
+func TestFavoriteExecutionPreservesDelegatedError(t *testing.T) {
+	selected := favorite.Favorite{Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/a"}
+	wantErr := errors.New("delegated failure")
+	handler := NewFavoriteHandler(FavoriteDependencies{
+		Favorites: &fakeFavoriteStore{configuration: favorite.Configuration{Favorites: []favorite.Favorite{selected}}},
+		Terminal:  switchTerminal{prompts: true},
+		Selector:  &fakeFavoriteExecutionSelector{selected: selected},
+		Vault:     func(context.Context, []string) error { return wantErr },
+	})
+
+	err := handler(context.Background(), nil)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("favorite execution error = %v, want exact delegated error", err)
 	}
 }
