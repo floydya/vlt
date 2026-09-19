@@ -22,6 +22,7 @@ type ProfileDependencies struct {
 	Profiles  ConfigurationLoader
 	Mutations ProfileMutator
 	Output    io.Writer
+	Terminal  Terminal
 }
 
 type ActiveProfileStore interface {
@@ -32,6 +33,7 @@ type ActiveProfileStore interface {
 type SwitchDependencies struct {
 	Profiles ActiveProfileStore
 	Output   io.Writer
+	Terminal Terminal
 }
 
 func NewProfileHandler(dependencies ProfileDependencies) Handler {

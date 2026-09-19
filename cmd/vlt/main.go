@@ -39,6 +39,7 @@ func newDispatcher(stdin io.Reader, stdout, stderr io.Writer) (*cli.Dispatcher, 
 
 func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.Writer) *cli.Dispatcher {
 	profiles := config.NewStore(filepath.Join(configDirectory, "vlt", "profiles.json"))
+	terminal := cli.NewTerminal(stdin, stdout, os.Environ())
 	vault := vaultexec.NewOSExecutor()
 	credentials := credential.NewNativeStore()
 	authenticator := credential.NewAuthenticator(vault, credentials)
@@ -55,8 +56,8 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 
 	return cli.NewDispatcher(cli.Dependencies{
 		Output:  stdout,
-		Profile: cli.NewProfileHandler(cli.ProfileDependencies{Profiles: profiles, Mutations: mutations, Output: stdout}),
-		Switch:  cli.NewSwitchHandler(cli.SwitchDependencies{Profiles: profiles, Output: stdout}),
+		Profile: cli.NewProfileHandler(cli.ProfileDependencies{Profiles: profiles, Mutations: mutations, Output: stdout, Terminal: terminal}),
+		Switch:  cli.NewSwitchHandler(cli.SwitchDependencies{Profiles: profiles, Output: stdout, Terminal: terminal}),
 		Vault:   delegate,
 	})
 }
