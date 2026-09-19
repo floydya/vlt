@@ -1,6 +1,54 @@
 package cli
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+	"io"
+)
+
+const completionHelpText = `Generate shell completion for vlt commands.
+
+Usage:
+  vlt completion SHELL
+
+Shells:
+  bash
+  zsh
+  fish
+
+Options:
+  -h, --help  Show help
+
+Examples:
+  vlt completion bash
+  vlt completion zsh
+  vlt completion fish
+`
+
+func NewCompletionHandler(output io.Writer) Handler {
+	return func(_ context.Context, args []string) error {
+		if containsHelpFlag(args) {
+			return writeManagementHelp(output, "completion", completionHelpText)
+		}
+		if len(args) == 0 {
+			return managementUsageError("completion SHELL is required", "vlt completion SHELL", "vlt completion")
+		}
+		if len(args) > 1 {
+			return managementUsageError(fmt.Sprintf("unexpected argument %q", args[1]), "vlt completion SHELL", "vlt completion")
+		}
+		script, err := completionScript(args[0])
+		if err != nil {
+			return err
+		}
+		if output == nil {
+			return fmt.Errorf("display completion script: output is not configured")
+		}
+		if _, err := io.WriteString(output, script); err != nil {
+			return fmt.Errorf("display completion script: %w", err)
+		}
+		return nil
+	}
+}
 
 func completionScript(shell string) (string, error) {
 	switch shell {

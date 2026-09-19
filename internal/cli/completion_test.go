@@ -1,12 +1,95 @@
 package cli
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+type completionErrorWriter struct {
+	err error
+}
+
+func (w completionErrorWriter) Write([]byte) (int, error) {
+	return 0, w.err
+}
+
+func TestCompletionHandlerWritesScripts(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh", "fish"} {
+		t.Run(shell, func(t *testing.T) {
+			var output bytes.Buffer
+			handler := NewCompletionHandler(&output)
+
+			if err := handler(context.Background(), []string{shell}); err != nil {
+				t.Fatalf("completion %s error = %v", shell, err)
+			}
+			want, err := completionScript(shell)
+			if err != nil {
+				t.Fatalf("completionScript(%q) error = %v", shell, err)
+			}
+			if got := output.String(); got != want {
+				t.Errorf("completion output differs for %s", shell)
+			}
+		})
+	}
+}
+
+func TestCompletionHandlerDisplaysHelp(t *testing.T) {
+	for _, arguments := range [][]string{{"-h"}, {"--help"}, {"bash", "--help"}} {
+		var output bytes.Buffer
+		handler := NewCompletionHandler(&output)
+
+		if err := handler(context.Background(), arguments); err != nil {
+			t.Fatalf("completion help %v error = %v", arguments, err)
+		}
+		for _, want := range []string{"Generate shell completion", "Usage:", "bash", "zsh", "fish", "Examples:"} {
+			if !strings.Contains(output.String(), want) {
+				t.Errorf("completion help = %q, want text %q", output.String(), want)
+			}
+		}
+	}
+}
+
+func TestCompletionHandlerRejectsInvalidFormsWithoutOutput(t *testing.T) {
+	tests := []struct {
+		name      string
+		arguments []string
+		want      string
+	}{
+		{name: "missing shell", want: "SHELL is required"},
+		{name: "unsupported shell", arguments: []string{"powershell"}, want: "unsupported shell"},
+		{name: "extra argument", arguments: []string{"bash", "extra"}, want: "unexpected argument"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var output bytes.Buffer
+			handler := NewCompletionHandler(&output)
+
+			err := handler(context.Background(), tt.arguments)
+			if err == nil || !strings.Contains(err.Error(), tt.want) || !strings.Contains(err.Error(), "Usage: vlt completion") {
+				t.Fatalf("completion error = %v, want %q and usage", err, tt.want)
+			}
+			if output.Len() != 0 {
+				t.Errorf("completion output = %q, want empty", output.String())
+			}
+		})
+	}
+}
+
+func TestCompletionHandlerReturnsOutputFailure(t *testing.T) {
+	wantErr := errors.New("synthetic write failure")
+	handler := NewCompletionHandler(completionErrorWriter{err: wantErr})
+
+	err := handler(context.Background(), []string{"bash"})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("completion error = %v, want %v", err, wantErr)
+	}
+}
 
 func TestCompletionScriptsDescribeOnlyVLTCommands(t *testing.T) {
 	tests := []struct {

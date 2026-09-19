@@ -123,6 +123,48 @@ func TestDispatchWritesProfileGuidanceToStderr(t *testing.T) {
 	}
 }
 
+func TestNewDispatcherWiresCompletionScripts(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh", "fish"} {
+		t.Run(shell, func(t *testing.T) {
+			var stdout bytes.Buffer
+			dispatcher := newDispatcherAt(t.TempDir(), strings.NewReader(""), &stdout, io.Discard)
+
+			if err := dispatcher.Dispatch(context.Background(), []string{"completion", shell}); err != nil {
+				t.Fatalf("completion %s error = %v", shell, err)
+			}
+			if stdout.Len() == 0 || !strings.Contains(stdout.String(), "vlt") {
+				t.Errorf("completion %s output = %q, want script", shell, stdout.String())
+			}
+		})
+	}
+}
+
+func TestDispatchWritesCompletionFailureToStderr(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	dispatcher := cli.NewDispatcher(cli.Dependencies{
+		Output:     &stdout,
+		Profile:    unavailable("profile management"),
+		Switch:     unavailable("profile switching"),
+		Completion: cli.NewCompletionHandler(&stdout),
+		Vault:      unavailable("Vault delegation"),
+	})
+
+	exitCode := dispatch(context.Background(), dispatcher, []string{"completion", "powershell"}, &stderr)
+
+	if exitCode == 0 {
+		t.Fatal("exit code = 0, want failure")
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want empty", stdout.String())
+	}
+	for _, want := range []string{"unsupported shell", "Usage: vlt completion"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("stderr = %q, want text %q", stderr.String(), want)
+		}
+	}
+}
+
 type mainExitError int
 
 func (e mainExitError) Error() string { return "delegated failure" }

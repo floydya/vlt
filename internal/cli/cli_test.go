@@ -29,6 +29,18 @@ func TestDispatcherRoutesCommands(t *testing.T) {
 			wantArgs:  []string{"team-a"},
 		},
 		{
+			name:      "completion command is reserved",
+			arguments: []string{"completion", "bash", "unchanged"},
+			wantRoute: "completion",
+			wantArgs:  []string{"bash", "unchanged"},
+		},
+		{
+			name:      "similar top-level command remains opaque",
+			arguments: []string{"complete", "status"},
+			wantRoute: "vault",
+			wantArgs:  []string{"complete", "status"},
+		},
+		{
 			name:      "vault command remains opaque",
 			arguments: []string{"kv", "put", "secret/example", "value=a b", "--format=json"},
 			wantRoute: "vault",
@@ -55,10 +67,11 @@ func TestDispatcherRoutesCommands(t *testing.T) {
 			}
 
 			dispatcher := NewDispatcher(Dependencies{
-				Output:  &bytes.Buffer{},
-				Profile: record("profile"),
-				Switch:  record("switch"),
-				Vault:   record("vault"),
+				Output:     &bytes.Buffer{},
+				Profile:    record("profile"),
+				Switch:     record("switch"),
+				Completion: record("completion"),
+				Vault:      record("vault"),
 			})
 
 			if err := dispatcher.Dispatch(context.Background(), tt.arguments); err != nil {
@@ -97,7 +110,7 @@ func TestDispatcherDisplaysHelpWithoutCallingAHandler(t *testing.T) {
 			if called {
 				t.Fatal("Dispatch() called a handler for help")
 			}
-			for _, want := range []string{"Usage: vlt", "Commands:", "Examples:"} {
+			for _, want := range []string{"Usage: vlt", "Commands:", "completion", "Examples:"} {
 				if !strings.Contains(output.String(), want) {
 					t.Errorf("help output = %q, want text %q", output.String(), want)
 				}

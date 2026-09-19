@@ -55,10 +55,11 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 	})
 
 	return cli.NewDispatcher(cli.Dependencies{
-		Output:  stdout,
-		Profile: cli.NewProfileHandler(cli.ProfileDependencies{Profiles: profiles, Mutations: mutations, Output: stdout, Terminal: terminal}),
-		Switch:  cli.NewSwitchHandler(cli.SwitchDependencies{Profiles: profiles, Output: stdout, Terminal: terminal}),
-		Vault:   delegate,
+		Output:     stdout,
+		Profile:    cli.NewProfileHandler(cli.ProfileDependencies{Profiles: profiles, Mutations: mutations, Output: stdout, Terminal: terminal}),
+		Switch:     cli.NewSwitchHandler(cli.SwitchDependencies{Profiles: profiles, Output: stdout, Terminal: terminal}),
+		Completion: cli.NewCompletionHandler(stdout),
+		Vault:      delegate,
 	})
 }
 
