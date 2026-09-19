@@ -289,23 +289,33 @@ func TestProfileHandlerAddParsesRequiredAndOptionalFields(t *testing.T) {
 }
 
 func TestProfileHandlerListUsesStableNumberedOrder(t *testing.T) {
-	store := &fakeProfileStore{configuration: config.Configuration{Profiles: []profile.Profile{
-		managementTestProfile("team-b"),
-		managementTestProfile("Alpha"),
-		managementTestProfile("team-a"),
-	}}}
+	store := &fakeProfileStore{configuration: config.Configuration{
+		Profiles: []profile.Profile{
+			{Name: "team-b", Address: "https://vault.example.net", Username: "bob", AuthPath: "oidc"},
+			{Name: "Alpha", Address: "https://vault.example.org", Username: "hvs.synthetic-list-token", AuthPath: "oidc"},
+			{Name: "team-a", Address: "https://vault.example.com", Username: "alice", AuthPath: "oidc", Namespace: "platform"},
+		},
+		ActiveProfile: "team-a",
+	}}
 	var output bytes.Buffer
 	handler := NewProfileHandler(ProfileDependencies{Profiles: store, Output: &output})
 
 	if err := handler(context.Background(), []string{"list"}); err != nil {
 		t.Fatalf("profile list error = %v", err)
 	}
-	if got, want := output.String(), "1. Alpha\n2. team-a\n3. team-b\n"; got != want {
+	want := "#  ACTIVE  NAME    ADDRESS                    NAMESPACE\n" +
+		"1          Alpha   https://vault.example.org  -\n" +
+		"2  *       team-a  https://vault.example.com  platform\n" +
+		"3          team-b  https://vault.example.net  -\n"
+	if got := output.String(); got != want {
 		t.Errorf("output = %q, want %q", got, want)
+	}
+	if strings.Contains(output.String(), "synthetic-list-token") {
+		t.Fatalf("profile list exposed username token canary: %q", output.String())
 	}
 }
 
-func TestProfileHandlerListPrintsNothingWhenEmpty(t *testing.T) {
+func TestProfileHandlerListPrintsColumnsWhenEmpty(t *testing.T) {
 	store := &fakeProfileStore{}
 	var output bytes.Buffer
 	handler := NewProfileHandler(ProfileDependencies{Profiles: store, Output: &output})
@@ -313,23 +323,26 @@ func TestProfileHandlerListPrintsNothingWhenEmpty(t *testing.T) {
 	if err := handler(context.Background(), []string{"list"}); err != nil {
 		t.Fatalf("profile list error = %v", err)
 	}
-	if output.Len() != 0 {
-		t.Errorf("output = %q, want empty", output.String())
+	if got, want := output.String(), "#  ACTIVE  NAME  ADDRESS  NAMESPACE\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
 	}
 }
 
 func TestProfileHandlerShowPrintsOnlyProfileMetadata(t *testing.T) {
-	store := &fakeProfileStore{configuration: config.Configuration{Profiles: []profile.Profile{{
-		Name: "team-a", Address: "https://vault.example.com", Username: "alice",
-		AuthPath: "company-oidc", Namespace: "engineering",
-	}}}}
+	store := &fakeProfileStore{configuration: config.Configuration{
+		Profiles: []profile.Profile{{
+			Name: "team-a", Address: "https://vault.example.com", Username: "alice",
+			AuthPath: "company-oidc", Namespace: "engineering",
+		}},
+		ActiveProfile: "team-a",
+	}}
 	var output bytes.Buffer
 	handler := NewProfileHandler(ProfileDependencies{Profiles: store, Output: &output})
 
 	if err := handler(context.Background(), []string{"show", "team-a"}); err != nil {
 		t.Fatalf("profile show error = %v", err)
 	}
-	want := "Name: team-a\nAddress: https://vault.example.com\nUsername: alice\nAuth path: company-oidc\nNamespace: engineering\n"
+	want := "Name:      team-a\nAddress:   https://vault.example.com\nUsername:  alice\nAuth path: company-oidc\nNamespace: engineering\nActive:    yes\n"
 	if got := output.String(); got != want {
 		t.Errorf("output = %q, want %q", got, want)
 	}
@@ -454,9 +467,12 @@ func TestSwitchHandlerDisplaysActiveProfileAndProfileList(t *testing.T) {
 				Profiles:      []profile.Profile{managementTestProfile("team-b"), managementTestProfile("team-a")},
 				ActiveProfile: "team-b",
 			},
-			want: "Active profile: team-b\n1. team-a\n2. team-b\n",
+			want: "Active profile: team-b\n" +
+				"#  ACTIVE  NAME    ADDRESS                           NAMESPACE\n" +
+				"1          team-a  https://vault.example.com/team-a  -\n" +
+				"2  *       team-b  https://vault.example.com/team-b  -\n",
 		},
-		{name: "no active profile or profiles", want: "Active profile: none\n"},
+		{name: "no active profile or profiles", want: "Active profile: none\n#  ACTIVE  NAME  ADDRESS  NAMESPACE\n"},
 	}
 
 	for _, tt := range tests {

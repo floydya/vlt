@@ -17,14 +17,15 @@ func TestNewDispatcherWiresProfileManagement(t *testing.T) {
 	if err := dispatcher.Dispatch(context.Background(), []string{"profile", "list"}); err != nil {
 		t.Fatalf("profile list error = %v", err)
 	}
-	if stdout.Len() != 0 {
-		t.Errorf("profile list output = %q, want empty", stdout.String())
+	if got, want := stdout.String(), "#  ACTIVE  NAME  ADDRESS  NAMESPACE\n"; got != want {
+		t.Errorf("profile list output = %q, want %q", got, want)
 	}
+	stdout.Reset()
 
 	if err := dispatcher.Dispatch(context.Background(), []string{"switch"}); err != nil {
 		t.Fatalf("switch error = %v", err)
 	}
-	if got, want := stdout.String(), "Active profile: none\n"; got != want {
+	if got, want := stdout.String(), "Active profile: none\n#  ACTIVE  NAME  ADDRESS  NAMESPACE\n"; got != want {
 		t.Errorf("switch output = %q, want %q", got, want)
 	}
 }

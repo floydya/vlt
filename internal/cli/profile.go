@@ -205,7 +205,7 @@ func NewSwitchHandler(dependencies SwitchDependencies) Handler {
 			}
 			var output strings.Builder
 			fmt.Fprintf(&output, "Active profile: %s\n", active)
-			writeProfileList(&output, profiles.List())
+			output.WriteString(newProfilePresentation(dependencies.Terminal).list(profiles.List(), configuration.ActiveProfile))
 			if _, err := io.WriteString(dependencies.Output, output.String()); err != nil {
 				return fmt.Errorf("display profiles for switch: %w", err)
 			}
@@ -281,7 +281,10 @@ func profileList(ctx context.Context, dependencies ProfileDependencies, args []s
 		return safeManagementError(fmt.Errorf("list profiles: load configuration: %w", err))
 	}
 	var output strings.Builder
-	writeProfileList(&output, profile.NewService(configuration.Profiles).List())
+	output.WriteString(newProfilePresentation(dependencies.Terminal).list(
+		profile.NewService(configuration.Profiles).List(),
+		configuration.ActiveProfile,
+	))
 	if _, err := io.WriteString(dependencies.Output, output.String()); err != nil {
 		return fmt.Errorf("display profiles: %w", err)
 	}
@@ -316,10 +319,8 @@ func profileShow(ctx context.Context, dependencies ProfileDependencies, args []s
 	if err != nil {
 		return fmt.Errorf("show profile %q: %w", args[0], err)
 	}
-	if _, err := fmt.Fprintf(dependencies.Output,
-		"Name: %s\nAddress: %s\nUsername: %s\nAuth path: %s\nNamespace: %s\n",
-		selected.Name, selected.Address, selected.Username, selected.AuthPath, selected.Namespace,
-	); err != nil {
+	details := newProfilePresentation(dependencies.Terminal).details(selected, selected.Name == configuration.ActiveProfile)
+	if _, err := io.WriteString(dependencies.Output, details); err != nil {
 		return fmt.Errorf("display profile %q: %w", selected.Name, err)
 	}
 	return nil
@@ -417,12 +418,6 @@ func parseProfileOptions(command string, args []string, defaultAuthPath string) 
 		options.set[candidate.Name] = true
 	})
 	return options, nil
-}
-
-func writeProfileList(output io.Writer, profiles []profile.Profile) {
-	for index, candidate := range profiles {
-		_, _ = fmt.Fprintf(output, "%d. %s\n", index+1, candidate.Name)
-	}
 }
 
 func safeManagementError(err error) error {
