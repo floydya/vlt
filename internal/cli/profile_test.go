@@ -20,6 +20,30 @@ type fakeProfileStore struct {
 	loads         int
 }
 
+type fakeProfileSelector struct {
+	names    []string
+	active   string
+	selected string
+	err      error
+	calls    int
+}
+
+func (f *fakeProfileSelector) Select(_ context.Context, names []string, active string) (string, error) {
+	f.calls++
+	f.names = append([]string(nil), names...)
+	f.active = active
+	return f.selected, f.err
+}
+
+type switchTerminal struct {
+	prompts bool
+}
+
+func (switchTerminal) InputIsTerminal() bool   { return false }
+func (switchTerminal) DisplayIsTerminal() bool { return false }
+func (t switchTerminal) PromptsEnabled() bool  { return t.prompts }
+func (switchTerminal) ColorEnabled() bool      { return false }
+
 func (f *fakeProfileStore) Load(context.Context) (config.Configuration, error) {
 	f.loads++
 	configuration := f.configuration
@@ -455,39 +479,127 @@ func TestProfileHandlerRedactsMutationFailure(t *testing.T) {
 	}
 }
 
-func TestSwitchHandlerDisplaysActiveProfileAndProfileList(t *testing.T) {
-	tests := []struct {
-		name          string
-		configuration config.Configuration
-		want          string
-	}{
-		{
-			name: "active profile and sorted list",
-			configuration: config.Configuration{
-				Profiles:      []profile.Profile{managementTestProfile("team-b"), managementTestProfile("team-a")},
-				ActiveProfile: "team-b",
-			},
-			want: "Active profile: team-b\n" +
-				"#  ACTIVE  NAME    ADDRESS                           NAMESPACE\n" +
-				"1          team-a  https://vault.example.com/team-a  -\n" +
-				"2  *       team-b  https://vault.example.com/team-b  -\n",
-		},
-		{name: "no active profile or profiles", want: "Active profile: none\n#  ACTIVE  NAME  ADDRESS  NAMESPACE\n"},
+func TestSwitchHandlerSelectsInteractivelyByStableName(t *testing.T) {
+	store := &fakeProfileStore{configuration: config.Configuration{
+		Profiles:      []profile.Profile{managementTestProfile("team-b"), managementTestProfile("team-a")},
+		ActiveProfile: "team-b",
+	}}
+	selector := &fakeProfileSelector{selected: "team-a"}
+	var output bytes.Buffer
+	handler := NewSwitchHandler(SwitchDependencies{
+		Profiles: store, Output: &output, Terminal: switchTerminal{prompts: true}, Selector: selector,
+	})
+
+	if err := handler(context.Background(), nil); err != nil {
+		t.Fatalf("switch error = %v", err)
 	}
+	if !reflect.DeepEqual(selector.names, []string{"team-a", "team-b"}) {
+		t.Errorf("selector names = %#v, want sorted names", selector.names)
+	}
+	if selector.active != "team-b" {
+		t.Errorf("selector active profile = %q, want team-b", selector.active)
+	}
+	if !reflect.DeepEqual(store.selectors, []string{"team-a"}) {
+		t.Errorf("persisted selectors = %#v, want stable name team-a", store.selectors)
+	}
+	if got, want := output.String(), "Switched to profile \"team-a\".\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			store := &fakeProfileStore{configuration: tt.configuration}
-			var output bytes.Buffer
-			handler := NewSwitchHandler(SwitchDependencies{Profiles: store, Output: &output})
+func TestSwitchHandlerRejectsMissingSelectionOutsideTerminal(t *testing.T) {
+	store := &fakeProfileStore{configuration: config.Configuration{
+		Profiles: []profile.Profile{managementTestProfile("team-a")},
+	}}
+	selector := &fakeProfileSelector{selected: "team-a"}
+	handler := NewSwitchHandler(SwitchDependencies{
+		Profiles: store, Output: &bytes.Buffer{}, Terminal: switchTerminal{}, Selector: selector,
+	})
 
-			if err := handler(context.Background(), nil); err != nil {
-				t.Fatalf("switch error = %v", err)
-			}
-			if got := output.String(); got != tt.want {
-				t.Errorf("output = %q, want %q", got, tt.want)
-			}
-		})
+	err := handler(context.Background(), nil)
+	if err == nil {
+		t.Fatal("switch error = nil, want non-terminal guidance")
+	}
+	for _, want := range []string{"profile selection is required outside an interactive terminal", "Usage: vlt switch"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("switch error = %q, want text %q", err, want)
+		}
+	}
+	if selector.calls != 0 {
+		t.Errorf("selector calls = %d, want 0", selector.calls)
+	}
+	if store.loads != 0 {
+		t.Errorf("profile loads = %d, want 0", store.loads)
+	}
+	if len(store.selectors) != 0 {
+		t.Errorf("persisted selectors = %#v, want none", store.selectors)
+	}
+}
+
+func TestSwitchHandlerExplainsHowToAddFirstProfile(t *testing.T) {
+	store := &fakeProfileStore{}
+	selector := &fakeProfileSelector{}
+	handler := NewSwitchHandler(SwitchDependencies{
+		Profiles: store, Output: &bytes.Buffer{}, Terminal: switchTerminal{prompts: true}, Selector: selector,
+	})
+
+	err := handler(context.Background(), nil)
+	if err == nil {
+		t.Fatal("switch error = nil, want empty-profile guidance")
+	}
+	for _, want := range []string{"no profiles configured", "vlt profile add"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("switch error = %q, want text %q", err, want)
+		}
+	}
+	if selector.calls != 0 {
+		t.Errorf("selector calls = %d, want 0", selector.calls)
+	}
+}
+
+func TestSwitchHandlerCancelLeavesActiveProfileUnchanged(t *testing.T) {
+	const token = "hvs.synthetic-selector-token"
+	store := &fakeProfileStore{configuration: config.Configuration{
+		Profiles:      []profile.Profile{managementTestProfile("team-a"), managementTestProfile("team-b")},
+		ActiveProfile: "team-a",
+	}}
+	selector := &fakeProfileSelector{err: errors.New("user aborted with " + token)}
+	var output bytes.Buffer
+	handler := NewSwitchHandler(SwitchDependencies{
+		Profiles: store, Output: &output, Terminal: switchTerminal{prompts: true}, Selector: selector,
+	})
+
+	err := handler(context.Background(), nil)
+	if err == nil {
+		t.Fatal("switch error = nil, want cancellation")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatalf("switch error exposed token: %q", err)
+	}
+	if len(store.selectors) != 0 || store.configuration.ActiveProfile != "team-a" {
+		t.Errorf("cancel changed active profile: selectors=%#v active=%q", store.selectors, store.configuration.ActiveProfile)
+	}
+	if output.Len() != 0 {
+		t.Errorf("output = %q, want no success message", output.String())
+	}
+}
+
+func TestSwitchHandlerPrintsNoSuccessBeforePersistence(t *testing.T) {
+	store := &fakeProfileStore{
+		configuration: config.Configuration{Profiles: []profile.Profile{managementTestProfile("team-a")}},
+		selectErr:     errors.New("save failed"),
+	}
+	selector := &fakeProfileSelector{selected: "team-a"}
+	var output bytes.Buffer
+	handler := NewSwitchHandler(SwitchDependencies{
+		Profiles: store, Output: &output, Terminal: switchTerminal{prompts: true}, Selector: selector,
+	})
+
+	if err := handler(context.Background(), nil); err == nil {
+		t.Fatal("switch error = nil, want persistence failure")
+	}
+	if output.Len() != 0 {
+		t.Errorf("output = %q, want no success message", output.String())
 	}
 }
 

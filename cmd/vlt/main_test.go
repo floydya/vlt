@@ -25,11 +25,12 @@ func TestNewDispatcherWiresProfileManagement(t *testing.T) {
 	}
 	stdout.Reset()
 
-	if err := dispatcher.Dispatch(context.Background(), []string{"switch"}); err != nil {
-		t.Fatalf("switch error = %v", err)
+	if err := dispatcher.Dispatch(context.Background(), []string{"switch"}); err == nil ||
+		!strings.Contains(err.Error(), "profile selection is required outside an interactive terminal") {
+		t.Fatalf("switch error = %v, want non-terminal guidance", err)
 	}
-	if got, want := stdout.String(), "Active profile: none\n#  ACTIVE  NAME  ADDRESS  NAMESPACE\n"; got != want {
-		t.Errorf("switch output = %q, want %q", got, want)
+	if stdout.Len() != 0 {
+		t.Errorf("switch output = %q, want empty", stdout.String())
 	}
 }
 
