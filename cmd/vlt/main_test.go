@@ -3,11 +3,31 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"strings"
 	"testing"
 
 	"vlt/internal/cli"
 )
+
+func TestNewDispatcherWiresProfileManagement(t *testing.T) {
+	var stdout bytes.Buffer
+	dispatcher := newDispatcherAt(t.TempDir(), strings.NewReader(""), &stdout, io.Discard)
+
+	if err := dispatcher.Dispatch(context.Background(), []string{"profile", "list"}); err != nil {
+		t.Fatalf("profile list error = %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("profile list output = %q, want empty", stdout.String())
+	}
+
+	if err := dispatcher.Dispatch(context.Background(), []string{"switch"}); err != nil {
+		t.Fatalf("switch error = %v", err)
+	}
+	if got, want := stdout.String(), "Active profile: none\n"; got != want {
+		t.Errorf("switch output = %q, want %q", got, want)
+	}
+}
 
 func TestDispatchReturnsDelegatedExitCodeWithoutRetry(t *testing.T) {
 	calls := 0

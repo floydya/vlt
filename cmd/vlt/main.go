@@ -12,6 +12,7 @@ import (
 	"vlt/internal/cli"
 	"vlt/internal/config"
 	"vlt/internal/credential"
+	"vlt/internal/profile"
 	"vlt/internal/vaultexec"
 )
 
@@ -33,11 +34,15 @@ func newDispatcher(stdin io.Reader, stdout, stderr io.Writer) (*cli.Dispatcher, 
 	if err != nil {
 		return nil, fmt.Errorf("locate user configuration directory: %w", err)
 	}
+	return newDispatcherAt(configDirectory, stdin, stdout, stderr), nil
+}
 
+func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.Writer) *cli.Dispatcher {
 	profiles := config.NewStore(filepath.Join(configDirectory, "vlt", "profiles.json"))
 	vault := vaultexec.NewOSExecutor()
 	credentials := credential.NewNativeStore()
 	authenticator := credential.NewAuthenticator(vault, credentials)
+	mutations := profile.NewMutationService(profiles, credentials, authenticator)
 	preflight := credential.NewPreflight(vault, credentials, authenticator, time.Now, stderr)
 	delegate := cli.NewDelegateHandler(cli.DelegateDependencies{
 		Profiles:  profiles,
@@ -50,10 +55,10 @@ func newDispatcher(stdin io.Reader, stdout, stderr io.Writer) (*cli.Dispatcher, 
 
 	return cli.NewDispatcher(cli.Dependencies{
 		Output:  stdout,
-		Profile: unavailable("profile management"),
-		Switch:  unavailable("profile switching"),
+		Profile: cli.NewProfileHandler(cli.ProfileDependencies{Profiles: profiles, Mutations: mutations, Output: stdout}),
+		Switch:  cli.NewSwitchHandler(cli.SwitchDependencies{Profiles: profiles, Output: stdout}),
 		Vault:   delegate,
-	}), nil
+	})
 }
 
 func dispatch(ctx context.Context, dispatcher *cli.Dispatcher, args []string, stderr io.Writer) int {
