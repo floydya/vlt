@@ -44,13 +44,23 @@ func (d *Dispatcher) Dispatch(ctx context.Context, args []string) error {
 	}
 }
 
-const helpText = `Usage: vlt [--profile NAME] VAULT_ARGUMENT...
+const helpText = `Manage Vault profiles and delegate Vault commands.
+
+Usage: vlt [--profile NAME] VAULT_ARGUMENT...
        vlt profile COMMAND [ARGUMENT...]
        vlt switch [NAME|NUMBER]
 
 Commands:
   profile  Manage Vault profiles
   switch   Show or select the active profile
+
+Options:
+  -h, --help  Show help
+
+Examples:
+  vlt profile list
+  vlt switch team-a
+  vlt status
 
 Every other command is forwarded to the official Vault CLI.
 `

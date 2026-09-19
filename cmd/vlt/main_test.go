@@ -74,6 +74,54 @@ func TestDispatchReturnsSuccessWithoutErrorOutput(t *testing.T) {
 	}
 }
 
+func TestDispatchWritesProfileHelpToStdout(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	dispatcher := cli.NewDispatcher(cli.Dependencies{
+		Output:  &stdout,
+		Profile: cli.NewProfileHandler(cli.ProfileDependencies{Output: &stdout}),
+		Switch:  unavailable("profile switching"),
+		Vault:   unavailable("Vault delegation"),
+	})
+
+	exitCode := dispatch(context.Background(), dispatcher, []string{"profile", "--help"}, &stderr)
+
+	if exitCode != 0 {
+		t.Errorf("exit code = %d, want 0", exitCode)
+	}
+	if !strings.Contains(stdout.String(), "Manage Vault profiles") {
+		t.Errorf("stdout = %q, want profile help", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestDispatchWritesProfileGuidanceToStderr(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	dispatcher := cli.NewDispatcher(cli.Dependencies{
+		Output:  &stdout,
+		Profile: cli.NewProfileHandler(cli.ProfileDependencies{Output: &stdout}),
+		Switch:  unavailable("profile switching"),
+		Vault:   unavailable("Vault delegation"),
+	})
+
+	exitCode := dispatch(context.Background(), dispatcher, []string{"profile", "udpate"}, &stderr)
+
+	if exitCode == 0 {
+		t.Fatal("exit code = 0, want failure")
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout = %q, want empty", stdout.String())
+	}
+	for _, want := range []string{"Did you mean \"update\"?", "Usage: vlt profile"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("stderr = %q, want text %q", stderr.String(), want)
+		}
+	}
+}
+
 type mainExitError int
 
 func (e mainExitError) Error() string { return "delegated failure" }

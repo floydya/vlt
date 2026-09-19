@@ -97,8 +97,10 @@ func TestDispatcherDisplaysHelpWithoutCallingAHandler(t *testing.T) {
 			if called {
 				t.Fatal("Dispatch() called a handler for help")
 			}
-			if !strings.Contains(output.String(), "Usage: vlt") {
-				t.Errorf("help output = %q, want usage", output.String())
+			for _, want := range []string{"Usage: vlt", "Commands:", "Examples:"} {
+				if !strings.Contains(output.String(), want) {
+					t.Errorf("help output = %q, want text %q", output.String(), want)
+				}
 			}
 		})
 	}

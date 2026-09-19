@@ -17,12 +17,188 @@ type fakeProfileStore struct {
 	loadErr       error
 	selectErr     error
 	selectors     []string
+	loads         int
 }
 
 func (f *fakeProfileStore) Load(context.Context) (config.Configuration, error) {
+	f.loads++
 	configuration := f.configuration
 	configuration.Profiles = append([]profile.Profile(nil), configuration.Profiles...)
 	return configuration, f.loadErr
+}
+
+func TestProfileHandlerDisplaysContextualHelpWithoutCallingServices(t *testing.T) {
+	tests := []struct {
+		name      string
+		arguments []string
+		want      []string
+	}{
+		{name: "profile", arguments: []string{"--help"}, want: []string{"Manage Vault profiles", "Usage:", "Commands:", "Examples:"}},
+		{name: "add", arguments: []string{"add", "--help"}, want: []string{"Add a Vault profile", "--address", "--username", "Examples:"}},
+		{name: "list", arguments: []string{"list", "--help"}, want: []string{"List Vault profiles", "Usage:", "Examples:"}},
+		{name: "show", arguments: []string{"show", "--help"}, want: []string{"Show a Vault profile", "Usage:", "Examples:"}},
+		{name: "update", arguments: []string{"update", "--help"}, want: []string{"Update a Vault profile", "--namespace", "Examples:"}},
+		{name: "remove", arguments: []string{"remove", "--help"}, want: []string{"Remove a Vault profile", "Usage:", "Examples:"}},
+	}
+
+	for _, tt := range tests {
+		for _, helpFlag := range []string{"-h", "--help"} {
+			t.Run(tt.name+helpFlag, func(t *testing.T) {
+				store := &fakeProfileStore{}
+				mutator := &fakeProfileMutator{}
+				var output bytes.Buffer
+				arguments := append([]string(nil), tt.arguments...)
+				arguments[len(arguments)-1] = helpFlag
+				handler := NewProfileHandler(ProfileDependencies{Profiles: store, Mutations: mutator, Output: &output})
+
+				if err := handler(context.Background(), arguments); err != nil {
+					t.Fatalf("profile help error = %v", err)
+				}
+				for _, want := range tt.want {
+					if !strings.Contains(output.String(), want) {
+						t.Errorf("help output = %q, want text %q", output.String(), want)
+					}
+				}
+				if store.loads != 0 || len(mutator.added)+len(mutator.updated)+len(mutator.removed) != 0 {
+					t.Fatalf("help called a service: loads=%d mutator=%#v", store.loads, mutator)
+				}
+			})
+		}
+	}
+}
+
+func TestProfileHandlerDisplaysHelpAfterExplicitArguments(t *testing.T) {
+	mutator := &fakeProfileMutator{}
+	var output bytes.Buffer
+	handler := NewProfileHandler(ProfileDependencies{Mutations: mutator, Output: &output})
+
+	if err := handler(context.Background(), []string{"add", "team-a", "--help"}); err != nil {
+		t.Fatalf("profile add help error = %v", err)
+	}
+	if !strings.Contains(output.String(), "Add a Vault profile") {
+		t.Errorf("help output = %q, want add purpose", output.String())
+	}
+	if len(mutator.added) != 0 {
+		t.Fatalf("help added profiles = %#v, want none", mutator.added)
+	}
+}
+
+func TestSwitchHandlerDisplaysHelpWithoutLoadingProfiles(t *testing.T) {
+	for _, helpFlag := range []string{"-h", "--help"} {
+		t.Run(helpFlag, func(t *testing.T) {
+			store := &fakeProfileStore{}
+			var output bytes.Buffer
+			handler := NewSwitchHandler(SwitchDependencies{Profiles: store, Output: &output})
+
+			if err := handler(context.Background(), []string{helpFlag}); err != nil {
+				t.Fatalf("switch help error = %v", err)
+			}
+			for _, want := range []string{"Select the active Vault profile", "Usage:", "Examples:"} {
+				if !strings.Contains(output.String(), want) {
+					t.Errorf("help output = %q, want text %q", output.String(), want)
+				}
+			}
+			if store.loads != 0 {
+				t.Fatalf("switch help profile loads = %d, want 0", store.loads)
+			}
+		})
+	}
+}
+
+func TestProfileHandlerSuggestsOneClearSubcommandTypo(t *testing.T) {
+	handler := NewProfileHandler(ProfileDependencies{Output: &bytes.Buffer{}})
+
+	err := handler(context.Background(), []string{"udpate"})
+	if err == nil {
+		t.Fatal("profile typo error = nil, want failure")
+	}
+	for _, want := range []string{"unknown profile command", "Did you mean \"update\"?", "Usage: vlt profile"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("profile typo error = %q, want text %q", err, want)
+		}
+	}
+	if strings.Count(err.Error(), "Did you mean") != 1 {
+		t.Errorf("profile typo suggestions = %q, want exactly one", err)
+	}
+}
+
+func TestProfileHandlerDoesNotSuggestUnrelatedSubcommand(t *testing.T) {
+	handler := NewProfileHandler(ProfileDependencies{Output: &bytes.Buffer{}})
+
+	err := handler(context.Background(), []string{"delete"})
+	if err == nil {
+		t.Fatal("unknown profile command error = nil, want failure")
+	}
+	if strings.Contains(err.Error(), "Did you mean") {
+		t.Errorf("unknown profile command error = %q, want no suggestion", err)
+	}
+}
+
+func TestProfileHandlerRedactsUnknownSubcommand(t *testing.T) {
+	const token = "hvs.synthetic-profile-command-token"
+	handler := NewProfileHandler(ProfileDependencies{Output: &bytes.Buffer{}})
+
+	err := handler(context.Background(), []string{token})
+	if err == nil {
+		t.Fatal("unknown profile command error = nil, want failure")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatalf("unknown profile command error exposed token: %q", err)
+	}
+}
+
+func TestProfileHandlerRedactsInvalidArguments(t *testing.T) {
+	const token = "hvs.synthetic-invalid-argument-token"
+	handler := NewProfileHandler(ProfileDependencies{Output: &bytes.Buffer{}})
+
+	err := handler(context.Background(), []string{"add", "team-a", token})
+	if err == nil {
+		t.Fatal("invalid profile argument error = nil, want failure")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatalf("invalid profile argument error exposed token: %q", err)
+	}
+}
+
+func TestManagementErrorsIncludeContextualGuidance(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler Handler
+		args    []string
+		want    []string
+	}{
+		{
+			name:    "missing profile subcommand",
+			handler: NewProfileHandler(ProfileDependencies{Output: &bytes.Buffer{}}),
+			want:    []string{"profile command is required", "Usage: vlt profile", "Run 'vlt profile --help'"},
+		},
+		{
+			name:    "missing add values",
+			handler: NewProfileHandler(ProfileDependencies{Output: &bytes.Buffer{}}),
+			args:    []string{"add"},
+			want:    []string{"NAME is required", "Usage: vlt profile add", "Run 'vlt profile add --help'"},
+		},
+		{
+			name:    "invalid switch arguments",
+			handler: NewSwitchHandler(SwitchDependencies{Output: &bytes.Buffer{}}),
+			args:    []string{"team-a", "extra"},
+			want:    []string{"unexpected argument", "Usage: vlt switch", "Run 'vlt switch --help'"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.handler(context.Background(), tt.args)
+			if err == nil {
+				t.Fatal("management error = nil, want failure")
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("management error = %q, want text %q", err, want)
+				}
+			}
+		})
+	}
 }
 
 func (f *fakeProfileStore) SetActiveProfile(_ context.Context, selector string) error {
