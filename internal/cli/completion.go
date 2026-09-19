@@ -108,15 +108,24 @@ const bashCompletionScript = `_vlt_completion_profiles() {
 }
 
 _vlt_completion() {
-    local current command subcommand profiles
+    local current previous command subcommand profiles
     COMPREPLY=()
     current="${COMP_WORDS[COMP_CWORD]}"
+    previous=""
+    if (( COMP_CWORD > 0 )); then
+        previous="${COMP_WORDS[COMP_CWORD-1]}"
+    fi
     command="${COMP_WORDS[1]-}"
     subcommand="${COMP_WORDS[2]-}"
 
+    if (( COMP_CWORD == 1 )); then
+        COMPREPLY=( $(compgen -W "profile switch favorite completion --profile -h --help" -- "$current") )
+        return 0
+    fi
+
     case "$command" in
         "")
-            COMPREPLY=( $(compgen -W "profile switch completion --profile -h --help" -- "$current") )
+            COMPREPLY=( $(compgen -W "profile switch favorite completion --profile -h --help" -- "$current") )
             ;;
         completion)
             if (( COMP_CWORD == 2 )); then
@@ -132,6 +141,10 @@ _vlt_completion() {
             return 0
             ;;
         profile)
+            if (( COMP_CWORD == 2 )); then
+                COMPREPLY=( $(compgen -W "add list show update remove -h --help" -- "$current") )
+                return 0
+            fi
             case "$subcommand" in
                 "")
                     COMPREPLY=( $(compgen -W "add list show update remove -h --help" -- "$current") )
@@ -144,10 +157,18 @@ _vlt_completion() {
                 list)
                     COMPREPLY=( $(compgen -W "-h --help" -- "$current") )
                     ;;
-                show|remove)
+                show)
                     if (( COMP_CWORD == 3 )); then
                         profiles="$(_vlt_completion_profiles)"
                         COMPREPLY=( $(compgen -W "$profiles -h --help" -- "$current") )
+                    fi
+                    ;;
+                remove)
+                    if (( COMP_CWORD == 3 )); then
+                        profiles="$(_vlt_completion_profiles)"
+                        COMPREPLY=( $(compgen -W "$profiles -h --help" -- "$current") )
+                    elif (( COMP_CWORD > 3 )); then
+                        COMPREPLY=( $(compgen -W "--remove-favorites -h --help" -- "$current") )
                     fi
                     ;;
                 update)
@@ -157,6 +178,57 @@ _vlt_completion() {
                     elif (( COMP_CWORD > 3 )); then
                         COMPREPLY=( $(compgen -W "--address --username --auth-path --namespace -h --help" -- "$current") )
                     fi
+                    ;;
+            esac
+            return 0
+            ;;
+        favorite)
+            if (( COMP_CWORD == 2 )); then
+                COMPREPLY=( $(compgen -W "add list update remove -h --help" -- "$current") )
+                return 0
+            fi
+            case "$subcommand" in
+                "")
+                    COMPREPLY=( $(compgen -W "add list update remove -h --help" -- "$current") )
+                    ;;
+                add)
+                    case "$previous" in
+                        --profile)
+                            profiles="$(_vlt_completion_profiles)"
+                            COMPREPLY=( $(compgen -W "$profiles" -- "$current") )
+                            ;;
+                        --operation)
+                            COMPREPLY=( $(compgen -W "read kv-get" -- "$current") )
+                            ;;
+                        --note)
+                            ;;
+                        *)
+                            if (( COMP_CWORD >= 3 )); then
+                                COMPREPLY=( $(compgen -W "--profile --operation --note -h --help" -- "$current") )
+                            fi
+                            ;;
+                    esac
+                    ;;
+                update)
+                    case "$previous" in
+                        --profile)
+                            profiles="$(_vlt_completion_profiles)"
+                            COMPREPLY=( $(compgen -W "$profiles" -- "$current") )
+                            ;;
+                        --operation)
+                            COMPREPLY=( $(compgen -W "read kv-get" -- "$current") )
+                            ;;
+                        --path|--note)
+                            ;;
+                        *)
+                            if (( COMP_CWORD >= 3 )); then
+                                COMPREPLY=( $(compgen -W "--profile --operation --path --note -h --help" -- "$current") )
+                            fi
+                            ;;
+                    esac
+                    ;;
+                list|remove)
+                    COMPREPLY=( $(compgen -W "-h --help" -- "$current") )
                     ;;
             esac
             return 0
@@ -191,12 +263,25 @@ _vlt_completion_profiles() {
 _vlt() {
     local command="${words[2]-}"
     local subcommand="${words[3]-}"
+    local previous="${words[CURRENT-1]-}"
+
+    if (( CURRENT == 2 )); then
+        _values 'vlt command' \
+            'profile:manage profiles' \
+            'switch:select the active profile' \
+            'favorite:manage favorites' \
+            'completion:generate shell completion' \
+            '--profile:use one profile for a delegated command' \
+            '-h:show help' '--help:show help'
+        return 0
+    fi
 
     case "$command" in
         "")
             _values 'vlt command' \
                 'profile:manage profiles' \
                 'switch:select the active profile' \
+                'favorite:manage favorites' \
                 'completion:generate shell completion' \
                 '--profile:use one profile for a delegated command' \
                 '-h:show help' '--help:show help'
@@ -214,6 +299,10 @@ _vlt() {
             return 0
             ;;
         profile)
+            if (( CURRENT == 3 )); then
+                _values 'profile command' 'add' 'list' 'show' 'update' 'remove' '-h' '--help'
+                return 0
+            fi
             case "$subcommand" in
                 "")
                     _values 'profile command' 'add' 'list' 'show' 'update' 'remove' '-h' '--help'
@@ -226,9 +315,16 @@ _vlt() {
                 list)
                     _values 'option' '-h' '--help'
                     ;;
-                show|remove)
+                show)
                     if (( CURRENT == 4 )); then
                         _vlt_completion_profiles
+                    fi
+                    ;;
+                remove)
+                    if (( CURRENT == 4 )); then
+                        _vlt_completion_profiles
+                    elif (( CURRENT > 4 )); then
+                        _values 'option' '--remove-favorites' '-h' '--help'
                     fi
                     ;;
                 update)
@@ -237,6 +333,51 @@ _vlt() {
                     elif (( CURRENT > 4 )); then
                         _values 'option' '--address' '--username' '--auth-path' '--namespace' '-h' '--help'
                     fi
+                    ;;
+            esac
+            return 0
+            ;;
+        favorite)
+            if (( CURRENT == 3 )); then
+                _values 'favorite command' 'add' 'list' 'update' 'remove' '-h' '--help'
+                return 0
+            fi
+            case "$subcommand" in
+                "")
+                    _values 'favorite command' 'add' 'list' 'update' 'remove' '-h' '--help'
+                    ;;
+                add)
+                    case "$previous" in
+                        --profile)
+                            _vlt_completion_profiles
+                            ;;
+                        --operation)
+                            _values 'operation' 'read' 'kv-get'
+                            ;;
+                        --note)
+                            ;;
+                        *)
+                            _values 'option' '--profile' '--operation' '--note' '-h' '--help'
+                            ;;
+                    esac
+                    ;;
+                update)
+                    case "$previous" in
+                        --profile)
+                            _vlt_completion_profiles
+                            ;;
+                        --operation)
+                            _values 'operation' 'read' 'kv-get'
+                            ;;
+                        --path|--note)
+                            ;;
+                        *)
+                            _values 'option' '--profile' '--operation' '--path' '--note' '-h' '--help'
+                            ;;
+                    esac
+                    ;;
+                list|remove)
+                    _values 'option' '-h' '--help'
                     ;;
             esac
             return 0
@@ -274,6 +415,11 @@ function __vlt_using_profile_subcommand
     test (count $tokens) -ge 3; and test "$tokens[2]" = profile; and test "$tokens[3]" = "$argv[1]"
 end
 
+function __vlt_using_favorite_subcommand
+    set -l tokens (commandline -opc)
+    test (count $tokens) -ge 3; and test "$tokens[2]" = favorite; and test "$tokens[3]" = "$argv[1]"
+end
+
 function __vlt_token_count_is
     set -l tokens (commandline -opc)
     test (count $tokens) -eq $argv[1]
@@ -285,7 +431,7 @@ function __vlt_token_count_at_least
 end
 
 complete -c vlt -f
-complete -c vlt -n '__vlt_needs_command' -a 'profile switch completion'
+complete -c vlt -n '__vlt_needs_command' -a 'profile switch favorite completion'
 complete -c vlt -n '__vlt_needs_command' -s h -l help
 complete -c vlt -n '__vlt_needs_command' -l profile -r -a '(vlt completion __profiles 2>/dev/null)'
 
@@ -314,5 +460,24 @@ complete -c vlt -n '__vlt_using_profile_subcommand update; and __vlt_token_count
 complete -c vlt -n '__vlt_using_profile_subcommand update; and __vlt_token_count_at_least 4' -l namespace -r
 complete -c vlt -n '__vlt_using_profile_subcommand update' -s h -l help
 complete -c vlt -n '__vlt_using_profile_subcommand remove; and __vlt_token_count_is 3' -a '(vlt completion __profiles 2>/dev/null)'
+complete -c vlt -n '__vlt_using_profile_subcommand remove; and __vlt_token_count_at_least 4' -l remove-favorites
 complete -c vlt -n '__vlt_using_profile_subcommand remove' -s h -l help
+
+complete -c vlt -n '__vlt_using_command favorite; and __vlt_token_count_is 2' -a 'add list update remove'
+complete -c vlt -n '__vlt_using_command favorite' -s h -l help
+
+complete -c vlt -n '__vlt_using_favorite_subcommand add; and __vlt_token_count_at_least 3' -l profile -r -a '(vlt completion __profiles 2>/dev/null)'
+complete -c vlt -n '__vlt_using_favorite_subcommand add; and __vlt_token_count_at_least 3' -l operation -r -a 'read kv-get'
+complete -c vlt -n '__vlt_using_favorite_subcommand add; and __vlt_token_count_at_least 3' -l note -r
+complete -c vlt -n '__vlt_using_favorite_subcommand add' -s h -l help
+
+complete -c vlt -n '__vlt_using_favorite_subcommand list' -s h -l help
+
+complete -c vlt -n '__vlt_using_favorite_subcommand update; and __vlt_token_count_at_least 3' -l profile -r -a '(vlt completion __profiles 2>/dev/null)'
+complete -c vlt -n '__vlt_using_favorite_subcommand update; and __vlt_token_count_at_least 3' -l operation -r -a 'read kv-get'
+complete -c vlt -n '__vlt_using_favorite_subcommand update; and __vlt_token_count_at_least 3' -l path -r
+complete -c vlt -n '__vlt_using_favorite_subcommand update; and __vlt_token_count_at_least 3' -l note -r
+complete -c vlt -n '__vlt_using_favorite_subcommand update' -s h -l help
+
+complete -c vlt -n '__vlt_using_favorite_subcommand remove' -s h -l help
 `

@@ -219,6 +219,92 @@ printf '%s\n' "${COMPREPLY[@]}"
 	}
 }
 
+func TestBashCompletionProvidesFavoriteCommandsAndValues(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not installed")
+	}
+	script, err := completionScript("bash")
+	if err != nil {
+		t.Fatalf("completionScript(bash) error = %v", err)
+	}
+	tests := []struct {
+		name      string
+		words     string
+		wordIndex int
+		want      []string
+		forbidden []string
+	}{
+		{name: "top-level prefix", words: "vlt fav", wordIndex: 1, want: []string{"favorite"}},
+		{name: "namespace", words: "vlt favorite ''", wordIndex: 2, want: []string{"add", "list", "update", "remove"}},
+		{name: "namespace prefix", words: "vlt favorite up", wordIndex: 2, want: []string{"update"}, forbidden: []string{"add", "list", "remove"}},
+		{name: "add flags", words: "vlt favorite add secret/app ''", wordIndex: 4, want: []string{"--profile", "--operation", "--note", "-h", "--help"}},
+		{name: "add profile", words: "vlt favorite add secret/app --profile ''", wordIndex: 5, want: []string{"team-a", "team-b"}, forbidden: []string{"secret/app", "daily"}},
+		{name: "add operation", words: "vlt favorite add secret/app --operation ''", wordIndex: 5, want: []string{"read", "kv-get"}},
+		{name: "update flags", words: "vlt favorite update 1 ''", wordIndex: 4, want: []string{"--profile", "--operation", "--path", "--note", "-h", "--help"}},
+		{name: "update profile", words: "vlt favorite update 1 --profile ''", wordIndex: 5, want: []string{"team-a", "team-b"}, forbidden: []string{"secret/app", "daily"}},
+		{name: "update operation", words: "vlt favorite update 1 --operation ''", wordIndex: 5, want: []string{"read", "kv-get"}},
+		{name: "path value", words: "vlt favorite update 1 --path ''", wordIndex: 5, forbidden: []string{"team-a", "team-b", "read", "kv-get", "secret/app", "daily"}},
+		{name: "note value", words: "vlt favorite update 1 --note ''", wordIndex: 5, forbidden: []string{"team-a", "team-b", "read", "kv-get", "secret/app", "daily"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			invocation := script + `
+vlt() {
+    if [[ "$1 $2" == "completion __profiles" ]]; then
+        printf 'team-a\nteam-b\n'
+    else
+        printf 'unexpected-invocation\n'
+    fi
+}
+COMP_WORDS=(` + tt.words + `)
+COMP_CWORD=` + fmt.Sprint(tt.wordIndex) + `
+_vlt_completion
+printf '%s\n' "${COMPREPLY[@]}"
+`
+			output, err := exec.Command(bash, "-c", invocation).CombinedOutput()
+			if err != nil {
+				t.Fatalf("bash completion error = %v: %s", err, output)
+			}
+			got := string(output)
+			for _, want := range tt.want {
+				if !strings.Contains(got, want+"\n") {
+					t.Errorf("bash completion output = %q, want %q", got, want)
+				}
+			}
+			for _, forbidden := range append(tt.forbidden, "unexpected-invocation") {
+				if strings.Contains(got, forbidden) {
+					t.Errorf("bash completion output = %q, want no %q", got, forbidden)
+				}
+			}
+		})
+	}
+}
+
+func TestCompletionScriptsDescribeFavoriteCommandsAndValues(t *testing.T) {
+	tests := []struct {
+		shell string
+		want  []string
+	}{
+		{shell: "bash", want: []string{"favorite", "add list update remove", "--profile --operation --note", "--profile --operation --path --note", "read kv-get"}},
+		{shell: "zsh", want: []string{"favorite:manage favorites", "'add' 'list' 'update' 'remove'", "'--profile' '--operation' '--note'", "'--profile' '--operation' '--path' '--note'", "'read' 'kv-get'"}},
+		{shell: "fish", want: []string{"-a 'profile switch favorite completion'", "-a 'add list update remove'", "-l profile", "-l operation", "-l path", "-l note", "-a 'read kv-get'"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.shell, func(t *testing.T) {
+			script, err := completionScript(tt.shell)
+			if err != nil {
+				t.Fatalf("completionScript(%q) error = %v", tt.shell, err)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(script, want) {
+					t.Errorf("completion script missing %q", want)
+				}
+			}
+		})
+	}
+}
+
 func TestCompletionScriptsDescribeOnlyVLTCommands(t *testing.T) {
 	tests := []struct {
 		shell        string
@@ -240,7 +326,7 @@ func TestCompletionScriptsDescribeOnlyVLTCommands(t *testing.T) {
 		},
 	}
 	required := []string{
-		"profile", "switch", "completion", "add", "list", "show", "update", "remove",
+		"profile", "switch", "favorite", "completion", "add", "list", "show", "update", "remove",
 		"bash", "zsh", "fish", "completion __profiles", "2>/dev/null",
 	}
 
