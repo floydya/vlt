@@ -21,8 +21,13 @@ type ProfileSelector interface {
 	Select(context.Context, []string, string) (string, error)
 }
 
+type ProfileFormRequest struct {
+	Profile      profile.Profile
+	NameEditable bool
+}
+
 type ProfileForm interface {
-	Run(context.Context, profile.Profile) (profile.Profile, error)
+	Run(context.Context, ProfileFormRequest) (profile.Profile, error)
 }
 
 type huhProfileSelector struct {
@@ -82,19 +87,25 @@ func (s huhProfileSelector) Select(ctx context.Context, names []string, active s
 	return selected, nil
 }
 
-func (f huhProfileForm) Run(ctx context.Context, candidate profile.Profile) (profile.Profile, error) {
+func (f huhProfileForm) Run(ctx context.Context, request ProfileFormRequest) (profile.Profile, error) {
 	if f.input == nil {
 		return profile.Profile{}, errors.New("profile form: input is not configured")
 	}
 	if f.output == nil {
 		return profile.Profile{}, errors.New("profile form: output is not configured")
 	}
+	candidate := request.Profile
 	if candidate.AuthPath == "" {
 		candidate.AuthPath = "oidc"
 	}
 
-	fields := []huh.Field{
-		huh.NewInput().Title("Name").Value(&candidate.Name).Validate(profileFormInputValidator(candidate.Name, f.accessible, profile.ValidateName)),
+	fields := make([]huh.Field, 0, 5)
+	if request.NameEditable {
+		fields = append(fields,
+			huh.NewInput().Title("Name").Value(&candidate.Name).Validate(profileFormInputValidator(candidate.Name, f.accessible, profile.ValidateName)),
+		)
+	}
+	fields = append(fields,
 		huh.NewInput().Title("Address").Value(&candidate.Address).Validate(profileFormInputValidator(candidate.Address, f.accessible, profile.ValidateAddress)),
 		huh.NewInput().Title("Username").Value(&candidate.Username).Validate(profileFormValidator(candidate.Username, f.accessible, func(candidate *profile.Profile, value string) {
 			candidate.Username = value
@@ -105,7 +116,7 @@ func (f huhProfileForm) Run(ctx context.Context, candidate profile.Profile) (pro
 		huh.NewInput().Title("Namespace").Value(&candidate.Namespace).Validate(profileFormValidator(candidate.Namespace, f.accessible, func(candidate *profile.Profile, value string) {
 			candidate.Namespace = value
 		})),
-	}
+	)
 	form := huh.NewForm(huh.NewGroup(fields...).Title("Profile details")).
 		WithInput(f.input).
 		WithOutput(f.output).
@@ -147,8 +158,8 @@ func selectProfileInteractively(
 	terminal Terminal,
 	selector ProfileSelector,
 ) (profile.Profile, string, error) {
-	if terminal == nil || !terminal.PromptsEnabled() {
-		return profile.Profile{}, "", errProfileSelectionRequiresTerminal
+	if err := requireInteractiveProfileTerminal(terminal); err != nil {
+		return profile.Profile{}, "", err
 	}
 	if profiles == nil {
 		return profile.Profile{}, "", errors.New("profile selection: profile configuration is not configured")
@@ -179,6 +190,13 @@ func selectProfileInteractively(
 		return profile.Profile{}, "", fmt.Errorf("profile selection: resolve selected profile: %w", err)
 	}
 	return selected, configuration.ActiveProfile, nil
+}
+
+func requireInteractiveProfileTerminal(terminal Terminal) error {
+	if terminal == nil || !terminal.PromptsEnabled() {
+		return errProfileSelectionRequiresTerminal
+	}
+	return nil
 }
 
 func interactiveProfileError(err error, usage, command string) error {

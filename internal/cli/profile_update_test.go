@@ -1,0 +1,210 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+
+	"vlt/internal/config"
+	"vlt/internal/profile"
+)
+
+func TestProfileHandlerUpdateUsesPopulatedReadOnlyNameForm(t *testing.T) {
+	current := profile.Profile{
+		Name: "team-a", Address: "https://vault.example.com", Username: "alice",
+		AuthPath: "oidc", Namespace: "engineering",
+	}
+	completed := current
+	completed.Name = "renamed"
+	completed.Address = "https://new.example.com"
+	completed.Namespace = "platform"
+	store := &fakeProfileStore{configuration: config.Configuration{Profiles: []profile.Profile{current}}}
+	mutator := &fakeProfileMutator{}
+	form := &fakeProfileForm{result: completed}
+	selector := &fakeProfileSelector{selected: "team-b"}
+	var output bytes.Buffer
+	handler := NewProfileHandler(ProfileDependencies{
+		Profiles: store, Mutations: mutator, Output: &output,
+		Terminal: switchTerminal{prompts: true}, Selector: selector, Form: form,
+	})
+
+	if err := handler(context.Background(), []string{"update", "team-a"}); err != nil {
+		t.Fatalf("profile update error = %v", err)
+	}
+	if store.loads != 1 {
+		t.Errorf("profile loads = %d, want one snapshot", store.loads)
+	}
+	if form.request.Profile != current || form.request.NameEditable {
+		t.Errorf("form request = %#v, want populated profile with read-only name", form.request)
+	}
+	if selector.calls != 0 {
+		t.Errorf("selector calls = %d, want 0 for named update", selector.calls)
+	}
+	if len(mutator.updated) != 1 {
+		t.Fatalf("updates = %#v, want one", mutator.updated)
+	}
+	got := mutator.updated[0]
+	if got.name != "team-a" {
+		t.Errorf("updated name = %q, want stable team-a", got.name)
+	}
+	if got.changes.Address == nil || *got.changes.Address != completed.Address {
+		t.Errorf("address change = %#v, want %q", got.changes.Address, completed.Address)
+	}
+	if got.changes.Namespace == nil || *got.changes.Namespace != completed.Namespace {
+		t.Errorf("namespace change = %#v, want %q", got.changes.Namespace, completed.Namespace)
+	}
+	if got.changes.Username != nil || got.changes.AuthPath != nil {
+		t.Errorf("unchanged fields = %#v, want nil", got.changes)
+	}
+	if got, want := output.String(), "Updated profile \"team-a\".\n"; got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+func TestProfileHandlerUpdateSelectsProfileBeforeForm(t *testing.T) {
+	teamA := managementTestProfile("team-a")
+	teamB := managementTestProfile("team-b")
+	store := &fakeProfileStore{configuration: config.Configuration{
+		Profiles: []profile.Profile{teamB, teamA}, ActiveProfile: "team-b",
+	}}
+	mutator := &fakeProfileMutator{}
+	form := &fakeProfileForm{result: teamA}
+	selector := &fakeProfileSelector{selected: "team-a"}
+	handler := NewProfileHandler(ProfileDependencies{
+		Profiles: store, Mutations: mutator, Output: &bytes.Buffer{},
+		Terminal: switchTerminal{prompts: true}, Selector: selector, Form: form,
+	})
+
+	if err := handler(context.Background(), []string{"update"}); err != nil {
+		t.Fatalf("profile update error = %v", err)
+	}
+	if !reflect.DeepEqual(selector.names, []string{"team-a", "team-b"}) || selector.active != "team-b" {
+		t.Errorf("selector request: names=%#v active=%q", selector.names, selector.active)
+	}
+	if store.loads != 1 {
+		t.Errorf("profile loads = %d, want one snapshot", store.loads)
+	}
+	if form.request.Profile != teamA || form.request.NameEditable {
+		t.Errorf("form request = %#v, want selected team-a with read-only name", form.request)
+	}
+	if len(mutator.updated) != 1 || mutator.updated[0].name != "team-a" {
+		t.Errorf("updates = %#v, want selected team-a", mutator.updated)
+	}
+}
+
+func TestProfileHandlerUpdateFlagsBypassSelectionAndForm(t *testing.T) {
+	store := &fakeProfileStore{}
+	mutator := &fakeProfileMutator{}
+	form := &fakeProfileForm{}
+	selector := &fakeProfileSelector{}
+	handler := NewProfileHandler(ProfileDependencies{
+		Profiles: store, Mutations: mutator, Output: &bytes.Buffer{},
+		Terminal: switchTerminal{prompts: true}, Selector: selector, Form: form,
+	})
+
+	arguments := []string{"update", "team-a", "--address", "https://new.example.com", "--namespace="}
+	if err := handler(context.Background(), arguments); err != nil {
+		t.Fatalf("profile update error = %v", err)
+	}
+	if store.loads != 0 || selector.calls != 0 || form.calls != 0 {
+		t.Errorf("direct update used interactive services: loads=%d selector=%d form=%d", store.loads, selector.calls, form.calls)
+	}
+	if len(mutator.updated) != 1 {
+		t.Fatalf("updates = %#v, want one", mutator.updated)
+	}
+	changes := mutator.updated[0].changes
+	if changes.Address == nil || *changes.Address != "https://new.example.com" {
+		t.Errorf("address change = %#v", changes.Address)
+	}
+	if changes.Namespace == nil || *changes.Namespace != "" {
+		t.Errorf("namespace change = %#v, want explicit empty", changes.Namespace)
+	}
+	if changes.Username != nil || changes.AuthPath != nil {
+		t.Errorf("omitted changes = %#v, want nil", changes)
+	}
+}
+
+func TestProfileHandlerUpdateFormRequiresTerminal(t *testing.T) {
+	store := &fakeProfileStore{configuration: config.Configuration{Profiles: []profile.Profile{managementTestProfile("team-a")}}}
+	mutator := &fakeProfileMutator{}
+	form := &fakeProfileForm{}
+	handler := NewProfileHandler(ProfileDependencies{
+		Profiles: store, Mutations: mutator, Output: &bytes.Buffer{}, Terminal: switchTerminal{}, Form: form,
+	})
+
+	for _, arguments := range [][]string{{"update"}, {"update", "team-a"}} {
+		err := handler(context.Background(), arguments)
+		if err == nil || !strings.Contains(err.Error(), "interactive terminal") {
+			t.Errorf("profile update %v error = %v, want terminal guidance", arguments, err)
+		}
+	}
+	if store.loads != 0 || form.calls != 0 || len(mutator.updated) != 0 {
+		t.Errorf("non-terminal update used services: loads=%d form=%d updates=%#v", store.loads, form.calls, mutator.updated)
+	}
+}
+
+func TestProfileHandlerUpdateFormFailureDoesNotMutate(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		err  error
+	}{
+		{name: "invalid", err: errors.New("invalid form")},
+		{name: "cancel", err: errors.New("user aborted with hvs.synthetic-update-form-token")},
+		{name: "interrupt", err: context.Canceled},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			current := managementTestProfile("team-a")
+			store := &fakeProfileStore{configuration: config.Configuration{Profiles: []profile.Profile{current}}}
+			mutator := &fakeProfileMutator{}
+			form := &fakeProfileForm{err: tt.err}
+			var output bytes.Buffer
+			handler := NewProfileHandler(ProfileDependencies{
+				Profiles: store, Mutations: mutator, Output: &output,
+				Terminal: switchTerminal{prompts: true}, Form: form,
+			})
+
+			err := handler(context.Background(), []string{"update", "team-a"})
+			if err == nil {
+				t.Fatal("profile update error = nil, want form failure")
+			}
+			if strings.Contains(err.Error(), "synthetic-update-form-token") {
+				t.Fatalf("profile update error exposed token: %q", err)
+			}
+			if len(mutator.updated) != 0 || store.configuration.Profiles[0] != current {
+				t.Errorf("form failure changed state: updates=%#v profile=%#v", mutator.updated, store.configuration.Profiles[0])
+			}
+			if output.Len() != 0 {
+				t.Errorf("output = %q, want empty", output.String())
+			}
+		})
+	}
+}
+
+func TestProfileHandlerUpdateRedactsMutationFailureAfterForm(t *testing.T) {
+	const token = "hvs.synthetic-update-mutation-token"
+	current := managementTestProfile("team-a")
+	updated := current
+	updated.Address = "https://new.example.com"
+	store := &fakeProfileStore{configuration: config.Configuration{Profiles: []profile.Profile{current}}}
+	mutator := &fakeProfileMutator{updateErr: errors.New("authentication failed with VAULT_TOKEN=" + token)}
+	form := &fakeProfileForm{result: updated}
+	var output bytes.Buffer
+	handler := NewProfileHandler(ProfileDependencies{
+		Profiles: store, Mutations: mutator, Output: &output,
+		Terminal: switchTerminal{prompts: true}, Form: form,
+	})
+
+	err := handler(context.Background(), []string{"update", "team-a"})
+	if err == nil {
+		t.Fatal("profile update error = nil, want mutation failure")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatalf("profile update error exposed token: %q", err)
+	}
+	if output.Len() != 0 {
+		t.Errorf("output = %q, want empty", output.String())
+	}
+}

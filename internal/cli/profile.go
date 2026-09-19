@@ -17,7 +17,7 @@ const (
 	profileAddUsage    = "vlt profile add [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE]"
 	profileListUsage   = "vlt profile list"
 	profileShowUsage   = "vlt profile show [NAME]"
-	profileUpdateUsage = "vlt profile update NAME [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE]"
+	profileUpdateUsage = "vlt profile update [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE]"
 	profileRemoveUsage = "vlt profile remove NAME"
 	switchUsage        = "vlt switch [NAME|NUMBER]"
 )
@@ -86,7 +86,7 @@ Examples:
 const profileUpdateHelpText = `Update a Vault profile and reauthenticate when required.
 
 Usage:
-  vlt profile update NAME [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE]
+  vlt profile update [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE]
 
 Options:
   --address URL          Vault server URL
@@ -96,6 +96,8 @@ Options:
   -h, --help             Show help
 
 Examples:
+  vlt profile update
+  vlt profile update team-a
   vlt profile update team-a --namespace platform
 `
 
@@ -256,7 +258,7 @@ func profileAdd(ctx context.Context, dependencies ProfileDependencies, args []st
 		if dependencies.Form == nil {
 			return errors.New("add profile: interactive form is not configured")
 		}
-		candidate, err = dependencies.Form.Run(ctx, candidate)
+		candidate, err = dependencies.Form.Run(ctx, ProfileFormRequest{Profile: candidate, NameEditable: true})
 		if err != nil {
 			return safeManagementError(fmt.Errorf("add profile: %w", err))
 		}
@@ -369,12 +371,18 @@ func profileUpdateCommand(ctx context.Context, dependencies ProfileDependencies,
 	if containsHelpFlag(args) {
 		return writeManagementHelp(dependencies.Output, "profile update", profileUpdateHelpText)
 	}
-	if len(args) < 1 {
-		return managementUsageError("profile NAME is required", profileUpdateUsage, "vlt profile update")
+	name := ""
+	optionArgs := args
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		name = args[0]
+		optionArgs = args[1:]
 	}
-	options, err := parseProfileOptions("profile update", args[1:], "")
+	options, err := parseProfileOptions("profile update", optionArgs, "")
 	if err != nil {
 		return managementUsageError(fmt.Sprintf("invalid profile update option: %v", err), profileUpdateUsage, "vlt profile update")
+	}
+	if name == "" && len(options.set) != 0 {
+		return managementUsageError("profile NAME is required with update options", profileUpdateUsage, "vlt profile update")
 	}
 	if dependencies.Mutations == nil {
 		return errors.New("update profile: profile mutations are not configured")
@@ -383,6 +391,53 @@ func profileUpdateCommand(ctx context.Context, dependencies ProfileDependencies,
 		return errors.New("update profile: output is not configured")
 	}
 
+	changes := profileChangesFromOptions(options)
+	if len(options.set) == 0 {
+		if err := requireInteractiveProfileTerminal(dependencies.Terminal); err != nil {
+			return interactiveProfileError(err, profileUpdateUsage, "vlt profile update")
+		}
+		if dependencies.Profiles == nil {
+			return errors.New("update profile: profile configuration is not configured")
+		}
+		if dependencies.Form == nil {
+			return errors.New("update profile: interactive form is not configured")
+		}
+
+		var current profile.Profile
+		if name == "" {
+			current, _, err = selectProfileInteractively(ctx, dependencies.Profiles, dependencies.Terminal, dependencies.Selector)
+			if err != nil {
+				return interactiveProfileError(err, profileUpdateUsage, "vlt profile update")
+			}
+		} else {
+			configuration, loadErr := dependencies.Profiles.Load(ctx)
+			if loadErr != nil {
+				return safeManagementError(fmt.Errorf("update profile %q: load configuration: %w", name, loadErr))
+			}
+			current, err = profile.NewService(configuration.Profiles).Find(name)
+			if err != nil {
+				return safeManagementError(fmt.Errorf("update profile %q: %w", name, err))
+			}
+		}
+
+		completed, formErr := dependencies.Form.Run(ctx, ProfileFormRequest{Profile: current})
+		if formErr != nil {
+			return safeManagementError(fmt.Errorf("update profile %q: %w", current.Name, formErr))
+		}
+		completed.Name = current.Name
+		name = current.Name
+		changes = profileChangesBetween(current, completed)
+	}
+	if err := dependencies.Mutations.Update(ctx, name, changes); err != nil {
+		return safeManagementError(err)
+	}
+	if _, err := fmt.Fprintf(dependencies.Output, "Updated profile %q.\n", name); err != nil {
+		return fmt.Errorf("display updated profile: %w", err)
+	}
+	return nil
+}
+
+func profileChangesFromOptions(options profileOptions) profile.ProfileChanges {
 	changes := profile.ProfileChanges{}
 	if options.set["address"] {
 		changes.Address = &options.address
@@ -396,13 +451,24 @@ func profileUpdateCommand(ctx context.Context, dependencies ProfileDependencies,
 	if options.set["namespace"] {
 		changes.Namespace = &options.namespace
 	}
-	if err := dependencies.Mutations.Update(ctx, args[0], changes); err != nil {
-		return safeManagementError(err)
+	return changes
+}
+
+func profileChangesBetween(original, updated profile.Profile) profile.ProfileChanges {
+	changes := profile.ProfileChanges{}
+	if original.Address != updated.Address {
+		changes.Address = &updated.Address
 	}
-	if _, err := fmt.Fprintf(dependencies.Output, "Updated profile %q.\n", args[0]); err != nil {
-		return fmt.Errorf("display updated profile: %w", err)
+	if original.Username != updated.Username {
+		changes.Username = &updated.Username
 	}
-	return nil
+	if original.AuthPath != updated.AuthPath {
+		changes.AuthPath = &updated.AuthPath
+	}
+	if original.Namespace != updated.Namespace {
+		changes.Namespace = &updated.Namespace
+	}
+	return changes
 }
 
 func profileRemove(ctx context.Context, dependencies ProfileDependencies, args []string) error {

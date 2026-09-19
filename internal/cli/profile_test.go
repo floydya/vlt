@@ -29,15 +29,15 @@ type fakeProfileSelector struct {
 }
 
 type fakeProfileForm struct {
-	initial profile.Profile
+	request ProfileFormRequest
 	result  profile.Profile
 	err     error
 	calls   int
 }
 
-func (f *fakeProfileForm) Run(_ context.Context, initial profile.Profile) (profile.Profile, error) {
+func (f *fakeProfileForm) Run(_ context.Context, request ProfileFormRequest) (profile.Profile, error) {
 	f.calls++
-	f.initial = initial
+	f.request = request
 	return f.result, f.err
 }
 
@@ -367,8 +367,11 @@ func TestProfileHandlerAddCollectsMissingFieldsInteractively(t *testing.T) {
 			if err := handler(context.Background(), tt.arguments); err != nil {
 				t.Fatalf("profile add error = %v", err)
 			}
-			if !reflect.DeepEqual(form.initial, tt.wantStart) {
-				t.Errorf("form initial profile = %#v, want %#v", form.initial, tt.wantStart)
+			if !reflect.DeepEqual(form.request.Profile, tt.wantStart) {
+				t.Errorf("form initial profile = %#v, want %#v", form.request.Profile, tt.wantStart)
+			}
+			if !form.request.NameEditable {
+				t.Error("add form name is read-only, want editable")
 			}
 			if !reflect.DeepEqual(mutator.added, []profile.Profile{completed}) {
 				t.Errorf("added profiles = %#v, want completed profile", mutator.added)
@@ -699,7 +702,6 @@ func TestProfileHandlerRejectsInvalidCommandForms(t *testing.T) {
 		{name: "add extra argument", arguments: []string{"add", "team-a", "extra", "--address", "x", "--username", "y"}, want: "profile add [NAME]"},
 		{name: "list extra argument", arguments: []string{"list", "extra"}, want: "profile list"},
 		{name: "show extra argument", arguments: []string{"show", "team-a", "extra"}, want: "profile show [NAME]"},
-		{name: "update missing name", arguments: []string{"update"}, want: "profile update NAME"},
 		{name: "update unknown flag", arguments: []string{"update", "team-a", "--token", "secret"}, want: "token"},
 		{name: "remove missing name", arguments: []string{"remove"}, want: "profile remove NAME"},
 		{name: "remove extra argument", arguments: []string{"remove", "team-a", "extra"}, want: "profile remove NAME"},

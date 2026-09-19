@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"vlt/internal/profile"
 )
 
@@ -75,7 +77,9 @@ func TestHuhProfileFormPreservesDefaultsAndCorrectsInvalidFields(t *testing.T) {
 	var output bytes.Buffer
 	form := huhProfileForm{input: input, output: &output, accessible: true}
 
-	got, err := form.Run(context.Background(), profile.Profile{Name: "team-a", AuthPath: "oidc"})
+	got, err := form.Run(context.Background(), ProfileFormRequest{
+		Profile: profile.Profile{Name: "team-a", AuthPath: "oidc"}, NameEditable: true,
+	})
 	if err != nil {
 		t.Fatalf("run profile form: %v", err)
 	}
@@ -94,5 +98,34 @@ func TestHuhProfileFormPreservesDefaultsAndCorrectsInvalidFields(t *testing.T) {
 		if strings.Contains(strings.ToLower(output.String()), forbidden) {
 			t.Errorf("profile form output exposed secret field %q: %q", forbidden, output.String())
 		}
+	}
+}
+
+func TestHuhProfileFormKeepsUpdateNameReadOnly(t *testing.T) {
+	input := &promptLineReader{lines: [][]byte{
+		[]byte("https://new.example.com\n"),
+		[]byte("\n"),
+		[]byte("\n"),
+		[]byte("\n"),
+	}}
+	var output bytes.Buffer
+	form := huhProfileForm{input: input, output: &output, accessible: true}
+	current := profile.Profile{
+		Name: "team-a", Address: "https://vault.example.com", Username: "alice",
+		AuthPath: "oidc", Namespace: "engineering",
+	}
+
+	got, err := form.Run(context.Background(), ProfileFormRequest{Profile: current})
+	if err != nil {
+		t.Fatalf("run profile form: %v", err)
+	}
+	if got.Name != current.Name {
+		t.Errorf("profile name = %q, want stable %q", got.Name, current.Name)
+	}
+	if got.Address != "https://new.example.com" {
+		t.Errorf("profile address = %q, want updated address", got.Address)
+	}
+	if strings.Contains(ansi.Strip(output.String()), "Name ") {
+		t.Errorf("update form output contains editable name field: %q", output.String())
 	}
 }
