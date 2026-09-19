@@ -136,6 +136,44 @@ func TestNewDispatcherWiresFavoriteManagement(t *testing.T) {
 	}
 }
 
+func TestNewDispatcherProfileRemoveProtectsLinkedFavorites(t *testing.T) {
+	configDirectory := t.TempDir()
+	profiles := config.NewStore(filepath.Join(configDirectory, "vlt", "profiles.json"))
+	profileConfiguration := config.Configuration{Profiles: []profile.Profile{{
+		Name: "team-a", Address: "https://vault.example.com", Username: "alice", AuthPath: "oidc",
+	}}}
+	if err := profiles.Save(context.Background(), profileConfiguration); err != nil {
+		t.Fatalf("save profiles: %v", err)
+	}
+	favorites := favorite.NewStore(filepath.Join(configDirectory, "vlt", "favorites.json"))
+	favoriteConfiguration := favorite.Configuration{Favorites: []favorite.Favorite{{
+		Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/app",
+	}}}
+	if err := favorites.Save(context.Background(), favoriteConfiguration); err != nil {
+		t.Fatalf("save favorites: %v", err)
+	}
+	dispatcher := newDispatcherAt(configDirectory, strings.NewReader(""), io.Discard, io.Discard)
+
+	err := dispatcher.Dispatch(context.Background(), []string{"profile", "remove", "team-a"})
+	if err == nil || !strings.Contains(err.Error(), "--remove-favorites") {
+		t.Fatalf("profile remove error = %v, want cascade guidance", err)
+	}
+	gotProfiles, err := profiles.Load(context.Background())
+	if err != nil {
+		t.Fatalf("load profiles: %v", err)
+	}
+	if !reflect.DeepEqual(gotProfiles, profileConfiguration) {
+		t.Fatalf("profiles after refused removal = %#v, want %#v", gotProfiles, profileConfiguration)
+	}
+	gotFavorites, err := favorites.Load(context.Background())
+	if err != nil {
+		t.Fatalf("load favorites: %v", err)
+	}
+	if !reflect.DeepEqual(gotFavorites, favoriteConfiguration) {
+		t.Fatalf("favorites after refused removal = %#v, want %#v", gotFavorites, favoriteConfiguration)
+	}
+}
+
 func TestDispatchReturnsDelegatedExitCodeWithoutRetry(t *testing.T) {
 	calls := 0
 	dispatcher := cli.NewDispatcher(cli.Dependencies{

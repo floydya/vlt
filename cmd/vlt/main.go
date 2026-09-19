@@ -57,6 +57,7 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 	authenticator := credential.NewAuthenticator(vault, credentials)
 	mutations := profile.NewMutationService(profiles, credentials, authenticator)
 	favoriteMutations := favorite.NewMutationService(favorites, profiles)
+	cascade := favorite.NewCascadeService(favorites, mutations)
 	preflight := credential.NewPreflight(vault, credentials, authenticator, time.Now, stderr)
 	delegate := cli.NewDelegateHandler(cli.DelegateDependencies{
 		Profiles:  profiles,
@@ -71,7 +72,7 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 		Output: stdout,
 		Profile: cli.NewProfileHandler(cli.ProfileDependencies{
 			Profiles: profiles, Mutations: mutations, Output: stdout, Terminal: terminal,
-			Selector: selector, Form: form, RemovalConfirmer: removalConfirmer,
+			Selector: selector, Form: form, RemovalConfirmer: removalConfirmer, Cascade: cascade,
 		}),
 		Switch: cli.NewSwitchHandler(cli.SwitchDependencies{Profiles: profiles, Output: stdout, Terminal: terminal, Selector: selector}),
 		Favorite: cli.NewFavoriteHandler(cli.FavoriteDependencies{

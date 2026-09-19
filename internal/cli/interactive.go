@@ -33,6 +33,7 @@ type ProfileForm interface {
 type ProfileRemovalConfirmation struct {
 	Name                  string
 	LeavesNoActiveProfile bool
+	LinkedFavorites       int
 }
 
 type ProfileRemovalConfirmer interface {
@@ -158,6 +159,18 @@ func (c huhProfileRemovalConfirmer) Confirm(ctx context.Context, request Profile
 	}
 
 	title := fmt.Sprintf("Remove profile %q and its stored credential?", request.Name)
+	if request.LinkedFavorites > 0 {
+		favoriteLabel := "favorites"
+		if request.LinkedFavorites == 1 {
+			favoriteLabel = "favorite"
+		}
+		title = fmt.Sprintf(
+			"Remove profile %q, its stored credential, and %d linked %s?",
+			request.Name,
+			request.LinkedFavorites,
+			favoriteLabel,
+		)
+	}
 	if request.LeavesNoActiveProfile {
 		title += " This will leave no active profile."
 	}

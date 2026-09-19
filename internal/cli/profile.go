@@ -18,7 +18,7 @@ const (
 	profileListUsage   = "vlt profile list"
 	profileShowUsage   = "vlt profile show [NAME]"
 	profileUpdateUsage = "vlt profile update [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE]"
-	profileRemoveUsage = "vlt profile remove [NAME]"
+	profileRemoveUsage = "vlt profile remove [NAME] [--remove-favorites]"
 	switchUsage        = "vlt switch [NAME|NUMBER]"
 )
 
@@ -104,14 +104,16 @@ Examples:
 const profileRemoveHelpText = `Remove a Vault profile and its stored credential.
 
 Usage:
-  vlt profile remove [NAME]
+  vlt profile remove [NAME] [--remove-favorites]
 
 Options:
-  -h, --help  Show help
+  --remove-favorites  Remove linked favorites with the profile
+  -h, --help           Show help
 
 Examples:
   vlt profile remove
   vlt profile remove team-a
+  vlt profile remove team-a --remove-favorites
 `
 
 const switchHelpText = `Select the active Vault profile or show the current selection.
@@ -135,6 +137,11 @@ type ProfileMutator interface {
 	Remove(context.Context, string) error
 }
 
+type ProfileCascade interface {
+	LinkedCount(context.Context, string) (int, error)
+	Remove(context.Context, string, bool) error
+}
+
 type ProfileDependencies struct {
 	Profiles         ConfigurationLoader
 	Mutations        ProfileMutator
@@ -143,6 +150,7 @@ type ProfileDependencies struct {
 	Selector         ProfileSelector
 	Form             ProfileForm
 	RemovalConfirmer ProfileRemovalConfirmer
+	Cascade          ProfileCascade
 }
 
 type ActiveProfileStore interface {
@@ -475,44 +483,86 @@ func profileRemove(ctx context.Context, dependencies ProfileDependencies, args [
 	if containsHelpFlag(args) {
 		return writeManagementHelp(dependencies.Output, "profile remove", profileRemoveHelpText)
 	}
-	if len(args) > 1 {
-		return managementUsageError(fmt.Sprintf("unexpected argument %q", args[1]), profileRemoveUsage, "vlt profile remove")
+	name := ""
+	optionArgs := args
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		name = args[0]
+		optionArgs = args[1:]
 	}
-	if len(args) == 0 {
+	flags := flag.NewFlagSet("profile remove", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	removeFavorites := false
+	flags.BoolVar(&removeFavorites, "remove-favorites", false, "")
+	if err := flags.Parse(optionArgs); err != nil {
+		return managementUsageError(fmt.Sprintf("invalid profile remove option: %v", err), profileRemoveUsage, "vlt profile remove")
+	}
+	if flags.NArg() != 0 {
+		return managementUsageError(fmt.Sprintf("unexpected argument %q", flags.Arg(0)), profileRemoveUsage, "vlt profile remove")
+	}
+	if name == "" {
 		if dependencies.Terminal == nil || !dependencies.Terminal.PromptsEnabled() {
 			return AutomaticHelp{Text: profileRemoveHelpText}
 		}
 	}
-	if dependencies.Mutations == nil {
+	if dependencies.Cascade == nil && dependencies.Mutations == nil {
 		return errors.New("remove profile: profile mutations are not configured")
 	}
 	if dependencies.Output == nil {
 		return errors.New("remove profile: output is not configured")
 	}
 
-	name := ""
-	if len(args) == 1 {
-		name = args[0]
-	} else {
-		selected, active, err := selectProfileInteractively(ctx, dependencies.Profiles, dependencies.Terminal, dependencies.Selector)
+	active := ""
+	if name == "" {
+		selected, selectedActive, err := selectProfileInteractively(ctx, dependencies.Profiles, dependencies.Terminal, dependencies.Selector)
 		if err != nil {
 			return interactiveProfileError(err, profileRemoveUsage, "vlt profile remove")
+		}
+		name = selected.Name
+		active = selectedActive
+	}
+
+	linkedCount := 0
+	if dependencies.Cascade != nil {
+		var err error
+		linkedCount, err = dependencies.Cascade.LinkedCount(ctx, name)
+		if err != nil {
+			return safeManagementError(fmt.Errorf("remove profile %q: count linked favorites: %w", name, err))
+		}
+	}
+	needsConfirmation := len(args) == 0 || linkedCount > 0
+	if needsConfirmation && !removeFavorites {
+		if dependencies.Terminal == nil || !dependencies.Terminal.PromptsEnabled() {
+			return managementUsageError(
+				fmt.Sprintf("profile %q has %d linked favorites; rerun with --remove-favorites", name, linkedCount),
+				profileRemoveUsage,
+				"vlt profile remove",
+			)
+		}
+		if active == "" && dependencies.Profiles != nil {
+			configuration, err := dependencies.Profiles.Load(ctx)
+			if err != nil {
+				return safeManagementError(fmt.Errorf("remove profile %q: load configuration: %w", name, err))
+			}
+			active = configuration.ActiveProfile
 		}
 		if dependencies.RemovalConfirmer == nil {
 			return errors.New("remove profile: interactive confirmation is not configured")
 		}
 		confirmed, err := dependencies.RemovalConfirmer.Confirm(ctx, ProfileRemovalConfirmation{
-			Name: selected.Name, LeavesNoActiveProfile: selected.Name == active,
+			Name: name, LeavesNoActiveProfile: name == active, LinkedFavorites: linkedCount,
 		})
 		if err != nil {
-			return safeManagementError(fmt.Errorf("remove profile %q: %w", selected.Name, err))
+			return safeManagementError(fmt.Errorf("remove profile %q: %w", name, err))
 		}
 		if !confirmed {
 			return nil
 		}
-		name = selected.Name
 	}
-	if err := dependencies.Mutations.Remove(ctx, name); err != nil {
+	if dependencies.Cascade != nil {
+		if err := dependencies.Cascade.Remove(ctx, name, removeFavorites || linkedCount > 0); err != nil {
+			return safeManagementError(err)
+		}
+	} else if err := dependencies.Mutations.Remove(ctx, name); err != nil {
 		return safeManagementError(err)
 	}
 	if _, err := fmt.Fprintf(dependencies.Output, "Removed profile %q.\n", name); err != nil {

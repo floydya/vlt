@@ -19,6 +19,29 @@ type fakeProfileRemovalConfirmer struct {
 	calls   int
 }
 
+type fakeProfileCascade struct {
+	linkedCount int
+	countErr    error
+	removeErr   error
+	countNames  []string
+	removals    []profileCascadeRemoval
+}
+
+type profileCascadeRemoval struct {
+	name     string
+	approved bool
+}
+
+func (f *fakeProfileCascade) LinkedCount(_ context.Context, name string) (int, error) {
+	f.countNames = append(f.countNames, name)
+	return f.linkedCount, f.countErr
+}
+
+func (f *fakeProfileCascade) Remove(_ context.Context, name string, approved bool) error {
+	f.removals = append(f.removals, profileCascadeRemoval{name: name, approved: approved})
+	return f.removeErr
+}
+
 func (f *fakeProfileRemovalConfirmer) Confirm(_ context.Context, request ProfileRemovalConfirmation) (bool, error) {
 	f.calls++
 	f.request = request
@@ -180,5 +203,108 @@ func TestProfileHandlerRemoveRedactsInteractiveFailures(t *testing.T) {
 	}
 	if len(mutator.removed) != 0 {
 		t.Errorf("confirmation failure removed profiles: %#v", mutator.removed)
+	}
+}
+
+func TestProfileRemoveWithLinkedFavoritesRequiresNonTerminalFlag(t *testing.T) {
+	cascade := &fakeProfileCascade{linkedCount: 2}
+	var output bytes.Buffer
+	handler := NewProfileHandler(ProfileDependencies{
+		Cascade: cascade, Output: &output, Terminal: switchTerminal{},
+	})
+
+	err := handler(context.Background(), []string{"remove", "team-a"})
+	if err == nil {
+		t.Fatal("profile remove error = nil, want linked-favorite refusal")
+	}
+	for _, text := range []string{"2 linked favorites", "--remove-favorites", "Usage: " + profileRemoveUsage} {
+		if !strings.Contains(err.Error(), text) {
+			t.Errorf("profile remove error = %q, want %q", err, text)
+		}
+	}
+	if len(cascade.removals) != 0 || output.Len() != 0 {
+		t.Fatalf("refused removal changed state: removals=%#v output=%q", cascade.removals, output.String())
+	}
+}
+
+func TestProfileRemoveWithLinkedFavoritesPromptsWithExactCount(t *testing.T) {
+	tests := []struct {
+		name      string
+		confirmed bool
+		wantCalls int
+	}{
+		{name: "decline"},
+		{name: "confirm", confirmed: true, wantCalls: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cascade := &fakeProfileCascade{linkedCount: 3}
+			confirmer := &fakeProfileRemovalConfirmer{result: tt.confirmed}
+			store := &fakeProfileStore{configuration: config.Configuration{ActiveProfile: "team-a"}}
+			var output bytes.Buffer
+			handler := NewProfileHandler(ProfileDependencies{
+				Profiles: store, Cascade: cascade, Output: &output,
+				Terminal: switchTerminal{prompts: true}, RemovalConfirmer: confirmer,
+			})
+
+			if err := handler(context.Background(), []string{"remove", "team-a"}); err != nil {
+				t.Fatalf("profile remove error = %v", err)
+			}
+			wantRequest := ProfileRemovalConfirmation{
+				Name: "team-a", LeavesNoActiveProfile: true, LinkedFavorites: 3,
+			}
+			if confirmer.request != wantRequest {
+				t.Fatalf("confirmation request = %#v, want %#v", confirmer.request, wantRequest)
+			}
+			if len(cascade.removals) != tt.wantCalls {
+				t.Fatalf("cascade removals = %#v, want %d", cascade.removals, tt.wantCalls)
+			}
+			if tt.confirmed && !reflect.DeepEqual(cascade.removals, []profileCascadeRemoval{{name: "team-a", approved: true}}) {
+				t.Fatalf("cascade removals = %#v, want approved team-a", cascade.removals)
+			}
+			if !tt.confirmed && output.Len() != 0 {
+				t.Fatalf("declined output = %q, want empty", output.String())
+			}
+		})
+	}
+}
+
+func TestProfileRemoveFavoritesFlagSkipsPrompt(t *testing.T) {
+	cascade := &fakeProfileCascade{linkedCount: 2}
+	confirmer := &fakeProfileRemovalConfirmer{err: errors.New("must not prompt")}
+	var output bytes.Buffer
+	handler := NewProfileHandler(ProfileDependencies{
+		Cascade: cascade, Output: &output, Terminal: switchTerminal{}, RemovalConfirmer: confirmer,
+	})
+
+	if err := handler(context.Background(), []string{"remove", "team-a", "--remove-favorites"}); err != nil {
+		t.Fatalf("profile remove error = %v", err)
+	}
+	if confirmer.calls != 0 {
+		t.Fatalf("confirmation calls = %d, want 0", confirmer.calls)
+	}
+	want := []profileCascadeRemoval{{name: "team-a", approved: true}}
+	if !reflect.DeepEqual(cascade.removals, want) {
+		t.Fatalf("cascade removals = %#v, want %#v", cascade.removals, want)
+	}
+}
+
+func TestProfileRemoveWithoutLinkedFavoritesStaysImmediate(t *testing.T) {
+	cascade := &fakeProfileCascade{}
+	confirmer := &fakeProfileRemovalConfirmer{err: errors.New("must not prompt")}
+	handler := NewProfileHandler(ProfileDependencies{
+		Cascade: cascade, Output: &bytes.Buffer{}, Terminal: switchTerminal{prompts: true}, RemovalConfirmer: confirmer,
+	})
+
+	if err := handler(context.Background(), []string{"remove", "team-a"}); err != nil {
+		t.Fatalf("profile remove error = %v", err)
+	}
+	if confirmer.calls != 0 {
+		t.Fatalf("confirmation calls = %d, want 0", confirmer.calls)
+	}
+	want := []profileCascadeRemoval{{name: "team-a", approved: false}}
+	if !reflect.DeepEqual(cascade.removals, want) {
+		t.Fatalf("cascade removals = %#v, want %#v", cascade.removals, want)
 	}
 }

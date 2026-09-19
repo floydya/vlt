@@ -169,3 +169,25 @@ func TestHuhProfileRemovalConfirmerNamesProfileAndWarnsForActiveRemoval(t *testi
 		})
 	}
 }
+
+func TestHuhProfileRemovalConfirmerReportsLinkedFavoriteCount(t *testing.T) {
+	var output bytes.Buffer
+	confirmer := huhProfileRemovalConfirmer{
+		input: strings.NewReader("n\n"), output: &output, accessible: true,
+	}
+
+	confirmed, err := confirmer.Confirm(context.Background(), ProfileRemovalConfirmation{
+		Name: "team-a", LinkedFavorites: 2,
+	})
+	if err != nil {
+		t.Fatalf("confirm profile removal error = %v", err)
+	}
+	if confirmed {
+		t.Fatal("confirmed = true, want declined")
+	}
+	for _, text := range []string{"team-a", "2 linked favorites"} {
+		if !strings.Contains(output.String(), text) {
+			t.Errorf("confirmation output = %q, want %q", output.String(), text)
+		}
+	}
+}
