@@ -47,7 +47,7 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 	terminal := cli.NewTerminal(stdin, stdout, os.Environ())
 	sharedSelector := cli.NewSharedSelector(stdin, stdout, terminal)
 	selector := cli.NewSharedProfileSelector(sharedSelector)
-	favoriteSelector := cli.NewFZFFavoriteSelector()
+	favoriteSelector := cli.NewSharedFavoriteSelector(sharedSelector)
 	form := cli.NewHuhProfileForm(stdin, stdout)
 	removalConfirmer := cli.NewHuhProfileRemovalConfirmer(stdin, stdout)
 	favoriteManagementSelector := cli.NewHuhFavoriteManagementSelector(stdin, stdout)

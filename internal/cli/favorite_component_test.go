@@ -231,29 +231,18 @@ func TestFakeBackedFavoriteExecutionMapsReadOperationsWithoutChangingActiveProfi
 func TestFakeBackedFavoriteSelectionStopsBeforeVault(t *testing.T) {
 	tests := []struct {
 		name      string
-		selector  func(*testing.T) FavoriteSelector
+		selector  FavoriteSelector
 		wantError string
 	}{
 		{
-			name: "fake fzf cancellation",
-			selector: func(t *testing.T) FavoriteSelector {
-				bin := t.TempDir()
-				path := filepath.Join(bin, "fzf")
-				if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 130\n"), 0o700); err != nil {
-					t.Fatalf("write fake fzf: %v", err)
-				}
-				t.Setenv("PATH", bin)
-				return NewFZFFavoriteSelector()
-			},
+			name:      "shared selector cancellation",
+			selector:  NewSharedFavoriteSelector(&recordingSharedSelector{err: ErrSharedSelectorCanceled}),
 			wantError: ErrFavoriteSelectionCanceled.Error(),
 		},
 		{
-			name: "missing fzf",
-			selector: func(t *testing.T) FavoriteSelector {
-				t.Setenv("PATH", t.TempDir())
-				return NewFZFFavoriteSelector()
-			},
-			wantError: "fzf was not found in PATH",
+			name:      "unknown stable identity",
+			selector:  NewSharedFavoriteSelector(&recordingSharedSelector{selectedID: "favorite-999999"}),
+			wantError: "unknown selection",
 		},
 	}
 	for _, tt := range tests {
@@ -271,7 +260,7 @@ func TestFakeBackedFavoriteSelectionStopsBeforeVault(t *testing.T) {
 				t.Fatalf("seed favorite: %v", err)
 			}
 			harness.wire(favoriteComponentAdapters{
-				terminal: switchTerminal{prompts: true}, executionSelector: tt.selector(t),
+				terminal: switchTerminal{prompts: true}, executionSelector: tt.selector,
 			})
 
 			err := harness.dispatcher.Dispatch(context.Background(), []string{"favorite"})
