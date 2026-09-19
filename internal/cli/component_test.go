@@ -130,12 +130,16 @@ type componentVaultRunner struct {
 	commands        []vaultexec.Command
 	loginCalls      int
 	lookupCalls     int
+	run             func(vaultexec.Command) (vaultexec.Result, error)
 }
 
 func (r *componentVaultRunner) Run(_ context.Context, command vaultexec.Command) (vaultexec.Result, error) {
 	r.commands = append(r.commands, command)
 	if len(command.Arguments) == 0 {
 		return vaultexec.Result{}, errors.New("missing Vault arguments")
+	}
+	if r.run != nil {
+		return r.run(command)
 	}
 
 	switch command.Arguments[0] {
@@ -164,6 +168,14 @@ func (r *componentVaultRunner) delegatedCommands() []vaultexec.Command {
 		}
 	}
 	return commands
+}
+
+func (r *componentVaultRunner) commandArguments() [][]string {
+	arguments := make([][]string, 0, len(r.commands))
+	for _, command := range r.commands {
+		arguments = append(arguments, append([]string(nil), command.Arguments...))
+	}
+	return arguments
 }
 
 func assertComponentCommand(t *testing.T, command vaultexec.Command, arguments []string, address, token, namespace string) {
@@ -195,4 +207,77 @@ func componentEnvironmentValue(environment []string, name string) string {
 		}
 	}
 	return ""
+}
+
+type componentHarness struct {
+	configPath  string
+	profiles    *config.Store
+	credentials *componentCredentialStore
+	vaultRunner *componentVaultRunner
+	dispatcher  *Dispatcher
+	stdin       *bytes.Buffer
+	stdout      bytes.Buffer
+	stderr      bytes.Buffer
+}
+
+func newComponentHarness(t *testing.T, now time.Time) *componentHarness {
+	t.Helper()
+	harness := &componentHarness{
+		configPath:  filepath.Join(t.TempDir(), "profiles.json"),
+		credentials: &componentCredentialStore{values: make(map[string]string)},
+		vaultRunner: &componentVaultRunner{},
+		stdin:       bytes.NewBufferString("input"),
+	}
+	harness.profiles = config.NewStore(harness.configPath)
+	vault := vaultexec.NewExecutor(vaultexec.Dependencies{
+		LookPath:    func(string) (string, error) { return "/test/vault", nil },
+		Environment: func() []string { return []string{"PARENT=preserved", "VAULT_NAMESPACE=inherited"} },
+		Runner:      harness.vaultRunner,
+	})
+	authenticator := credential.NewAuthenticator(vault, harness.credentials)
+	mutations := profile.NewMutationService(harness.profiles, harness.credentials, authenticator)
+	preflight := credential.NewPreflight(vault, harness.credentials, authenticator, func() time.Time { return now }, &harness.stderr)
+	harness.dispatcher = NewDispatcher(Dependencies{
+		Output:  &harness.stdout,
+		Profile: NewProfileHandler(ProfileDependencies{Profiles: harness.profiles, Mutations: mutations, Output: &harness.stdout}),
+		Switch:  NewSwitchHandler(SwitchDependencies{Profiles: harness.profiles, Output: &harness.stdout}),
+		Vault: NewDelegateHandler(DelegateDependencies{
+			Profiles: harness.profiles, Preflight: preflight, Vault: vault,
+			Stdin: harness.stdin, Stdout: &harness.stdout, Stderr: &harness.stderr,
+		}),
+	})
+	return harness
+}
+
+func (h *componentHarness) addStoredProfile(t *testing.T, name, address, token string) {
+	t.Helper()
+	candidate := profile.Profile{Name: name, Address: address, Username: "example-user", AuthPath: "oidc"}
+	if err := h.profiles.Save(context.Background(), config.Configuration{Profiles: []profile.Profile{candidate}, ActiveProfile: name}); err != nil {
+		t.Fatalf("seed profile: %v", err)
+	}
+	if err := h.credentials.Set(context.Background(), name, token); err != nil {
+		t.Fatalf("seed credential: %v", err)
+	}
+}
+
+func (h *componentHarness) assertNoCredentialLeaks(t *testing.T, operationErr error, tokens ...string) {
+	t.Helper()
+	configContents, err := os.ReadFile(h.configPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("read config: %v", err)
+	}
+	surfaces := []string{string(configContents), h.stdout.String(), h.stderr.String()}
+	if operationErr != nil {
+		surfaces = append(surfaces, operationErr.Error())
+	}
+	for _, command := range h.vaultRunner.commands {
+		surfaces = append(surfaces, strings.Join(command.Arguments, "\x00"))
+	}
+	for _, token := range tokens {
+		for _, surface := range surfaces {
+			if strings.Contains(surface, token) {
+				t.Errorf("credential %q appeared outside the keyring or Vault environment", token)
+			}
+		}
+	}
 }

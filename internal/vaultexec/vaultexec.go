@@ -173,7 +173,7 @@ func (e *Executor) Execute(ctx context.Context, invocation Invocation) (Result, 
 	}
 
 	result, runErr := e.runner.Run(ctx, command)
-	if invocation.Mode == Captured && len(result.Stderr) > 0 {
+	if len(result.Stderr) > 0 {
 		result.Stderr = []byte(redact(string(result.Stderr)))
 	}
 	if runErr == nil {
