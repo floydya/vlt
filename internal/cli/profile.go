@@ -16,7 +16,7 @@ const (
 	profileUsage       = "vlt profile COMMAND [ARGUMENT...]"
 	profileAddUsage    = "vlt profile add NAME --address URL --username USER [--auth-path PATH] [--namespace NAMESPACE]"
 	profileListUsage   = "vlt profile list"
-	profileShowUsage   = "vlt profile show NAME"
+	profileShowUsage   = "vlt profile show [NAME]"
 	profileUpdateUsage = "vlt profile update NAME [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE]"
 	profileRemoveUsage = "vlt profile remove NAME"
 	switchUsage        = "vlt switch [NAME|NUMBER]"
@@ -73,7 +73,7 @@ Examples:
 const profileShowHelpText = `Show a Vault profile without credentials.
 
 Usage:
-  vlt profile show NAME
+  vlt profile show [NAME]
 
 Options:
   -h, --help  Show help
@@ -136,6 +136,7 @@ type ProfileDependencies struct {
 	Mutations ProfileMutator
 	Output    io.Writer
 	Terminal  Terminal
+	Selector  ProfileSelector
 }
 
 type ActiveProfileStore interface {
@@ -188,53 +189,28 @@ func NewSwitchHandler(dependencies SwitchDependencies) Handler {
 		if len(args) > 1 {
 			return managementUsageError(fmt.Sprintf("unexpected argument %q", args[1]), switchUsage, "vlt switch")
 		}
-		if len(args) == 0 && (dependencies.Terminal == nil || !dependencies.Terminal.PromptsEnabled()) {
-			return managementUsageError(
-				"profile selection is required outside an interactive terminal",
-				switchUsage,
-				"vlt switch",
-			)
-		}
 		if dependencies.Profiles == nil {
 			return errors.New("switch profile: profile configuration is not configured")
 		}
 		if dependencies.Output == nil {
 			return errors.New("switch profile: output is not configured")
 		}
-		configuration, err := dependencies.Profiles.Load(ctx)
-		if err != nil {
-			return safeManagementError(fmt.Errorf("switch profile: load profiles: %w", err))
-		}
-		profiles := profile.NewService(configuration.Profiles)
-		selector := ""
+		var selected profile.Profile
 		if len(args) == 0 {
-			candidates := profiles.List()
-			if len(candidates) == 0 {
-				return managementUsageError(
-					"no profiles configured; add one with 'vlt profile add NAME --address URL --username USER'",
-					switchUsage,
-					"vlt switch",
-				)
-			}
-			if dependencies.Selector == nil {
-				return errors.New("switch profile: interactive selector is not configured")
-			}
-			names := make([]string, len(candidates))
-			for index, candidate := range candidates {
-				names[index] = candidate.Name
-			}
-			selected, err := dependencies.Selector.Select(ctx, names, configuration.ActiveProfile)
+			var err error
+			selected, _, err = selectProfileInteractively(ctx, dependencies.Profiles, dependencies.Terminal, dependencies.Selector)
 			if err != nil {
-				return safeManagementError(fmt.Errorf("select profile: %w", err))
+				return interactiveProfileError(err, switchUsage, "vlt switch")
 			}
-			selector = selected
 		} else {
-			selector = args[0]
-		}
-
-		selected, err := profiles.Resolve(selector)
-		if err != nil {
-			return safeManagementError(fmt.Errorf("select profile %q: %w", selector, err))
+			configuration, err := dependencies.Profiles.Load(ctx)
+			if err != nil {
+				return safeManagementError(fmt.Errorf("switch profile: load profiles: %w", err))
+			}
+			selected, err = profile.NewService(configuration.Profiles).Resolve(args[0])
+			if err != nil {
+				return safeManagementError(fmt.Errorf("select profile %q: %w", args[0], err))
+			}
 		}
 		if err := dependencies.Profiles.SetActiveProfile(ctx, selected.Name); err != nil {
 			return safeManagementError(fmt.Errorf("switch to profile %q: %w", selected.Name, err))
@@ -315,15 +291,8 @@ func profileShow(ctx context.Context, dependencies ProfileDependencies, args []s
 	if containsHelpFlag(args) {
 		return writeManagementHelp(dependencies.Output, "profile show", profileShowHelpText)
 	}
-	if len(args) != 1 {
-		diagnostic := "profile NAME is required"
-		if len(args) > 1 {
-			diagnostic = fmt.Sprintf("unexpected argument %q", args[1])
-		}
-		return managementUsageError(diagnostic, profileShowUsage, "vlt profile show")
-	}
-	if err := profile.ValidateName(args[0]); err != nil {
-		return managementUsageError(fmt.Sprintf("invalid profile NAME %q: %v", args[0], err), profileShowUsage, "vlt profile show")
+	if len(args) > 1 {
+		return managementUsageError(fmt.Sprintf("unexpected argument %q", args[1]), profileShowUsage, "vlt profile show")
 	}
 	if dependencies.Profiles == nil {
 		return errors.New("show profile: profile configuration is not configured")
@@ -331,15 +300,29 @@ func profileShow(ctx context.Context, dependencies ProfileDependencies, args []s
 	if dependencies.Output == nil {
 		return errors.New("show profile: output is not configured")
 	}
-	configuration, err := dependencies.Profiles.Load(ctx)
-	if err != nil {
-		return safeManagementError(fmt.Errorf("show profile %q: load configuration: %w", args[0], err))
+	var selected profile.Profile
+	activeProfile := ""
+	if len(args) == 0 {
+		var err error
+		selected, activeProfile, err = selectProfileInteractively(ctx, dependencies.Profiles, dependencies.Terminal, dependencies.Selector)
+		if err != nil {
+			return interactiveProfileError(err, profileShowUsage, "vlt profile show")
+		}
+	} else {
+		if err := profile.ValidateName(args[0]); err != nil {
+			return managementUsageError(fmt.Sprintf("invalid profile NAME %q: %v", args[0], err), profileShowUsage, "vlt profile show")
+		}
+		configuration, err := dependencies.Profiles.Load(ctx)
+		if err != nil {
+			return safeManagementError(fmt.Errorf("show profile %q: load configuration: %w", args[0], err))
+		}
+		selected, err = profile.NewService(configuration.Profiles).Find(args[0])
+		if err != nil {
+			return fmt.Errorf("show profile %q: %w", args[0], err)
+		}
+		activeProfile = configuration.ActiveProfile
 	}
-	selected, err := profile.NewService(configuration.Profiles).Find(args[0])
-	if err != nil {
-		return fmt.Errorf("show profile %q: %w", args[0], err)
-	}
-	details := newProfilePresentation(dependencies.Terminal).details(selected, selected.Name == configuration.ActiveProfile)
+	details := newProfilePresentation(dependencies.Terminal).details(selected, selected.Name == activeProfile)
 	if _, err := io.WriteString(dependencies.Output, details); err != nil {
 		return fmt.Errorf("display profile %q: %w", selected.Name, err)
 	}

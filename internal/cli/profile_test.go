@@ -360,8 +360,9 @@ func TestProfileHandlerShowPrintsOnlyProfileMetadata(t *testing.T) {
 		}},
 		ActiveProfile: "team-a",
 	}}
+	selector := &fakeProfileSelector{selected: "team-b"}
 	var output bytes.Buffer
-	handler := NewProfileHandler(ProfileDependencies{Profiles: store, Output: &output})
+	handler := NewProfileHandler(ProfileDependencies{Profiles: store, Output: &output, Selector: selector})
 
 	if err := handler(context.Background(), []string{"show", "team-a"}); err != nil {
 		t.Fatalf("profile show error = %v", err)
@@ -374,6 +375,121 @@ func TestProfileHandlerShowPrintsOnlyProfileMetadata(t *testing.T) {
 		if strings.Contains(strings.ToLower(output.String()), forbidden) {
 			t.Errorf("output exposed %q: %q", forbidden, output.String())
 		}
+	}
+	if selector.calls != 0 {
+		t.Errorf("selector calls = %d, want 0 for explicit show", selector.calls)
+	}
+}
+
+func TestProfileHandlerShowSelectsInteractively(t *testing.T) {
+	store := &fakeProfileStore{configuration: config.Configuration{
+		Profiles: []profile.Profile{
+			managementTestProfile("team-b"),
+			{
+				Name: "team-a", Address: "https://vault.example.com", Username: "alice",
+				AuthPath: "company-oidc", Namespace: "engineering",
+			},
+		},
+		ActiveProfile: "team-b",
+	}}
+	selector := &fakeProfileSelector{selected: "team-a"}
+	var output bytes.Buffer
+	handler := NewProfileHandler(ProfileDependencies{
+		Profiles: store, Output: &output, Terminal: switchTerminal{prompts: true}, Selector: selector,
+	})
+
+	if err := handler(context.Background(), []string{"show"}); err != nil {
+		t.Fatalf("profile show error = %v", err)
+	}
+	if !reflect.DeepEqual(selector.names, []string{"team-a", "team-b"}) {
+		t.Errorf("selector names = %#v, want sorted names", selector.names)
+	}
+	if selector.active != "team-b" {
+		t.Errorf("selector active profile = %q, want team-b", selector.active)
+	}
+	want := "Name:      team-a\nAddress:   https://vault.example.com\nUsername:  alice\nAuth path: company-oidc\nNamespace: engineering\nActive:    no\n"
+	if got := output.String(); got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+func TestProfileHandlerShowRejectsMissingNameOutsideTerminal(t *testing.T) {
+	store := &fakeProfileStore{configuration: config.Configuration{
+		Profiles: []profile.Profile{managementTestProfile("team-a")},
+	}}
+	selector := &fakeProfileSelector{selected: "team-a"}
+	handler := NewProfileHandler(ProfileDependencies{
+		Profiles: store, Output: &bytes.Buffer{}, Terminal: switchTerminal{}, Selector: selector,
+	})
+
+	err := handler(context.Background(), []string{"show"})
+	if err == nil {
+		t.Fatal("profile show error = nil, want non-terminal guidance")
+	}
+	for _, want := range []string{"profile selection is required outside an interactive terminal", "Usage: vlt profile show [NAME]"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("profile show error = %q, want text %q", err, want)
+		}
+	}
+	if selector.calls != 0 || store.loads != 0 {
+		t.Errorf("non-terminal show used services: selector calls=%d profile loads=%d", selector.calls, store.loads)
+	}
+}
+
+func TestProfileHandlerShowExplainsHowToAddFirstProfile(t *testing.T) {
+	store := &fakeProfileStore{}
+	selector := &fakeProfileSelector{}
+	handler := NewProfileHandler(ProfileDependencies{
+		Profiles: store, Output: &bytes.Buffer{}, Terminal: switchTerminal{prompts: true}, Selector: selector,
+	})
+
+	err := handler(context.Background(), []string{"show"})
+	if err == nil {
+		t.Fatal("profile show error = nil, want empty-profile guidance")
+	}
+	for _, want := range []string{"no profiles configured", "vlt profile add"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("profile show error = %q, want text %q", err, want)
+		}
+	}
+	if selector.calls != 0 {
+		t.Errorf("selector calls = %d, want 0", selector.calls)
+	}
+}
+
+func TestProfileHandlerShowCancelAndInterruptEmitNothing(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		err  error
+	}{
+		{name: "cancel", err: errors.New("user aborted with hvs.synthetic-show-token")},
+		{name: "interrupt", err: context.Canceled},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &fakeProfileStore{configuration: config.Configuration{
+				Profiles:      []profile.Profile{managementTestProfile("team-a")},
+				ActiveProfile: "team-a",
+			}}
+			selector := &fakeProfileSelector{err: tt.err}
+			var output bytes.Buffer
+			handler := NewProfileHandler(ProfileDependencies{
+				Profiles: store, Output: &output, Terminal: switchTerminal{prompts: true}, Selector: selector,
+			})
+
+			err := handler(context.Background(), []string{"show"})
+			if err == nil {
+				t.Fatal("profile show error = nil, want selection failure")
+			}
+			if strings.Contains(err.Error(), "synthetic-show-token") {
+				t.Fatalf("profile show error exposed token: %q", err)
+			}
+			if output.Len() != 0 {
+				t.Errorf("output = %q, want empty", output.String())
+			}
+			if len(store.selectors) != 0 || store.configuration.ActiveProfile != "team-a" {
+				t.Errorf("selection failure changed state: selectors=%#v active=%q", store.selectors, store.configuration.ActiveProfile)
+			}
+		})
 	}
 }
 
@@ -436,8 +552,7 @@ func TestProfileHandlerRejectsInvalidCommandForms(t *testing.T) {
 		{name: "add missing username", arguments: []string{"add", "team-a", "--address", "https://vault.example.com"}, want: "--username"},
 		{name: "add extra argument", arguments: []string{"add", "team-a", "extra", "--address", "x", "--username", "y"}, want: "profile add NAME"},
 		{name: "list extra argument", arguments: []string{"list", "extra"}, want: "profile list"},
-		{name: "show missing name", arguments: []string{"show"}, want: "profile show NAME"},
-		{name: "show extra argument", arguments: []string{"show", "team-a", "extra"}, want: "profile show NAME"},
+		{name: "show extra argument", arguments: []string{"show", "team-a", "extra"}, want: "profile show [NAME]"},
 		{name: "update missing name", arguments: []string{"update"}, want: "profile update NAME"},
 		{name: "update unknown flag", arguments: []string{"update", "team-a", "--token", "secret"}, want: "token"},
 		{name: "remove missing name", arguments: []string{"remove"}, want: "profile remove NAME"},

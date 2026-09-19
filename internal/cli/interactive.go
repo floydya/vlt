@@ -7,6 +7,13 @@ import (
 	"io"
 
 	"charm.land/huh/v2"
+
+	"vlt/internal/profile"
+)
+
+var (
+	errProfileSelectionRequiresTerminal = errors.New("profile selection is required outside an interactive terminal")
+	errNoProfilesConfigured             = errors.New("no profiles configured")
 )
 
 type ProfileSelector interface {
@@ -58,4 +65,59 @@ func (s huhProfileSelector) Select(ctx context.Context, names []string, active s
 		return "", fmt.Errorf("select profile: %w", err)
 	}
 	return selected, nil
+}
+
+func selectProfileInteractively(
+	ctx context.Context,
+	profiles ConfigurationLoader,
+	terminal Terminal,
+	selector ProfileSelector,
+) (profile.Profile, string, error) {
+	if terminal == nil || !terminal.PromptsEnabled() {
+		return profile.Profile{}, "", errProfileSelectionRequiresTerminal
+	}
+	if profiles == nil {
+		return profile.Profile{}, "", errors.New("profile selection: profile configuration is not configured")
+	}
+	configuration, err := profiles.Load(ctx)
+	if err != nil {
+		return profile.Profile{}, "", fmt.Errorf("profile selection: load profiles: %w", err)
+	}
+	service := profile.NewService(configuration.Profiles)
+	candidates := service.List()
+	if len(candidates) == 0 {
+		return profile.Profile{}, "", errNoProfilesConfigured
+	}
+	if selector == nil {
+		return profile.Profile{}, "", errors.New("profile selection: interactive selector is not configured")
+	}
+
+	names := make([]string, len(candidates))
+	for index, candidate := range candidates {
+		names[index] = candidate.Name
+	}
+	selectedName, err := selector.Select(ctx, names, configuration.ActiveProfile)
+	if err != nil {
+		return profile.Profile{}, "", fmt.Errorf("profile selection: %w", err)
+	}
+	selected, err := service.Find(selectedName)
+	if err != nil {
+		return profile.Profile{}, "", fmt.Errorf("profile selection: resolve selected profile: %w", err)
+	}
+	return selected, configuration.ActiveProfile, nil
+}
+
+func interactiveProfileError(err error, usage, command string) error {
+	switch {
+	case errors.Is(err, errProfileSelectionRequiresTerminal):
+		return managementUsageError(err.Error(), usage, command)
+	case errors.Is(err, errNoProfilesConfigured):
+		return managementUsageError(
+			"no profiles configured; add one with 'vlt profile add NAME --address URL --username USER'",
+			usage,
+			command,
+		)
+	default:
+		return safeManagementError(err)
+	}
 }
