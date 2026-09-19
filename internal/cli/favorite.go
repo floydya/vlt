@@ -110,12 +110,16 @@ type FavoriteMutator interface {
 }
 
 type FavoriteDependencies struct {
-	Favorites FavoriteConfigurationLoader
-	Mutations FavoriteMutator
-	Output    io.Writer
-	Terminal  Terminal
-	Selector  FavoriteSelector
-	Vault     Handler
+	Profiles           ConfigurationLoader
+	Favorites          FavoriteConfigurationLoader
+	Mutations          FavoriteMutator
+	Output             io.Writer
+	Terminal           Terminal
+	Selector           FavoriteSelector
+	Vault              Handler
+	ManagementSelector FavoriteManagementSelector
+	Form               FavoriteForm
+	RemovalConfirmer   FavoriteRemovalConfirmer
 }
 
 func NewFavoriteHandler(dependencies FavoriteDependencies) Handler {
@@ -160,7 +164,11 @@ func favoriteAdd(ctx context.Context, dependencies FavoriteDependencies, args []
 	if err != nil {
 		return managementUsageError(fmt.Sprintf("invalid favorite add option: %v", err), favoriteAddUsage, "vlt favorite add")
 	}
-	if path == "" || options.profile == "" || options.operation == "" {
+	explicit := path != "" || len(options.set) != 0
+	if explicit && (path == "" || options.profile == "" || options.operation == "") {
+		return AutomaticHelp{Text: favoriteAddHelpText}
+	}
+	if !explicit && (dependencies.Terminal == nil || !dependencies.Terminal.PromptsEnabled()) {
 		return AutomaticHelp{Text: favoriteAddHelpText}
 	}
 	if dependencies.Mutations == nil {
@@ -171,6 +179,21 @@ func favoriteAdd(ctx context.Context, dependencies FavoriteDependencies, args []
 	}
 	candidate := favorite.Favorite{
 		Profile: options.profile, Operation: options.operation, Path: path, Note: options.note,
+	}
+	if !explicit {
+		profiles, err := favoriteFormProfiles(ctx, dependencies)
+		if err != nil {
+			return interactiveFavoriteError(err, favoriteAddUsage, "vlt favorite add")
+		}
+		if dependencies.Form == nil {
+			return errors.New("add favorite: interactive form is not configured")
+		}
+		candidate, err = dependencies.Form.Run(ctx, FavoriteFormRequest{
+			Favorite: favorite.Favorite{Operation: favorite.OperationRead}, Profiles: profiles,
+		})
+		if err != nil {
+			return safeManagementError(fmt.Errorf("add favorite: %w", err))
+		}
 	}
 	if err := dependencies.Mutations.Add(ctx, candidate); err != nil {
 		return safeManagementError(err)
@@ -252,7 +275,10 @@ func favoriteUpdate(ctx context.Context, dependencies FavoriteDependencies, args
 	if err != nil {
 		return managementUsageError(fmt.Sprintf("invalid favorite update option: %v", err), favoriteUpdateUsage, "vlt favorite update")
 	}
-	if selector == "" || len(options.set) == 0 {
+	if selector == "" && len(options.set) != 0 {
+		return AutomaticHelp{Text: favoriteUpdateHelpText}
+	}
+	if len(options.set) == 0 && (dependencies.Terminal == nil || !dependencies.Terminal.PromptsEnabled()) {
 		return AutomaticHelp{Text: favoriteUpdateHelpText}
 	}
 	if dependencies.Mutations == nil {
@@ -261,7 +287,27 @@ func favoriteUpdate(ctx context.Context, dependencies FavoriteDependencies, args
 	if dependencies.Output == nil {
 		return errors.New("update favorite: output is not configured")
 	}
-	if err := dependencies.Mutations.Update(ctx, selector, favoriteChangesFromOptions(options)); err != nil {
+	changes := favoriteChangesFromOptions(options)
+	if len(options.set) == 0 {
+		selection, err := selectFavoriteForManagement(ctx, dependencies, selector)
+		if err != nil {
+			return interactiveFavoriteError(err, favoriteUpdateUsage, "vlt favorite update")
+		}
+		profiles, err := favoriteFormProfiles(ctx, dependencies)
+		if err != nil {
+			return interactiveFavoriteError(err, favoriteUpdateUsage, "vlt favorite update")
+		}
+		if dependencies.Form == nil {
+			return errors.New("update favorite: interactive form is not configured")
+		}
+		updated, err := dependencies.Form.Run(ctx, FavoriteFormRequest{Favorite: selection.favorite, Profiles: profiles})
+		if err != nil {
+			return safeManagementError(fmt.Errorf("update favorite: %w", err))
+		}
+		selector = selection.selector
+		changes = favoriteChangesBetween(selection.favorite, updated)
+	}
+	if err := dependencies.Mutations.Update(ctx, selector, changes); err != nil {
 		return safeManagementError(err)
 	}
 	if _, err := fmt.Fprintf(dependencies.Output, "Updated favorite %s.\n", selector); err != nil {
@@ -274,7 +320,7 @@ func favoriteRemove(ctx context.Context, dependencies FavoriteDependencies, args
 	if containsHelpFlag(args) {
 		return writeManagementHelp(dependencies.Output, "favorite remove", favoriteRemoveHelpText)
 	}
-	if len(args) == 0 {
+	if len(args) == 0 && (dependencies.Terminal == nil || !dependencies.Terminal.PromptsEnabled()) {
 		return AutomaticHelp{Text: favoriteRemoveHelpText}
 	}
 	if len(args) > 1 {
@@ -286,10 +332,30 @@ func favoriteRemove(ctx context.Context, dependencies FavoriteDependencies, args
 	if dependencies.Output == nil {
 		return errors.New("remove favorite: output is not configured")
 	}
-	if err := dependencies.Mutations.Remove(ctx, args[0]); err != nil {
+	selector := ""
+	if len(args) == 1 {
+		selector = args[0]
+	} else {
+		selection, err := selectFavoriteForManagement(ctx, dependencies, "")
+		if err != nil {
+			return interactiveFavoriteError(err, favoriteRemoveUsage, "vlt favorite remove")
+		}
+		if dependencies.RemovalConfirmer == nil {
+			return errors.New("remove favorite: interactive confirmation is not configured")
+		}
+		confirmed, err := dependencies.RemovalConfirmer.Confirm(ctx, FavoriteRemovalConfirmation{Favorite: selection.favorite})
+		if err != nil {
+			return safeManagementError(fmt.Errorf("remove favorite: %w", err))
+		}
+		if !confirmed {
+			return nil
+		}
+		selector = selection.selector
+	}
+	if err := dependencies.Mutations.Remove(ctx, selector); err != nil {
 		return safeManagementError(err)
 	}
-	if _, err := fmt.Fprintf(dependencies.Output, "Removed favorite %s.\n", args[0]); err != nil {
+	if _, err := fmt.Fprintf(dependencies.Output, "Removed favorite %s.\n", selector); err != nil {
 		return fmt.Errorf("display removed favorite: %w", err)
 	}
 	return nil

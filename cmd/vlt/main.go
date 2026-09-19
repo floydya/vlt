@@ -49,6 +49,9 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 	favoriteSelector := cli.NewFZFFavoriteSelector()
 	form := cli.NewHuhProfileForm(stdin, stdout)
 	removalConfirmer := cli.NewHuhProfileRemovalConfirmer(stdin, stdout)
+	favoriteManagementSelector := cli.NewHuhFavoriteManagementSelector(stdin, stdout)
+	favoriteForm := cli.NewHuhFavoriteForm(stdin, stdout)
+	favoriteRemovalConfirmer := cli.NewHuhFavoriteRemovalConfirmer(stdin, stdout)
 	vault := vaultexec.NewOSExecutor()
 	credentials := credential.NewNativeStore()
 	authenticator := credential.NewAuthenticator(vault, credentials)
@@ -72,8 +75,9 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 		}),
 		Switch: cli.NewSwitchHandler(cli.SwitchDependencies{Profiles: profiles, Output: stdout, Terminal: terminal, Selector: selector}),
 		Favorite: cli.NewFavoriteHandler(cli.FavoriteDependencies{
-			Favorites: favorites, Mutations: favoriteMutations, Output: stdout, Terminal: terminal,
-			Selector: favoriteSelector, Vault: delegate,
+			Profiles: profiles, Favorites: favorites, Mutations: favoriteMutations, Output: stdout, Terminal: terminal,
+			Selector: favoriteSelector, Vault: delegate, ManagementSelector: favoriteManagementSelector,
+			Form: favoriteForm, RemovalConfirmer: favoriteRemovalConfirmer,
 		}),
 		Completion: cli.NewCompletionHandler(cli.CompletionDependencies{Profiles: profiles, Output: stdout}),
 		Vault:      delegate,
