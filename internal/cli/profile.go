@@ -232,7 +232,8 @@ func NewSwitchHandler(dependencies SwitchDependencies) Handler {
 		if err := dependencies.Profiles.SetActiveProfile(ctx, selected.Name); err != nil {
 			return safeManagementError(fmt.Errorf("switch to profile %q: %w", selected.Name, err))
 		}
-		if _, err := fmt.Fprintf(dependencies.Output, "Switched to profile %q.\n", selected.Name); err != nil {
+		status := newPresentation(dependencies.Terminal).status(fmt.Sprintf("Switched to profile %q.", selected.Name))
+		if _, err := io.WriteString(dependencies.Output, status); err != nil {
 			return fmt.Errorf("display selected profile: %w", err)
 		}
 		return nil
@@ -273,13 +274,14 @@ func profileAdd(ctx context.Context, dependencies ProfileDependencies, args []st
 		}
 		candidate, err = dependencies.Form.Run(ctx, ProfileFormRequest{Profile: candidate, NameEditable: true})
 		if err != nil {
-			return safeManagementError(fmt.Errorf("add profile: %w", err))
+			return interactiveOperationError(fmt.Errorf("add profile: %w", err))
 		}
 	}
 	if err := dependencies.Mutations.Add(ctx, candidate); err != nil {
 		return safeManagementError(err)
 	}
-	if _, err := fmt.Fprintf(dependencies.Output, "Added profile %q.\n", candidate.Name); err != nil {
+	status := newPresentation(dependencies.Terminal).status(fmt.Sprintf("Added profile %q.", candidate.Name))
+	if _, err := io.WriteString(dependencies.Output, status); err != nil {
 		return fmt.Errorf("display added profile: %w", err)
 	}
 	return nil
@@ -426,7 +428,7 @@ func profileUpdateCommand(ctx context.Context, dependencies ProfileDependencies,
 
 		completed, formErr := dependencies.Form.Run(ctx, ProfileFormRequest{Profile: current})
 		if formErr != nil {
-			return safeManagementError(fmt.Errorf("update profile %q: %w", current.Name, formErr))
+			return interactiveOperationError(fmt.Errorf("update profile %q: %w", current.Name, formErr))
 		}
 		completed.Name = current.Name
 		name = current.Name
@@ -435,7 +437,8 @@ func profileUpdateCommand(ctx context.Context, dependencies ProfileDependencies,
 	if err := dependencies.Mutations.Update(ctx, name, changes); err != nil {
 		return safeManagementError(err)
 	}
-	if _, err := fmt.Fprintf(dependencies.Output, "Updated profile %q.\n", name); err != nil {
+	status := newPresentation(dependencies.Terminal).status(fmt.Sprintf("Updated profile %q.", name))
+	if _, err := io.WriteString(dependencies.Output, status); err != nil {
 		return fmt.Errorf("display updated profile: %w", err)
 	}
 	return nil
@@ -548,7 +551,7 @@ func profileRemove(ctx context.Context, dependencies ProfileDependencies, args [
 			Name: name, LeavesNoActiveProfile: name == active, LinkedFavorites: linkedCount,
 		})
 		if err != nil {
-			return safeManagementError(fmt.Errorf("remove profile %q: %w", name, err))
+			return interactiveOperationError(fmt.Errorf("remove profile %q: %w", name, err))
 		}
 		if !confirmed {
 			return nil
@@ -561,7 +564,8 @@ func profileRemove(ctx context.Context, dependencies ProfileDependencies, args [
 	} else if err := dependencies.Mutations.Remove(ctx, name); err != nil {
 		return safeManagementError(err)
 	}
-	if _, err := fmt.Fprintf(dependencies.Output, "Removed profile %q.\n", name); err != nil {
+	status := newPresentation(dependencies.Terminal).status(fmt.Sprintf("Removed profile %q.", name))
+	if _, err := io.WriteString(dependencies.Output, status); err != nil {
 		return fmt.Errorf("display removed profile: %w", err)
 	}
 	return nil

@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/huh/v2"
+	"github.com/charmbracelet/x/ansi"
+
 	"vlt/internal/config"
 	"vlt/internal/profile"
 )
@@ -55,6 +58,7 @@ func (f *fakeProfileSelector) Select(_ context.Context, candidates []profile.Pro
 
 type switchTerminal struct {
 	prompts bool
+	color   bool
 }
 
 func requireAutomaticHelp(t *testing.T, err error, want string) {
@@ -71,7 +75,7 @@ func requireAutomaticHelp(t *testing.T, err error, want string) {
 func (switchTerminal) InputIsTerminal() bool   { return false }
 func (switchTerminal) DisplayIsTerminal() bool { return false }
 func (t switchTerminal) PromptsEnabled() bool  { return t.prompts }
-func (switchTerminal) ColorEnabled() bool      { return false }
+func (t switchTerminal) ColorEnabled() bool    { return t.color }
 
 func (f *fakeProfileStore) Load(context.Context) (config.Configuration, error) {
 	f.loads++
@@ -297,6 +301,150 @@ func (f *fakeProfileMutator) Update(_ context.Context, name string, changes prof
 func (f *fakeProfileMutator) Remove(_ context.Context, name string) error {
 	f.removed = append(f.removed, name)
 	return f.removeErr
+}
+
+func TestProfileMutationSuccessOutputUsesSharedStatusPresentation(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+		run  func(*bytes.Buffer) error
+	}{
+		{
+			name: "add",
+			want: "Added profile \"team-a\".\n",
+			run: func(output *bytes.Buffer) error {
+				handler := NewProfileHandler(ProfileDependencies{
+					Mutations: &fakeProfileMutator{}, Output: output, Terminal: switchTerminal{color: true},
+				})
+				return handler(context.Background(), []string{
+					"add", "team-a", "--address", "https://vault.example.com", "--username", "alice",
+				})
+			},
+		},
+		{
+			name: "update",
+			want: "Updated profile \"team-a\".\n",
+			run: func(output *bytes.Buffer) error {
+				handler := NewProfileHandler(ProfileDependencies{
+					Mutations: &fakeProfileMutator{}, Output: output, Terminal: switchTerminal{color: true},
+				})
+				return handler(context.Background(), []string{"update", "team-a", "--namespace", "platform"})
+			},
+		},
+		{
+			name: "remove",
+			want: "Removed profile \"team-a\".\n",
+			run: func(output *bytes.Buffer) error {
+				handler := NewProfileHandler(ProfileDependencies{
+					Mutations: &fakeProfileMutator{}, Output: output, Terminal: switchTerminal{color: true},
+				})
+				return handler(context.Background(), []string{"remove", "team-a"})
+			},
+		},
+		{
+			name: "switch",
+			want: "Switched to profile \"team-a\".\n",
+			run: func(output *bytes.Buffer) error {
+				store := &fakeProfileStore{configuration: config.Configuration{
+					Profiles: []profile.Profile{managementTestProfile("team-a")},
+				}}
+				handler := NewSwitchHandler(SwitchDependencies{
+					Profiles: store, Output: output, Terminal: switchTerminal{color: true},
+				})
+				return handler(context.Background(), []string{"team-a"})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var output bytes.Buffer
+			if err := tt.run(&output); err != nil {
+				t.Fatalf("mutation error = %v", err)
+			}
+			if !strings.Contains(output.String(), "\x1b[") {
+				t.Fatalf("styled output contains no ANSI: %q", output.String())
+			}
+			if got := ansi.Strip(output.String()); got != tt.want {
+				t.Fatalf("unstyled output = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestProfileCancellationUsesOneDiagnosticAndNoSuccessOutput(t *testing.T) {
+	tests := []struct {
+		name  string
+		cause error
+		run   func(*bytes.Buffer, error) error
+	}{
+		{
+			name: "add form", cause: huh.ErrUserAborted,
+			run: func(output *bytes.Buffer, cause error) error {
+				handler := NewProfileHandler(ProfileDependencies{
+					Mutations: &fakeProfileMutator{}, Output: output, Terminal: switchTerminal{prompts: true},
+					Form: &fakeProfileForm{err: cause},
+				})
+				return handler(context.Background(), []string{"add"})
+			},
+		},
+		{
+			name: "update form", cause: huh.ErrUserAborted,
+			run: func(output *bytes.Buffer, cause error) error {
+				store := &fakeProfileStore{configuration: config.Configuration{
+					Profiles: []profile.Profile{managementTestProfile("team-a")},
+				}}
+				handler := NewProfileHandler(ProfileDependencies{
+					Profiles: store, Mutations: &fakeProfileMutator{}, Output: output,
+					Terminal: switchTerminal{prompts: true}, Form: &fakeProfileForm{err: cause},
+				})
+				return handler(context.Background(), []string{"update", "team-a"})
+			},
+		},
+		{
+			name: "remove confirmation", cause: huh.ErrUserAborted,
+			run: func(output *bytes.Buffer, cause error) error {
+				store := &fakeProfileStore{configuration: config.Configuration{
+					Profiles: []profile.Profile{managementTestProfile("team-a")}, ActiveProfile: "team-a",
+				}}
+				handler := NewProfileHandler(ProfileDependencies{
+					Profiles: store, Mutations: &fakeProfileMutator{}, Output: output,
+					Terminal: switchTerminal{prompts: true}, Selector: &fakeProfileSelector{selected: "team-a"},
+					RemovalConfirmer: &fakeProfileRemovalConfirmer{err: cause},
+				})
+				return handler(context.Background(), []string{"remove"})
+			},
+		},
+		{
+			name: "switch selector", cause: ErrSharedSelectorCanceled,
+			run: func(output *bytes.Buffer, cause error) error {
+				store := &fakeProfileStore{configuration: config.Configuration{
+					Profiles: []profile.Profile{managementTestProfile("team-a")}, ActiveProfile: "team-a",
+				}}
+				handler := NewSwitchHandler(SwitchDependencies{
+					Profiles: store, Output: output, Terminal: switchTerminal{prompts: true},
+					Selector: &fakeProfileSelector{err: cause},
+				})
+				return handler(context.Background(), nil)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var output bytes.Buffer
+			err := tt.run(&output, tt.cause)
+			if err == nil || err.Error() != "operation canceled" {
+				t.Fatalf("cancellation error = %v, want operation canceled", err)
+			}
+			if !errors.Is(err, tt.cause) {
+				t.Fatalf("cancellation error = %v, want cause %v", err, tt.cause)
+			}
+			if output.Len() != 0 {
+				t.Fatalf("cancellation output = %q, want no success output", output.String())
+			}
+		})
+	}
 }
 
 func TestProfileHandlerAddParsesRequiredAndOptionalFields(t *testing.T) {

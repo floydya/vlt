@@ -17,6 +17,18 @@ var (
 	errNoProfilesConfigured             = errors.New("no profiles configured")
 )
 
+type interactiveCancellationError struct {
+	cause error
+}
+
+func (e interactiveCancellationError) Error() string {
+	return "operation canceled"
+}
+
+func (e interactiveCancellationError) Unwrap() error {
+	return e.cause
+}
+
 type ProfileSelector interface {
 	Select(context.Context, []profile.Profile, string) (string, error)
 }
@@ -252,6 +264,16 @@ func interactiveProfileError(err error, usage, command string) error {
 			command,
 		)
 	default:
-		return safeManagementError(err)
+		return interactiveOperationError(err)
 	}
+}
+
+func interactiveOperationError(err error) error {
+	if errors.Is(err, ErrSharedSelectorCanceled) ||
+		errors.Is(err, huh.ErrUserAborted) ||
+		errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) {
+		return interactiveCancellationError{cause: err}
+	}
+	return safeManagementError(err)
 }
