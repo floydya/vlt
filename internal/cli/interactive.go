@@ -30,6 +30,15 @@ type ProfileForm interface {
 	Run(context.Context, ProfileFormRequest) (profile.Profile, error)
 }
 
+type ProfileRemovalConfirmation struct {
+	Name                  string
+	LeavesNoActiveProfile bool
+}
+
+type ProfileRemovalConfirmer interface {
+	Confirm(context.Context, ProfileRemovalConfirmation) (bool, error)
+}
+
 type huhProfileSelector struct {
 	input      io.Reader
 	output     io.Writer
@@ -42,12 +51,22 @@ type huhProfileForm struct {
 	accessible bool
 }
 
+type huhProfileRemovalConfirmer struct {
+	input      io.Reader
+	output     io.Writer
+	accessible bool
+}
+
 func NewHuhProfileSelector(input io.Reader, output io.Writer) ProfileSelector {
 	return huhProfileSelector{input: input, output: output}
 }
 
 func NewHuhProfileForm(input io.Reader, output io.Writer) ProfileForm {
 	return huhProfileForm{input: input, output: output}
+}
+
+func NewHuhProfileRemovalConfirmer(input io.Reader, output io.Writer) ProfileRemovalConfirmer {
+	return huhProfileRemovalConfirmer{input: input, output: output}
 }
 
 func (s huhProfileSelector) Select(ctx context.Context, names []string, active string) (string, error) {
@@ -128,6 +147,34 @@ func (f huhProfileForm) Run(ctx context.Context, request ProfileFormRequest) (pr
 		return profile.Profile{}, fmt.Errorf("profile form: validate result: %w", err)
 	}
 	return candidate, nil
+}
+
+func (c huhProfileRemovalConfirmer) Confirm(ctx context.Context, request ProfileRemovalConfirmation) (bool, error) {
+	if c.input == nil {
+		return false, errors.New("confirm profile removal: input is not configured")
+	}
+	if c.output == nil {
+		return false, errors.New("confirm profile removal: output is not configured")
+	}
+
+	title := fmt.Sprintf("Remove profile %q and its stored credential?", request.Name)
+	if request.LeavesNoActiveProfile {
+		title += " This will leave no active profile."
+	}
+	confirmed := false
+	field := huh.NewConfirm().
+		Title(title).
+		Affirmative("Remove").
+		Negative("Keep").
+		Value(&confirmed)
+	form := huh.NewForm(huh.NewGroup(field)).
+		WithInput(c.input).
+		WithOutput(c.output).
+		WithAccessible(c.accessible)
+	if err := form.RunWithContext(ctx); err != nil {
+		return false, fmt.Errorf("confirm profile removal: %w", err)
+	}
+	return confirmed, nil
 }
 
 func profileFormInputValidator(defaultValue string, allowDefault bool, validate func(string) error) func(string) error {

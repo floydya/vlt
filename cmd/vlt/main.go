@@ -42,6 +42,7 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 	terminal := cli.NewTerminal(stdin, stdout, os.Environ())
 	selector := cli.NewHuhProfileSelector(stdin, stdout)
 	form := cli.NewHuhProfileForm(stdin, stdout)
+	removalConfirmer := cli.NewHuhProfileRemovalConfirmer(stdin, stdout)
 	vault := vaultexec.NewOSExecutor()
 	credentials := credential.NewNativeStore()
 	authenticator := credential.NewAuthenticator(vault, credentials)
@@ -57,8 +58,11 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 	})
 
 	return cli.NewDispatcher(cli.Dependencies{
-		Output:     stdout,
-		Profile:    cli.NewProfileHandler(cli.ProfileDependencies{Profiles: profiles, Mutations: mutations, Output: stdout, Terminal: terminal, Selector: selector, Form: form}),
+		Output: stdout,
+		Profile: cli.NewProfileHandler(cli.ProfileDependencies{
+			Profiles: profiles, Mutations: mutations, Output: stdout, Terminal: terminal,
+			Selector: selector, Form: form, RemovalConfirmer: removalConfirmer,
+		}),
 		Switch:     cli.NewSwitchHandler(cli.SwitchDependencies{Profiles: profiles, Output: stdout, Terminal: terminal, Selector: selector}),
 		Completion: cli.NewCompletionHandler(cli.CompletionDependencies{Profiles: profiles, Output: stdout}),
 		Vault:      delegate,

@@ -703,8 +703,7 @@ func TestProfileHandlerRejectsInvalidCommandForms(t *testing.T) {
 		{name: "list extra argument", arguments: []string{"list", "extra"}, want: "profile list"},
 		{name: "show extra argument", arguments: []string{"show", "team-a", "extra"}, want: "profile show [NAME]"},
 		{name: "update unknown flag", arguments: []string{"update", "team-a", "--token", "secret"}, want: "token"},
-		{name: "remove missing name", arguments: []string{"remove"}, want: "profile remove NAME"},
-		{name: "remove extra argument", arguments: []string{"remove", "team-a", "extra"}, want: "profile remove NAME"},
+		{name: "remove extra argument", arguments: []string{"remove", "team-a", "extra"}, want: "profile remove [NAME]"},
 	}
 
 	for _, tt := range tests {

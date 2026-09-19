@@ -18,7 +18,7 @@ const (
 	profileListUsage   = "vlt profile list"
 	profileShowUsage   = "vlt profile show [NAME]"
 	profileUpdateUsage = "vlt profile update [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE]"
-	profileRemoveUsage = "vlt profile remove NAME"
+	profileRemoveUsage = "vlt profile remove [NAME]"
 	switchUsage        = "vlt switch [NAME|NUMBER]"
 )
 
@@ -104,12 +104,13 @@ Examples:
 const profileRemoveHelpText = `Remove a Vault profile and its stored credential.
 
 Usage:
-  vlt profile remove NAME
+  vlt profile remove [NAME]
 
 Options:
   -h, --help  Show help
 
 Examples:
+  vlt profile remove
   vlt profile remove team-a
 `
 
@@ -135,12 +136,13 @@ type ProfileMutator interface {
 }
 
 type ProfileDependencies struct {
-	Profiles  ConfigurationLoader
-	Mutations ProfileMutator
-	Output    io.Writer
-	Terminal  Terminal
-	Selector  ProfileSelector
-	Form      ProfileForm
+	Profiles         ConfigurationLoader
+	Mutations        ProfileMutator
+	Output           io.Writer
+	Terminal         Terminal
+	Selector         ProfileSelector
+	Form             ProfileForm
+	RemovalConfirmer ProfileRemovalConfirmer
 }
 
 type ActiveProfileStore interface {
@@ -475,12 +477,13 @@ func profileRemove(ctx context.Context, dependencies ProfileDependencies, args [
 	if containsHelpFlag(args) {
 		return writeManagementHelp(dependencies.Output, "profile remove", profileRemoveHelpText)
 	}
-	if len(args) != 1 {
-		diagnostic := "profile NAME is required"
-		if len(args) > 1 {
-			diagnostic = fmt.Sprintf("unexpected argument %q", args[1])
+	if len(args) > 1 {
+		return managementUsageError(fmt.Sprintf("unexpected argument %q", args[1]), profileRemoveUsage, "vlt profile remove")
+	}
+	if len(args) == 0 {
+		if err := requireInteractiveProfileTerminal(dependencies.Terminal); err != nil {
+			return interactiveProfileError(err, profileRemoveUsage, "vlt profile remove")
 		}
-		return managementUsageError(diagnostic, profileRemoveUsage, "vlt profile remove")
 	}
 	if dependencies.Mutations == nil {
 		return errors.New("remove profile: profile mutations are not configured")
@@ -488,10 +491,33 @@ func profileRemove(ctx context.Context, dependencies ProfileDependencies, args [
 	if dependencies.Output == nil {
 		return errors.New("remove profile: output is not configured")
 	}
-	if err := dependencies.Mutations.Remove(ctx, args[0]); err != nil {
+
+	name := ""
+	if len(args) == 1 {
+		name = args[0]
+	} else {
+		selected, active, err := selectProfileInteractively(ctx, dependencies.Profiles, dependencies.Terminal, dependencies.Selector)
+		if err != nil {
+			return interactiveProfileError(err, profileRemoveUsage, "vlt profile remove")
+		}
+		if dependencies.RemovalConfirmer == nil {
+			return errors.New("remove profile: interactive confirmation is not configured")
+		}
+		confirmed, err := dependencies.RemovalConfirmer.Confirm(ctx, ProfileRemovalConfirmation{
+			Name: selected.Name, LeavesNoActiveProfile: selected.Name == active,
+		})
+		if err != nil {
+			return safeManagementError(fmt.Errorf("remove profile %q: %w", selected.Name, err))
+		}
+		if !confirmed {
+			return nil
+		}
+		name = selected.Name
+	}
+	if err := dependencies.Mutations.Remove(ctx, name); err != nil {
 		return safeManagementError(err)
 	}
-	if _, err := fmt.Fprintf(dependencies.Output, "Removed profile %q.\n", args[0]); err != nil {
+	if _, err := fmt.Fprintf(dependencies.Output, "Removed profile %q.\n", name); err != nil {
 		return fmt.Errorf("display removed profile: %w", err)
 	}
 	return nil

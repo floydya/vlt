@@ -129,3 +129,43 @@ func TestHuhProfileFormKeepsUpdateNameReadOnly(t *testing.T) {
 		t.Errorf("update form output contains editable name field: %q", output.String())
 	}
 }
+
+func TestHuhProfileRemovalConfirmerNamesProfileAndWarnsForActiveRemoval(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		leavesNoActive bool
+		wantConfirmed  bool
+		wantWarning    bool
+	}{
+		{name: "accept active removal", input: "y\n", leavesNoActive: true, wantConfirmed: true, wantWarning: true},
+		{name: "decline inactive removal", input: "n\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var output bytes.Buffer
+			confirmer := huhProfileRemovalConfirmer{
+				input: strings.NewReader(tt.input), output: &output, accessible: true,
+			}
+
+			confirmed, err := confirmer.Confirm(context.Background(), ProfileRemovalConfirmation{
+				Name: "team-a", LeavesNoActiveProfile: tt.leavesNoActive,
+			})
+			if err != nil {
+				t.Fatalf("confirm profile removal: %v", err)
+			}
+			if confirmed != tt.wantConfirmed {
+				t.Errorf("confirmed = %t, want %t", confirmed, tt.wantConfirmed)
+			}
+			plainOutput := ansi.Strip(output.String())
+			if !strings.Contains(plainOutput, `Remove profile "team-a"`) {
+				t.Errorf("confirmation output = %q, want profile name", plainOutput)
+			}
+			hasWarning := strings.Contains(plainOutput, "leave no active profile")
+			if hasWarning != tt.wantWarning {
+				t.Errorf("confirmation warning = %t, want %t; output=%q", hasWarning, tt.wantWarning, plainOutput)
+			}
+		})
+	}
+}
