@@ -54,3 +54,111 @@ func TestProfilePresentationStylesOnlyEligibleTerminals(t *testing.T) {
 		t.Errorf("unstyled styled output = %q, want plain output %q", got, plain.String())
 	}
 }
+
+func TestPresentationPlainPrimitivesAreExactAndANSIFree(t *testing.T) {
+	presentation := newPresentation(fixedTerminal{color: false})
+
+	table := presentation.renderTable([][]presentationCell{
+		{
+			{value: "#", role: presentationHeading},
+			{value: "NAME", role: presentationHeading},
+			{value: "STATE", role: presentationHeading},
+		},
+		{
+			{value: "1"},
+			{value: "téam-a", role: presentationSelected},
+			{value: "active", role: presentationMuted},
+		},
+	})
+	details := presentation.renderDetails([]presentationDetail{
+		{label: "Name", value: "team-a"},
+		{label: "Active", value: "yes", role: presentationSelected},
+	})
+	status := presentation.status("Added profile \"team-a\".")
+	cancellation := presentation.cancellation("Profile selection canceled.")
+	diagnostic := presentation.diagnostic("Profile name is required.")
+
+	got := table + details + status + cancellation + diagnostic
+	want := "#  NAME    STATE\n" +
+		"1  téam-a  active\n" +
+		"Name:   team-a\n" +
+		"Active: yes\n" +
+		"Added profile \"team-a\".\n" +
+		"Profile selection canceled.\n" +
+		"Profile name is required.\n"
+	if got != want {
+		t.Fatalf("plain presentation = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "\x1b[") {
+		t.Fatalf("plain presentation contains ANSI: %q", got)
+	}
+	if got := presentation.renderTable(nil); got != "" {
+		t.Errorf("empty table = %q, want empty output", got)
+	}
+	if got := presentation.renderDetails(nil); got != "" {
+		t.Errorf("empty details = %q, want empty output", got)
+	}
+}
+
+func TestPresentationStyledPrimitivesStripExactlyToPlain(t *testing.T) {
+	plain := newPresentation(fixedTerminal{color: false})
+	styled := newPresentation(fixedTerminal{color: true})
+	table := [][]presentationCell{
+		{{value: "NAME", role: presentationHeading}, {value: "STATE", role: presentationHeading}},
+		{{value: "team-a", role: presentationSelected}, {value: "ready", role: presentationMuted}},
+	}
+	details := []presentationDetail{
+		{label: "Name", value: "team-a"},
+		{label: "Active", value: "yes", role: presentationSelected},
+	}
+
+	plainOutput := plain.renderTable(table) +
+		plain.renderDetails(details) +
+		plain.status("Added profile \"team-a\".") +
+		plain.cancellation("Profile selection canceled.") +
+		plain.diagnostic("Profile name is required.")
+	styledOutput := styled.renderTable(table) +
+		styled.renderDetails(details) +
+		styled.status("Added profile \"team-a\".") +
+		styled.cancellation("Profile selection canceled.") +
+		styled.diagnostic("Profile name is required.")
+
+	if !strings.Contains(styledOutput, "\x1b[") {
+		t.Fatalf("styled presentation contains no ANSI: %q", styledOutput)
+	}
+	if got := ansi.Strip(styledOutput); got != plainOutput {
+		t.Fatalf("unstyled presentation = %q, want plain output %q", got, plainOutput)
+	}
+}
+
+func TestPresentationHuhThemeUsesSemanticRolesAndHonorsPlainMode(t *testing.T) {
+	plainPresentation := newPresentation(fixedTerminal{color: false})
+	plainTheme := plainPresentation.huhTheme().Theme(true)
+	plainOutput := plainTheme.Group.Title.Render("Heading") +
+		plainTheme.Focused.SelectSelector.String() +
+		plainTheme.Focused.ErrorMessage.Render("Error") +
+		plainTheme.Help.ShortDesc.Render("Help")
+	if strings.Contains(plainOutput, "\x1b[") {
+		t.Fatalf("plain Huh theme contains ANSI: %q", plainOutput)
+	}
+
+	styledPresentation := newPresentation(fixedTerminal{color: true})
+	styledTheme := styledPresentation.huhTheme().Theme(true)
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{name: "heading", got: styledTheme.Group.Title.Render("Heading"), want: styledPresentation.render(presentationHeading, "Heading")},
+		{name: "selection", got: styledTheme.Focused.SelectedOption.Render("Selected"), want: styledPresentation.render(presentationSelected, "Selected")},
+		{name: "muted", got: styledTheme.Help.ShortDesc.Render("Help"), want: styledPresentation.render(presentationMuted, "Help")},
+		{name: "error", got: styledTheme.Focused.ErrorMessage.Render("Error"), want: styledPresentation.render(presentationError, "Error")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got != tt.want {
+				t.Errorf("Huh role = %q, want shared role %q", tt.got, tt.want)
+			}
+		})
+	}
+}
