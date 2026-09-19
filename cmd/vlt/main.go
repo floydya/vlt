@@ -41,6 +41,7 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 	profiles := config.NewStore(filepath.Join(configDirectory, "vlt", "profiles.json"))
 	terminal := cli.NewTerminal(stdin, stdout, os.Environ())
 	selector := cli.NewHuhProfileSelector(stdin, stdout)
+	form := cli.NewHuhProfileForm(stdin, stdout)
 	vault := vaultexec.NewOSExecutor()
 	credentials := credential.NewNativeStore()
 	authenticator := credential.NewAuthenticator(vault, credentials)
@@ -57,7 +58,7 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 
 	return cli.NewDispatcher(cli.Dependencies{
 		Output:     stdout,
-		Profile:    cli.NewProfileHandler(cli.ProfileDependencies{Profiles: profiles, Mutations: mutations, Output: stdout, Terminal: terminal, Selector: selector}),
+		Profile:    cli.NewProfileHandler(cli.ProfileDependencies{Profiles: profiles, Mutations: mutations, Output: stdout, Terminal: terminal, Selector: selector, Form: form}),
 		Switch:     cli.NewSwitchHandler(cli.SwitchDependencies{Profiles: profiles, Output: stdout, Terminal: terminal, Selector: selector}),
 		Completion: cli.NewCompletionHandler(cli.CompletionDependencies{Profiles: profiles, Output: stdout}),
 		Vault:      delegate,

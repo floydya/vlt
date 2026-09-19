@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"charm.land/huh/v2"
 
@@ -20,7 +21,17 @@ type ProfileSelector interface {
 	Select(context.Context, []string, string) (string, error)
 }
 
+type ProfileForm interface {
+	Run(context.Context, profile.Profile) (profile.Profile, error)
+}
+
 type huhProfileSelector struct {
+	input      io.Reader
+	output     io.Writer
+	accessible bool
+}
+
+type huhProfileForm struct {
 	input      io.Reader
 	output     io.Writer
 	accessible bool
@@ -28,6 +39,10 @@ type huhProfileSelector struct {
 
 func NewHuhProfileSelector(input io.Reader, output io.Writer) ProfileSelector {
 	return huhProfileSelector{input: input, output: output}
+}
+
+func NewHuhProfileForm(input io.Reader, output io.Writer) ProfileForm {
+	return huhProfileForm{input: input, output: output}
 }
 
 func (s huhProfileSelector) Select(ctx context.Context, names []string, active string) (string, error) {
@@ -65,6 +80,65 @@ func (s huhProfileSelector) Select(ctx context.Context, names []string, active s
 		return "", fmt.Errorf("select profile: %w", err)
 	}
 	return selected, nil
+}
+
+func (f huhProfileForm) Run(ctx context.Context, candidate profile.Profile) (profile.Profile, error) {
+	if f.input == nil {
+		return profile.Profile{}, errors.New("profile form: input is not configured")
+	}
+	if f.output == nil {
+		return profile.Profile{}, errors.New("profile form: output is not configured")
+	}
+	if candidate.AuthPath == "" {
+		candidate.AuthPath = "oidc"
+	}
+
+	fields := []huh.Field{
+		huh.NewInput().Title("Name").Value(&candidate.Name).Validate(profileFormInputValidator(candidate.Name, f.accessible, profile.ValidateName)),
+		huh.NewInput().Title("Address").Value(&candidate.Address).Validate(profileFormInputValidator(candidate.Address, f.accessible, profile.ValidateAddress)),
+		huh.NewInput().Title("Username").Value(&candidate.Username).Validate(profileFormValidator(candidate.Username, f.accessible, func(candidate *profile.Profile, value string) {
+			candidate.Username = value
+		})),
+		huh.NewInput().Title("Auth path").Value(&candidate.AuthPath).Validate(profileFormValidator(candidate.AuthPath, f.accessible, func(candidate *profile.Profile, value string) {
+			candidate.AuthPath = value
+		})),
+		huh.NewInput().Title("Namespace").Value(&candidate.Namespace).Validate(profileFormValidator(candidate.Namespace, f.accessible, func(candidate *profile.Profile, value string) {
+			candidate.Namespace = value
+		})),
+	}
+	form := huh.NewForm(huh.NewGroup(fields...).Title("Profile details")).
+		WithInput(f.input).
+		WithOutput(f.output).
+		WithAccessible(f.accessible)
+	if err := form.RunWithContext(ctx); err != nil {
+		return profile.Profile{}, fmt.Errorf("profile form: %w", err)
+	}
+	if err := candidate.Validate(); err != nil {
+		return profile.Profile{}, fmt.Errorf("profile form: validate result: %w", err)
+	}
+	return candidate, nil
+}
+
+func profileFormInputValidator(defaultValue string, allowDefault bool, validate func(string) error) func(string) error {
+	return func(value string) error {
+		if allowDefault && strings.TrimSpace(value) == "" && defaultValue != "" {
+			return nil
+		}
+		return validate(value)
+	}
+}
+
+func profileFormValidator(defaultValue string, allowDefault bool, setValue func(*profile.Profile, string)) func(string) error {
+	return func(value string) error {
+		if allowDefault && strings.TrimSpace(value) == "" && defaultValue != "" {
+			return nil
+		}
+		candidate := profile.Profile{
+			Name: "profile", Address: "https://vault.example.com", Username: "user", AuthPath: "oidc",
+		}
+		setValue(&candidate, value)
+		return candidate.Validate()
+	}
 }
 
 func selectProfileInteractively(

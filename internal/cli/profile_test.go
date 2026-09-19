@@ -28,6 +28,19 @@ type fakeProfileSelector struct {
 	calls    int
 }
 
+type fakeProfileForm struct {
+	initial profile.Profile
+	result  profile.Profile
+	err     error
+	calls   int
+}
+
+func (f *fakeProfileForm) Run(_ context.Context, initial profile.Profile) (profile.Profile, error) {
+	f.calls++
+	f.initial = initial
+	return f.result, f.err
+}
+
 func (f *fakeProfileSelector) Select(_ context.Context, names []string, active string) (string, error) {
 	f.calls++
 	f.names = append([]string(nil), names...)
@@ -200,7 +213,7 @@ func TestManagementErrorsIncludeContextualGuidance(t *testing.T) {
 			name:    "missing add values",
 			handler: NewProfileHandler(ProfileDependencies{Output: &bytes.Buffer{}}),
 			args:    []string{"add"},
-			want:    []string{"NAME is required", "Usage: vlt profile add", "Run 'vlt profile add --help'"},
+			want:    []string{"required outside an interactive terminal", "Usage: vlt profile add", "Run 'vlt profile add --help'"},
 		},
 		{
 			name:    "invalid switch arguments",
@@ -296,8 +309,9 @@ func TestProfileHandlerAddParsesRequiredAndOptionalFields(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mutator := &fakeProfileMutator{}
+			form := &fakeProfileForm{}
 			var output bytes.Buffer
-			handler := NewProfileHandler(ProfileDependencies{Mutations: mutator, Output: &output})
+			handler := NewProfileHandler(ProfileDependencies{Mutations: mutator, Output: &output, Form: form})
 
 			if err := handler(context.Background(), tt.arguments); err != nil {
 				t.Fatalf("profile add error = %v", err)
@@ -308,7 +322,139 @@ func TestProfileHandlerAddParsesRequiredAndOptionalFields(t *testing.T) {
 			if got, want := output.String(), "Added profile \""+tt.want.Name+"\".\n"; got != want {
 				t.Errorf("output = %q, want %q", got, want)
 			}
+			if form.calls != 0 {
+				t.Errorf("form calls = %d, want 0 for complete explicit add", form.calls)
+			}
 		})
+	}
+}
+
+func TestProfileHandlerAddCollectsMissingFieldsInteractively(t *testing.T) {
+	completed := profile.Profile{
+		Name: "team-a", Address: "https://vault.example.com", Username: "alice", AuthPath: "oidc",
+	}
+	tests := []struct {
+		name      string
+		arguments []string
+		wantStart profile.Profile
+	}{
+		{
+			name:      "preserves supplied values",
+			arguments: []string{"add", "team-a", "--address", "https://vault.example.com"},
+			wantStart: profile.Profile{Name: "team-a", Address: "https://vault.example.com", AuthPath: "oidc"},
+		},
+		{
+			name:      "collects a missing name",
+			arguments: []string{"add", "--address", "https://vault.example.com", "--username", "alice"},
+			wantStart: profile.Profile{Address: "https://vault.example.com", Username: "alice", AuthPath: "oidc"},
+		},
+		{
+			name:      "collects all required values",
+			arguments: []string{"add"},
+			wantStart: profile.Profile{AuthPath: "oidc"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mutator := &fakeProfileMutator{}
+			form := &fakeProfileForm{result: completed}
+			var output bytes.Buffer
+			handler := NewProfileHandler(ProfileDependencies{
+				Mutations: mutator, Output: &output, Terminal: switchTerminal{prompts: true}, Form: form,
+			})
+
+			if err := handler(context.Background(), tt.arguments); err != nil {
+				t.Fatalf("profile add error = %v", err)
+			}
+			if !reflect.DeepEqual(form.initial, tt.wantStart) {
+				t.Errorf("form initial profile = %#v, want %#v", form.initial, tt.wantStart)
+			}
+			if !reflect.DeepEqual(mutator.added, []profile.Profile{completed}) {
+				t.Errorf("added profiles = %#v, want completed profile", mutator.added)
+			}
+			if got, want := output.String(), "Added profile \"team-a\".\n"; got != want {
+				t.Errorf("output = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestProfileHandlerAddRejectsMissingInputOutsideTerminal(t *testing.T) {
+	mutator := &fakeProfileMutator{}
+	form := &fakeProfileForm{result: managementTestProfile("team-a")}
+	handler := NewProfileHandler(ProfileDependencies{
+		Mutations: mutator, Output: &bytes.Buffer{}, Terminal: switchTerminal{}, Form: form,
+	})
+
+	err := handler(context.Background(), []string{"add", "team-a", "--address", "https://vault.example.com"})
+	if err == nil {
+		t.Fatal("profile add error = nil, want non-terminal guidance")
+	}
+	for _, want := range []string{"--username is required outside an interactive terminal", "Usage: vlt profile add"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("profile add error = %q, want text %q", err, want)
+		}
+	}
+	if form.calls != 0 {
+		t.Errorf("form calls = %d, want 0", form.calls)
+	}
+	if len(mutator.added) != 0 {
+		t.Errorf("added profiles = %#v, want none", mutator.added)
+	}
+}
+
+func TestProfileHandlerAddCancelAndInterruptDoNotMutate(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		err  error
+	}{
+		{name: "cancel", err: errors.New("user aborted with hvs.synthetic-add-form-token")},
+		{name: "interrupt", err: context.Canceled},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mutator := &fakeProfileMutator{}
+			form := &fakeProfileForm{err: tt.err}
+			var output bytes.Buffer
+			handler := NewProfileHandler(ProfileDependencies{
+				Mutations: mutator, Output: &output, Terminal: switchTerminal{prompts: true}, Form: form,
+			})
+
+			err := handler(context.Background(), []string{"add"})
+			if err == nil {
+				t.Fatal("profile add error = nil, want form failure")
+			}
+			if strings.Contains(err.Error(), "synthetic-add-form-token") {
+				t.Fatalf("profile add error exposed token: %q", err)
+			}
+			if len(mutator.added) != 0 {
+				t.Errorf("added profiles = %#v, want none", mutator.added)
+			}
+			if output.Len() != 0 {
+				t.Errorf("output = %q, want empty", output.String())
+			}
+		})
+	}
+}
+
+func TestProfileHandlerAddRedactsMutationFailureAfterForm(t *testing.T) {
+	const token = "hvs.synthetic-add-mutation-token"
+	mutator := &fakeProfileMutator{addErr: errors.New("authenticate with VAULT_TOKEN=" + token)}
+	form := &fakeProfileForm{result: managementTestProfile("team-a")}
+	var output bytes.Buffer
+	handler := NewProfileHandler(ProfileDependencies{
+		Mutations: mutator, Output: &output, Terminal: switchTerminal{prompts: true}, Form: form,
+	})
+
+	err := handler(context.Background(), []string{"add"})
+	if err == nil {
+		t.Fatal("profile add error = nil, want mutation failure")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatalf("profile add error exposed token: %q", err)
+	}
+	if output.Len() != 0 {
+		t.Errorf("output = %q, want empty", output.String())
 	}
 }
 
@@ -547,10 +693,10 @@ func TestProfileHandlerRejectsInvalidCommandForms(t *testing.T) {
 	}{
 		{name: "missing subcommand", want: "profile command"},
 		{name: "unknown subcommand", arguments: []string{"rename"}, want: "unknown profile command"},
-		{name: "add missing name", arguments: []string{"add"}, want: "profile add NAME"},
+		{name: "add missing name", arguments: []string{"add"}, want: "profile add [NAME]"},
 		{name: "add missing address", arguments: []string{"add", "team-a", "--username", "alice"}, want: "--address"},
 		{name: "add missing username", arguments: []string{"add", "team-a", "--address", "https://vault.example.com"}, want: "--username"},
-		{name: "add extra argument", arguments: []string{"add", "team-a", "extra", "--address", "x", "--username", "y"}, want: "profile add NAME"},
+		{name: "add extra argument", arguments: []string{"add", "team-a", "extra", "--address", "x", "--username", "y"}, want: "profile add [NAME]"},
 		{name: "list extra argument", arguments: []string{"list", "extra"}, want: "profile list"},
 		{name: "show extra argument", arguments: []string{"show", "team-a", "extra"}, want: "profile show [NAME]"},
 		{name: "update missing name", arguments: []string{"update"}, want: "profile update NAME"},

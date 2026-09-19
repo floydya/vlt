@@ -14,7 +14,7 @@ import (
 
 const (
 	profileUsage       = "vlt profile COMMAND [ARGUMENT...]"
-	profileAddUsage    = "vlt profile add NAME --address URL --username USER [--auth-path PATH] [--namespace NAMESPACE]"
+	profileAddUsage    = "vlt profile add [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE]"
 	profileListUsage   = "vlt profile list"
 	profileShowUsage   = "vlt profile show [NAME]"
 	profileUpdateUsage = "vlt profile update NAME [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE]"
@@ -45,7 +45,7 @@ Examples:
 const profileAddHelpText = `Add a Vault profile and authenticate it.
 
 Usage:
-  vlt profile add NAME --address URL --username USER [--auth-path PATH] [--namespace NAMESPACE]
+  vlt profile add [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE]
 
 Options:
   --address URL          Vault server URL
@@ -55,6 +55,7 @@ Options:
   -h, --help             Show help
 
 Examples:
+  vlt profile add
   vlt profile add team-a --address https://vault.example.com --username alice
 `
 
@@ -137,6 +138,7 @@ type ProfileDependencies struct {
 	Output    io.Writer
 	Terminal  Terminal
 	Selector  ProfileSelector
+	Form      ProfileForm
 }
 
 type ActiveProfileStore interface {
@@ -226,18 +228,23 @@ func profileAdd(ctx context.Context, dependencies ProfileDependencies, args []st
 	if containsHelpFlag(args) {
 		return writeManagementHelp(dependencies.Output, "profile add", profileAddHelpText)
 	}
-	if len(args) < 1 {
-		return managementUsageError("profile NAME is required", profileAddUsage, "vlt profile add")
+	name := ""
+	optionArgs := args
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		name = args[0]
+		optionArgs = args[1:]
 	}
-	options, err := parseProfileOptions("profile add", args[1:], "oidc")
+	options, err := parseProfileOptions("profile add", optionArgs, "oidc")
 	if err != nil {
 		return managementUsageError(fmt.Sprintf("invalid profile add option: %v", err), profileAddUsage, "vlt profile add")
 	}
-	if !options.set["address"] {
-		return managementUsageError("--address is required", profileAddUsage, "vlt profile add")
+	candidate := profile.Profile{
+		Name: name, Address: options.address, Username: options.username,
+		AuthPath: options.authPath, Namespace: options.namespace,
 	}
-	if !options.set["username"] {
-		return managementUsageError("--username is required", profileAddUsage, "vlt profile add")
+	missing := missingProfileAddFields(candidate)
+	if len(missing) != 0 && (dependencies.Terminal == nil || !dependencies.Terminal.PromptsEnabled()) {
+		return managementUsageError(missingProfileAddDiagnostic(missing), profileAddUsage, "vlt profile add")
 	}
 	if dependencies.Mutations == nil {
 		return errors.New("add profile: profile mutations are not configured")
@@ -245,10 +252,14 @@ func profileAdd(ctx context.Context, dependencies ProfileDependencies, args []st
 	if dependencies.Output == nil {
 		return errors.New("add profile: output is not configured")
 	}
-
-	candidate := profile.Profile{
-		Name: args[0], Address: options.address, Username: options.username,
-		AuthPath: options.authPath, Namespace: options.namespace,
+	if len(missing) != 0 {
+		if dependencies.Form == nil {
+			return errors.New("add profile: interactive form is not configured")
+		}
+		candidate, err = dependencies.Form.Run(ctx, candidate)
+		if err != nil {
+			return safeManagementError(fmt.Errorf("add profile: %w", err))
+		}
 	}
 	if err := dependencies.Mutations.Add(ctx, candidate); err != nil {
 		return safeManagementError(err)
@@ -257,6 +268,31 @@ func profileAdd(ctx context.Context, dependencies ProfileDependencies, args []st
 		return fmt.Errorf("display added profile: %w", err)
 	}
 	return nil
+}
+
+func missingProfileAddFields(candidate profile.Profile) []string {
+	var missing []string
+	if candidate.Name == "" {
+		missing = append(missing, "profile NAME")
+	}
+	if candidate.Address == "" {
+		missing = append(missing, "--address")
+	}
+	if strings.TrimSpace(candidate.Username) == "" {
+		missing = append(missing, "--username")
+	}
+	return missing
+}
+
+func missingProfileAddDiagnostic(missing []string) string {
+	if len(missing) == 1 {
+		return missing[0] + " is required outside an interactive terminal"
+	}
+	if len(missing) == 2 {
+		return missing[0] + " and " + missing[1] + " are required outside an interactive terminal"
+	}
+	return strings.Join(missing[:len(missing)-1], ", ") + ", and " + missing[len(missing)-1] +
+		" are required outside an interactive terminal"
 }
 
 func profileList(ctx context.Context, dependencies ProfileDependencies, args []string) error {

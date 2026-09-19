@@ -3,9 +3,29 @@ package cli
 import (
 	"bytes"
 	"context"
+	"io"
 	"strings"
 	"testing"
+
+	"vlt/internal/profile"
 )
+
+type promptLineReader struct {
+	lines [][]byte
+}
+
+func (r *promptLineReader) Read(value []byte) (int, error) {
+	if len(r.lines) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(value, r.lines[0])
+	if n == len(r.lines[0]) {
+		r.lines = r.lines[1:]
+	} else {
+		r.lines[0] = r.lines[0][n:]
+	}
+	return n, nil
+}
 
 func TestHuhProfileSelectorShowsSortedNamesAndPreselectsActive(t *testing.T) {
 	var output bytes.Buffer
@@ -40,5 +60,39 @@ func TestHuhProfileSelectorReturnsChosenName(t *testing.T) {
 	}
 	if selected != "team-a" {
 		t.Errorf("selected profile = %q, want team-a", selected)
+	}
+}
+
+func TestHuhProfileFormPreservesDefaultsAndCorrectsInvalidFields(t *testing.T) {
+	input := &promptLineReader{lines: [][]byte{
+		[]byte("\n"),
+		[]byte("ftp://vault.example.com\n"),
+		[]byte("https://vault.example.com\n"),
+		[]byte("alice\n"),
+		[]byte("\n"),
+		[]byte("\n"),
+	}}
+	var output bytes.Buffer
+	form := huhProfileForm{input: input, output: &output, accessible: true}
+
+	got, err := form.Run(context.Background(), profile.Profile{Name: "team-a", AuthPath: "oidc"})
+	if err != nil {
+		t.Fatalf("run profile form: %v", err)
+	}
+	want := profile.Profile{
+		Name: "team-a", Address: "https://vault.example.com", Username: "alice", AuthPath: "oidc",
+	}
+	if got != want {
+		t.Errorf("profile form result = %#v, want %#v", got, want)
+	}
+	for _, text := range []string{"Name", "Address", "Username", "Auth path", "Namespace", "address scheme must be http or https"} {
+		if !strings.Contains(output.String(), text) {
+			t.Errorf("profile form output = %q, want text %q", output.String(), text)
+		}
+	}
+	for _, forbidden := range []string{"password", "credential", "token"} {
+		if strings.Contains(strings.ToLower(output.String()), forbidden) {
+			t.Errorf("profile form output exposed secret field %q: %q", forbidden, output.String())
+		}
 	}
 }
