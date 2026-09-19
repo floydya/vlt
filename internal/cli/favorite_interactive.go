@@ -36,16 +36,16 @@ type FavoriteRemovalConfirmer interface {
 	Confirm(context.Context, FavoriteRemovalConfirmation) (bool, error)
 }
 
-type huhFavoriteManagementSelector struct {
-	input      io.Reader
-	output     io.Writer
-	accessible bool
+type sharedFavoriteManagementSelector struct {
+	selector SharedSelector
 }
 
 type huhFavoriteForm struct {
-	input      io.Reader
-	output     io.Writer
-	accessible bool
+	input        io.Reader
+	output       io.Writer
+	accessible   bool
+	selector     SharedSelector
+	presentation presentation
 }
 
 type huhFavoriteRemovalConfirmer struct {
@@ -54,53 +54,22 @@ type huhFavoriteRemovalConfirmer struct {
 	accessible bool
 }
 
-func NewHuhFavoriteManagementSelector(input io.Reader, output io.Writer) FavoriteManagementSelector {
-	return huhFavoriteManagementSelector{input: input, output: output}
+func NewSharedFavoriteManagementSelector(selector SharedSelector) FavoriteManagementSelector {
+	return sharedFavoriteManagementSelector{selector: selector}
 }
 
-func NewHuhFavoriteForm(input io.Reader, output io.Writer) FavoriteForm {
-	return huhFavoriteForm{input: input, output: output}
+func NewHuhFavoriteForm(input io.Reader, output io.Writer, selector SharedSelector, terminal Terminal) FavoriteForm {
+	return huhFavoriteForm{
+		input: input, output: output, selector: selector, presentation: newPresentation(terminal),
+	}
 }
 
 func NewHuhFavoriteRemovalConfirmer(input io.Reader, output io.Writer) FavoriteRemovalConfirmer {
 	return huhFavoriteRemovalConfirmer{input: input, output: output}
 }
 
-func (s huhFavoriteManagementSelector) Select(ctx context.Context, candidates []favorite.Favorite) (favorite.Favorite, error) {
-	if len(candidates) == 0 {
-		return favorite.Favorite{}, errors.New("select favorite: no favorite choices")
-	}
-	if s.input == nil {
-		return favorite.Favorite{}, errors.New("select favorite: input is not configured")
-	}
-	if s.output == nil {
-		return favorite.Favorite{}, errors.New("select favorite: output is not configured")
-	}
-	selected := candidates[0]
-	options := make([]huh.Option[favorite.Favorite], 0, len(candidates))
-	for index, candidate := range candidates {
-		label := fmt.Sprintf(
-			"%d  %s  %s  %s  %s",
-			index+1,
-			sanitizeFavoriteDisplay(candidate.Operation),
-			sanitizeFavoriteDisplay(candidate.Profile),
-			sanitizeFavoriteDisplay(candidate.Path),
-			sanitizeFavoriteDisplay(favoriteNote(candidate.Note)),
-		)
-		options = append(options, huh.NewOption(label, candidate))
-	}
-	field := huh.NewSelect[favorite.Favorite]().
-		Title("Select a favorite").
-		Options(options...).
-		Value(&selected)
-	form := huh.NewForm(huh.NewGroup(field)).
-		WithInput(s.input).
-		WithOutput(s.output).
-		WithAccessible(s.accessible)
-	if err := form.RunWithContext(ctx); err != nil {
-		return favorite.Favorite{}, fmt.Errorf("select favorite: %w", err)
-	}
-	return selected, nil
+func (s sharedFavoriteManagementSelector) Select(ctx context.Context, candidates []favorite.Favorite) (favorite.Favorite, error) {
+	return sharedFavoriteSelector{selector: s.selector}.Select(ctx, candidates)
 }
 
 func (f huhFavoriteForm) Run(ctx context.Context, request FavoriteFormRequest) (favorite.Favorite, error) {
@@ -113,35 +82,63 @@ func (f huhFavoriteForm) Run(ctx context.Context, request FavoriteFormRequest) (
 	if len(request.Profiles) == 0 {
 		return favorite.Favorite{}, errors.New("favorite form: no profile choices")
 	}
+	if f.selector == nil {
+		return favorite.Favorite{}, errors.New("favorite form: shared selector is not configured")
+	}
+	profiles := profile.NewService(request.Profiles).List()
 	candidate := request.Favorite
 	if candidate.Profile == "" {
-		candidate.Profile = request.Profiles[0].Name
+		candidate.Profile = profiles[0].Name
 	}
 	if candidate.Operation == "" {
 		candidate.Operation = favorite.OperationRead
 	}
-	profileOptions := make([]huh.Option[string], 0, len(request.Profiles))
-	for _, candidateProfile := range request.Profiles {
-		profileOptions = append(profileOptions, huh.NewOption(candidateProfile.Name, candidateProfile.Name))
+	profileItems := make([]SharedSelectorItem, 0, len(profiles))
+	for index, candidateProfile := range profiles {
+		namespace := candidateProfile.Namespace
+		if namespace == "" {
+			namespace = "-"
+		}
+		label := fmt.Sprintf(
+			"%d  %s  %s  %s",
+			index+1,
+			candidateProfile.Name,
+			candidateProfile.Address,
+			namespace,
+		)
+		profileItems = append(profileItems, SharedSelectorItem{
+			ID: candidateProfile.Name, Label: label, SearchText: label,
+		})
 	}
-	operationOptions := []huh.Option[string]{
-		huh.NewOption("read", favorite.OperationRead),
-		huh.NewOption("kv-get", favorite.OperationKVGet),
+	selectedProfile, err := f.selector.Select(ctx, "Select a profile", profileItems, candidate.Profile)
+	if err != nil {
+		return favorite.Favorite{}, fmt.Errorf("favorite form: select profile: %w", err)
 	}
+	candidate.Profile = selectedProfile
+
+	operationItems := []SharedSelectorItem{
+		{ID: favorite.OperationRead, Label: favorite.OperationRead, SearchText: favorite.OperationRead},
+		{ID: favorite.OperationKVGet, Label: favorite.OperationKVGet, SearchText: favorite.OperationKVGet},
+	}
+	selectedOperation, err := f.selector.Select(ctx, "Select an operation", operationItems, candidate.Operation)
+	if err != nil {
+		return favorite.Favorite{}, fmt.Errorf("favorite form: select operation: %w", err)
+	}
+	candidate.Operation = selectedOperation
+
 	pathValidator := func(value string) error {
 		probe := candidate
 		probe.Path = value
 		return probe.Validate()
 	}
 	form := huh.NewForm(huh.NewGroup(
-		huh.NewSelect[string]().Title("Profile").Options(profileOptions...).Value(&candidate.Profile),
-		huh.NewSelect[string]().Title("Operation").Options(operationOptions...).Value(&candidate.Operation),
 		huh.NewInput().Title("Path").Value(&candidate.Path).Validate(pathValidator),
 		huh.NewInput().Title("Note").Value(&candidate.Note),
 	).Title("Favorite details")).
 		WithInput(f.input).
 		WithOutput(f.output).
-		WithAccessible(f.accessible)
+		WithAccessible(f.accessible).
+		WithTheme(f.presentation.huhTheme())
 	if err := form.RunWithContext(ctx); err != nil {
 		return favorite.Favorite{}, fmt.Errorf("favorite form: %w", err)
 	}

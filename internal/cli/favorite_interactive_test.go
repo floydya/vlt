@@ -20,6 +20,33 @@ type fakeFavoriteManagementSelector struct {
 	calls      int
 }
 
+type queuedSharedSelector struct {
+	titles         []string
+	items          [][]SharedSelectorItem
+	preselectedIDs []string
+	selections     []string
+	errors         []error
+}
+
+func (s *queuedSharedSelector) Select(
+	_ context.Context,
+	title string,
+	items []SharedSelectorItem,
+	preselectedID string,
+) (string, error) {
+	s.titles = append(s.titles, title)
+	s.items = append(s.items, append([]SharedSelectorItem(nil), items...))
+	s.preselectedIDs = append(s.preselectedIDs, preselectedID)
+	index := len(s.titles) - 1
+	if index < len(s.errors) && s.errors[index] != nil {
+		return "", s.errors[index]
+	}
+	if index < len(s.selections) {
+		return s.selections[index], nil
+	}
+	return "", nil
+}
+
 func (s *fakeFavoriteManagementSelector) Select(_ context.Context, candidates []favorite.Favorite) (favorite.Favorite, error) {
 	s.calls++
 	s.candidates = append([]favorite.Favorite(nil), candidates...)
@@ -282,15 +309,19 @@ func TestFavoriteIncompleteCommandsDoNotPromptOutsideTerminal(t *testing.T) {
 	}
 }
 
-func TestHuhFavoriteFormDefaultsReadAndCollectsValues(t *testing.T) {
+func TestFavoriteFormUsesSharedProfileAndOperationSelectorsWithDefaults(t *testing.T) {
+	shared := &queuedSharedSelector{selections: []string{"team-a", favorite.OperationRead}}
 	var output bytes.Buffer
 	form := huhFavoriteForm{
 		input: &promptLineReader{lines: [][]byte{
-			[]byte("1\n"), []byte("1\n"), []byte("secret/app\n"), []byte("daily\n"),
+			[]byte("secret/app\n"), []byte("daily\n"),
 		}},
-		output: &output, accessible: true,
+		output: &output, accessible: true, selector: shared,
 	}
-	profiles := []profile.Profile{{Name: "team-a"}, {Name: "team-b"}}
+	profiles := []profile.Profile{
+		{Name: "team-b", Address: "https://team-b.example"},
+		{Name: "team-a", Address: "https://team-a.example", Namespace: "engineering"},
+	}
 
 	got, err := form.Run(context.Background(), FavoriteFormRequest{Profiles: profiles})
 	if err != nil {
@@ -302,23 +333,36 @@ func TestHuhFavoriteFormDefaultsReadAndCollectsValues(t *testing.T) {
 	if got != want {
 		t.Fatalf("favorite form result = %#v, want %#v", got, want)
 	}
-	for _, text := range []string{"Profile", "Operation", "Path", "Note"} {
+	if !reflect.DeepEqual(shared.titles, []string{"Select a profile", "Select an operation"}) {
+		t.Errorf("selector titles = %#v", shared.titles)
+	}
+	if !reflect.DeepEqual(shared.preselectedIDs, []string{"team-a", favorite.OperationRead}) {
+		t.Errorf("preselected IDs = %#v, want defaults", shared.preselectedIDs)
+	}
+	if len(shared.items) != 2 || shared.items[0][0].ID != "team-a" || shared.items[0][1].ID != "team-b" {
+		t.Fatalf("profile choices = %#v, want sorted stable names", shared.items)
+	}
+	if len(shared.items[1]) != 2 || shared.items[1][0].ID != favorite.OperationRead || shared.items[1][1].ID != favorite.OperationKVGet {
+		t.Fatalf("operation choices = %#v, want read then kv-get", shared.items[1])
+	}
+	for _, text := range []string{"Path", "Note"} {
 		if !strings.Contains(output.String(), text) {
 			t.Errorf("favorite form output = %q, want %q", output.String(), text)
 		}
 	}
 }
 
-func TestHuhFavoriteFormUsesPopulatedValues(t *testing.T) {
+func TestFavoriteFormPreselectsAndPreservesPopulatedChoices(t *testing.T) {
 	current := favorite.Favorite{
 		Profile: "team-b", Operation: favorite.OperationKVGet, Path: "secret/old", Note: "old note",
 	}
+	shared := &queuedSharedSelector{selections: []string{"team-b", favorite.OperationKVGet}}
 	var output bytes.Buffer
 	form := huhFavoriteForm{
 		input: &promptLineReader{lines: [][]byte{
-			[]byte("2\n"), []byte("2\n"), []byte("secret/new\n"), []byte("old note\n"),
+			[]byte("secret/new\n"), []byte("old note\n"),
 		}},
-		output: &output, accessible: true,
+		output: &output, accessible: true, selector: shared,
 	}
 
 	got, err := form.Run(context.Background(), FavoriteFormRequest{
@@ -332,29 +376,78 @@ func TestHuhFavoriteFormUsesPopulatedValues(t *testing.T) {
 	if got != want {
 		t.Fatalf("favorite form result = %#v, want %#v", got, want)
 	}
+	if !reflect.DeepEqual(shared.preselectedIDs, []string{"team-b", favorite.OperationKVGet}) {
+		t.Errorf("preselected IDs = %#v, want populated choices", shared.preselectedIDs)
+	}
 }
 
-func TestHuhFavoriteManagementSelectorReturnsChosenFavorite(t *testing.T) {
+func TestFavoriteFormCancellationStopsBeforeFreeTextInput(t *testing.T) {
+	current := favorite.Favorite{Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/old"}
+	for _, tt := range []struct {
+		name   string
+		errors []error
+	}{
+		{name: "profile", errors: []error{ErrSharedSelectorCanceled}},
+		{name: "operation", errors: []error{nil, context.Canceled}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			shared := &queuedSharedSelector{
+				selections: []string{"team-a", favorite.OperationRead}, errors: tt.errors,
+			}
+			form := huhFavoriteForm{
+				input: &promptLineReader{}, output: &bytes.Buffer{}, accessible: true, selector: shared,
+			}
+			got, err := form.Run(context.Background(), FavoriteFormRequest{
+				Favorite: current, Profiles: []profile.Profile{{Name: "team-a"}},
+			})
+			if err == nil {
+				t.Fatal("favorite form error = nil, want cancellation")
+			}
+			if got != (favorite.Favorite{}) {
+				t.Errorf("favorite form result = %#v, want no partial result", got)
+			}
+		})
+	}
+}
+
+func TestFavoriteManagementUsesSharedSelectorRowsAndStableIdentity(t *testing.T) {
 	candidates := []favorite.Favorite{
-		{Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/a"},
 		{Profile: "team-b", Operation: favorite.OperationKVGet, Path: "secret/b", Note: "daily"},
+		{Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/a"},
 	}
-	var output bytes.Buffer
-	selector := huhFavoriteManagementSelector{
-		input: strings.NewReader("2\n"), output: &output, accessible: true,
-	}
+	shared := &recordingSharedSelector{selectedID: "favorite-000002"}
+	selector := NewSharedFavoriteManagementSelector(shared)
 
 	selected, err := selector.Select(context.Background(), candidates)
 	if err != nil {
 		t.Fatalf("favorite selector error = %v", err)
 	}
-	if selected != candidates[1] {
-		t.Fatalf("selected favorite = %#v, want %#v", selected, candidates[1])
+	ordered := favorite.NewService(candidates).List()
+	if selected != ordered[1] {
+		t.Fatalf("selected favorite = %#v, want stable ordered favorite %#v", selected, ordered[1])
 	}
 	for _, text := range []string{"secret/a", "secret/b", "team-a", "team-b", "kv-get", "daily"} {
-		if !strings.Contains(output.String(), text) {
-			t.Errorf("favorite selector output = %q, want %q", output.String(), text)
+		found := false
+		for _, item := range shared.items {
+			found = found || strings.Contains(item.SearchText, text)
 		}
+		if !found {
+			t.Errorf("favorite selector items = %#v, want searchable %q", shared.items, text)
+		}
+	}
+}
+
+func TestFavoriteManagementSharedCancellationReturnsNoFavorite(t *testing.T) {
+	selector := NewSharedFavoriteManagementSelector(&recordingSharedSelector{err: ErrSharedSelectorCanceled})
+
+	selected, err := selector.Select(context.Background(), []favorite.Favorite{{
+		Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/a",
+	}})
+	if !errors.Is(err, ErrFavoriteSelectionCanceled) {
+		t.Fatalf("favorite selector error = %v, want favorite cancellation", err)
+	}
+	if selected != (favorite.Favorite{}) {
+		t.Errorf("selected favorite = %#v, want empty", selected)
 	}
 }
 
