@@ -14,6 +14,57 @@ import (
 	"vlt/internal/profile"
 )
 
+type automaticHelpServices struct {
+	loads      int
+	selections int
+	mutations  int
+	vaultCalls int
+}
+
+func (s *automaticHelpServices) Load(context.Context) (config.Configuration, error) {
+	s.loads++
+	return config.Configuration{}, nil
+}
+
+func (s *automaticHelpServices) SetActiveProfile(context.Context, string) error {
+	s.selections++
+	return nil
+}
+
+func (s *automaticHelpServices) Add(context.Context, profile.Profile) error {
+	s.mutations++
+	return nil
+}
+
+func (s *automaticHelpServices) Update(context.Context, string, profile.ProfileChanges) error {
+	s.mutations++
+	return nil
+}
+
+func (s *automaticHelpServices) Remove(context.Context, string) error {
+	s.mutations++
+	return nil
+}
+
+func (s *automaticHelpServices) handler(output io.Writer) *cli.Dispatcher {
+	return cli.NewDispatcher(cli.Dependencies{
+		Output: output,
+		Profile: cli.NewProfileHandler(cli.ProfileDependencies{
+			Profiles: s, Mutations: s, Output: output,
+		}),
+		Switch:     cli.NewSwitchHandler(cli.SwitchDependencies{Profiles: s, Output: output}),
+		Completion: cli.NewCompletionHandler(cli.CompletionDependencies{Profiles: s, Output: output}),
+		Vault: func(context.Context, []string) error {
+			s.vaultCalls++
+			return nil
+		},
+	})
+}
+
+func (s *automaticHelpServices) calls() int {
+	return s.loads + s.selections + s.mutations + s.vaultCalls
+}
+
 func TestNewDispatcherWiresProfileManagement(t *testing.T) {
 	var stdout bytes.Buffer
 	dispatcher := newDispatcherAt(t.TempDir(), strings.NewReader(""), &stdout, io.Discard)
@@ -81,6 +132,117 @@ func TestDispatchReturnsSuccessWithoutErrorOutput(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Errorf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestRunRootHelpDoesNotRequireConfigDirectory(t *testing.T) {
+	for _, name := range []string{"HOME", "XDG_CONFIG_HOME", "AppData"} {
+		t.Setenv(name, "")
+	}
+	var expected bytes.Buffer
+	explicitDispatcher := cli.NewDispatcher(cli.Dependencies{Output: &expected})
+	if err := explicitDispatcher.Dispatch(context.Background(), []string{"--help"}); err != nil {
+		t.Fatalf("prepare root help: %v", err)
+	}
+
+	for _, tt := range []struct {
+		name       string
+		arguments  []string
+		wantStatus int
+		automatic  bool
+	}{
+		{name: "automatic", wantStatus: 1, automatic: true},
+		{name: "explicit", arguments: []string{"--help"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+
+			status := run(context.Background(), tt.arguments, strings.NewReader(""), &stdout, &stderr)
+
+			if status != tt.wantStatus {
+				t.Errorf("status = %d, want %d", status, tt.wantStatus)
+			}
+			if tt.automatic {
+				if got := stderr.String(); got != expected.String() {
+					t.Errorf("stderr = %q, want %q", got, expected.String())
+				}
+				if stdout.Len() != 0 {
+					t.Errorf("stdout = %q, want empty", stdout.String())
+				}
+			} else {
+				if got := stdout.String(); got != expected.String() {
+					t.Errorf("stdout = %q, want %q", got, expected.String())
+				}
+				if stderr.Len() != 0 {
+					t.Errorf("stderr = %q, want empty", stderr.String())
+				}
+			}
+		})
+	}
+}
+
+func TestDispatchWritesAutomaticManagementHelpToStderr(t *testing.T) {
+	tests := []struct {
+		name      string
+		automatic []string
+		explicit  []string
+	}{
+		{name: "root", explicit: []string{"--help"}},
+		{name: "profile", automatic: []string{"profile"}, explicit: []string{"profile", "--help"}},
+		{name: "add all", automatic: []string{"profile", "add"}, explicit: []string{"profile", "add", "--help"}},
+		{name: "add name", automatic: []string{"profile", "add", "--address", "https://vault.example.com", "--username", "alice"}, explicit: []string{"profile", "add", "--help"}},
+		{name: "add address", automatic: []string{"profile", "add", "team-a", "--username", "alice"}, explicit: []string{"profile", "add", "--help"}},
+		{name: "add username", automatic: []string{"profile", "add", "team-a", "--address", "https://vault.example.com"}, explicit: []string{"profile", "add", "--help"}},
+		{name: "show", automatic: []string{"profile", "show"}, explicit: []string{"profile", "show", "--help"}},
+		{name: "update selection", automatic: []string{"profile", "update"}, explicit: []string{"profile", "update", "--help"}},
+		{name: "update changes", automatic: []string{"profile", "update", "team-a"}, explicit: []string{"profile", "update", "--help"}},
+		{name: "update name", automatic: []string{"profile", "update", "--address", "https://vault.example.com"}, explicit: []string{"profile", "update", "--help"}},
+		{name: "remove", automatic: []string{"profile", "remove"}, explicit: []string{"profile", "remove", "--help"}},
+		{name: "switch", automatic: []string{"switch"}, explicit: []string{"switch", "--help"}},
+		{name: "completion", automatic: []string{"completion"}, explicit: []string{"completion", "--help"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			services := &automaticHelpServices{}
+			var automaticStdout bytes.Buffer
+			var automaticStderr bytes.Buffer
+
+			automaticStatus := dispatch(
+				context.Background(), services.handler(&automaticStdout), tt.automatic, &automaticStderr,
+			)
+
+			var explicitStdout bytes.Buffer
+			var explicitStderr bytes.Buffer
+			explicitStatus := dispatch(
+				context.Background(), services.handler(&explicitStdout), tt.explicit, &explicitStderr,
+			)
+
+			if automaticStatus == 0 {
+				t.Error("automatic status = 0, want failure")
+			}
+			if explicitStatus != 0 {
+				t.Errorf("explicit status = %d, want 0", explicitStatus)
+			}
+			if automaticStdout.Len() != 0 {
+				t.Errorf("automatic stdout = %q, want empty", automaticStdout.String())
+			}
+			if explicitStderr.Len() != 0 {
+				t.Errorf("explicit stderr = %q, want empty", explicitStderr.String())
+			}
+			if got, want := automaticStderr.String(), explicitStdout.String(); got != want {
+				t.Errorf("automatic stderr = %q, want exact explicit help %q", got, want)
+			}
+			for _, forbidden := range []string{"vlt: ", " is required", "required outside", "Run '"} {
+				if strings.Contains(automaticStderr.String(), forbidden) {
+					t.Errorf("automatic stderr = %q, want no %q", automaticStderr.String(), forbidden)
+				}
+			}
+			if services.calls() != 0 {
+				t.Errorf("service calls = %d, want 0", services.calls())
+			}
+		})
 	}
 }
 

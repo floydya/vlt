@@ -21,6 +21,9 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+		return dispatch(ctx, cli.NewDispatcher(cli.Dependencies{Output: stdout}), args, stderr)
+	}
 	dispatcher, err := newDispatcher(stdin, stdout, stderr)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "vlt: %v\n", err)
