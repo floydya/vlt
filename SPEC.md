@@ -1,12 +1,16 @@
 # Spec: `vlt` Vault Profile CLI
 
-**Status:** Approved  
-**Scope:** Initial cross-platform release  
+**Status:** Approved
+
+**Automatic-help revision:** Approved
+
+**Scope:** Initial cross-platform release with guided terminal workflows
+
 **Primary verification platform:** Linux
 
 ## Objective
 
-Build `vlt`, a cross-platform command-line profile manager and transparent launcher for the official HashiCorp Vault CLI. It lets a user switch frequently between Vault hosts without repeatedly completing OIDC authentication or manually changing `VAULT_ADDR` and `VAULT_TOKEN`.
+Build `vlt`, a cross-platform command-line profile manager and transparent launcher for the official HashiCorp Vault CLI. It lets a user switch frequently between Vault hosts without repeatedly completing OIDC authentication or manually changing `VAULT_ADDR` and `VAULT_TOKEN`. Its own commands must be self-explanatory during interactive terminal use, while explicit commands remain fast and predictable for automation.
 
 The initial user is a developer who uses multiple independent Vault hosts with the same or different usernames and OIDC settings.
 
@@ -38,8 +42,15 @@ $ vlt --profile team-b read secret/example
 | `profile-management` | Create, list, inspect, update, remove, and select profile metadata | — |
 | `credential-lifecycle` | OIDC login, native keyring storage, token validation, and renewal | `profile-management` |
 | `vault-delegation` | Resolve a profile, inject Vault environment variables, and execute the official `vault` binary | `profile-management`, `credential-lifecycle` |
+| `cli-presentation` | Contextual help, errors, profile tables, active markers, and restrained terminal styling | `profile-management` |
+| `interactive-profile-workflows` | TTY-only profile forms, selectors, validation, confirmation, and cancellation | `profile-management`, `cli-presentation` |
+| `shell-completion` | Bash, Zsh, and Fish completion for `vlt` commands, flags, and profile names | `profile-management` |
 
-Build order: `profile-management` → `credential-lifecycle` → `vault-delegation`.
+Build order:
+
+- `profile-management` → `credential-lifecycle` → `vault-delegation`;
+- `profile-management` → `cli-presentation` → `interactive-profile-workflows`;
+- `profile-management` → `shell-completion`.
 
 The requirement headings below identify the owning module so implementation and tests remain traceable to this map.
 
@@ -88,11 +99,127 @@ vlt switch NUMBER
 
 Behavior:
 
-- With no argument, `switch` prints the active profile and the same deterministic, numbered profile list used by `profile list`.
+- With no argument in an interactive terminal, `switch` opens the profile selector defined by `interactive-profile-workflows`.
+- With no argument outside an interactive terminal, `switch` writes its full standard help to standard error and exits non-zero without a separate missing-selection diagnostic.
 - A name is the stable, script-safe selector.
 - A number is an interactive convenience referring to the currently displayed lexicographic order.
 - Selecting a profile persists it as the default for later `vlt` invocations.
 - Selecting an unknown name or out-of-range number fails without changing the current selection.
+
+### `cli-presentation`
+
+#### Contextual help and errors
+
+Every `vlt` management command and subcommand supports `-h` and `--help`. Explicit help writes to standard output and exits successfully. Help contains the command's purpose, full usage, available subcommands or options, and one or two representative examples.
+
+When an invocation cannot continue because a required command, positional argument, or flag is missing, `vlt` writes that command's full standard help to standard error and exits non-zero. The help text must match the corresponding explicit `--help` output. Only the output stream and exit status differ. `vlt` must not prepend or append a separate sentence such as `command is required`, `argument is required`, or an instruction to rerun with `--help`.
+
+This rule applies at every management-command level:
+
+- bare `vlt` writes the top-level help;
+- `vlt profile` writes the profile help;
+- an incomplete profile subcommand writes that subcommand's help;
+- an incomplete `switch` or `completion` command writes that command's help.
+
+An omission that starts a specified interactive form or selector is not an error while the terminal requirements in `interactive-profile-workflows` are met. If the same invocation cannot start that workflow outside an interactive terminal, the missing-input help rule applies. No prompt or selector may start in a non-interactive invocation.
+
+Invalid options, unexpected arguments, invalid values, and unknown profile subcommands keep a concise diagnostic on standard error and exit non-zero. The diagnostic must:
+
+- identify the invalid value;
+- show the relevant command usage rather than the full global help;
+- suggest the next valid action;
+- suggest at most one subcommand when a typo has one clear match;
+- avoid stack traces, internal dependency errors, and credentials.
+
+For example, `vlt profile` prints only the profile help for `add`, `list`, `show`, `update`, and `remove`. A typo such as `vlt profile udpate` still reports the unknown command and suggests `update`. Unknown top-level command names remain Vault arguments and are not intercepted for typo correction.
+
+#### Profile output
+
+`profile list` displays one lexicographically sorted row per profile with these columns:
+
+```text
+#  ACTIVE  NAME    ADDRESS                    NAMESPACE
+1  *       team-a  https://vault.example.com  platform
+2          team-b  https://vault.example.net  -
+```
+
+The one-based number remains a valid `switch` selector. `*` marks the active profile. Empty namespaces display as `-`. The table never includes usernames, credentials, keyring identifiers, or token-derived state.
+
+`profile show` displays aligned labels for name, address, username, auth path, namespace, and active status. Add, update, remove, and switch continue to print one concise success message after the state change succeeds. No success message may precede persistence or authentication success.
+
+Human-readable output is not a stable machine-readable interface. No JSON or other structured output mode is included in this scope.
+
+#### Terminal styling
+
+- Use restrained color for headings, labels, selections, and success or error states only.
+- Enable color only when the destination is an interactive terminal that supports it.
+- Disable color when output is redirected or `NO_COLOR` is set to a non-empty value.
+- Keep spacing, markers, and wording understandable without color.
+- Use ASCII markers and do not require patched fonts or icon glyphs.
+- Keep delegated Vault output byte-for-byte under Vault's control; `vlt` must not restyle it.
+
+### `interactive-profile-workflows`
+
+Interactive workflows run only when both the input and display streams are attached to a terminal. Supplying enough explicit arguments to perform an operation bypasses prompts. A non-interactive invocation with missing required input writes the relevant full help to standard error, exits non-zero, and never waits for input.
+
+#### Profile selection
+
+The following incomplete commands open a lexicographically sorted profile selector in an interactive terminal:
+
+```text
+vlt switch
+vlt profile show
+vlt profile update
+vlt profile remove
+```
+
+The selector shows the same number, active marker, name, address, and namespace information as `profile list`. It preselects the active profile when one exists. Selecting an entry supplies its stable profile name to the existing operation. If no profiles exist, the command does not open an empty selector; it explains how to run `vlt profile add`.
+
+Cancelling with the interface's cancel action or an interrupt changes no configuration or credential state, prints a concise cancellation message, and exits non-zero.
+
+#### Add form
+
+`profile add` preserves supplied values and prompts only for missing required input in an interactive terminal:
+
+- name: required and validated with the existing profile-name rules;
+- address: required and validated as an absolute HTTP or HTTPS Vault URL;
+- username: required and non-blank;
+- auth path: optional input defaulting to `oidc`;
+- namespace: optional and empty by default.
+
+Each invalid answer is explained next to its field and can be corrected without restarting the command. When name, address, and username are supplied explicitly, the command runs directly with the existing auth-path and namespace defaults. The form submits through the same mutation and authentication behavior as the explicit command.
+
+#### Update form
+
+`profile update NAME` without change flags opens a form populated with the current address, username, auth path, and namespace. The stable profile name is displayed but cannot be changed. The form validates changed values before submission and writes nothing until the complete form is valid.
+
+Supplying `NAME` and one or more update flags remains a direct partial update and does not open the form. This preserves the existing script-safe command contract. Running `profile update` without `NAME` first opens the selector and then the populated form.
+
+#### Removal confirmation
+
+`profile remove` without `NAME` opens the selector and then asks for confirmation. The confirmation names the selected profile and states when removing it will leave no active profile. Declining or cancelling changes nothing.
+
+`profile remove NAME` remains an explicit, immediate operation without an additional prompt. Automation must not gain a prompt after supplying the required argument.
+
+### `shell-completion`
+
+```text
+vlt completion bash
+vlt completion zsh
+vlt completion fish
+```
+
+Each command writes a sourceable completion script to standard output and writes diagnostics only to standard error. `vlt` never edits shell startup files or installs the script automatically. Unsupported shell names exit non-zero with contextual usage.
+
+Completion covers:
+
+- `vlt` management commands and the `completion` command;
+- profile subcommands;
+- management and global flags;
+- valid values for the shell argument;
+- stored profile names for `--profile`, `switch`, `profile show`, `profile update`, and `profile remove`.
+
+Completion does not suggest existing names for `profile add`. After an invocation enters delegated Vault arguments, `vlt` supplies no Vault command, flag, path, or secret completion and does not invoke the Vault executable. Failure to load profile configuration returns no dynamic candidates and does not corrupt the user's shell prompt with diagnostics.
 
 ### `credential-lifecycle`
 
@@ -168,7 +295,7 @@ Behavior:
 - `vlt` never writes a selected token to the process-wide parent environment, command arguments, config files, logs, or terminal output.
 - The delegated process's exit code is preserved. On platforms supporting process signals, signal termination is reflected using platform-appropriate conventions.
 
-`vlt` reserves `switch` and `profile` as management commands. Every other command name is treated as a Vault command and forwarded after preflight.
+`vlt` reserves `switch`, `profile`, and `completion` as management commands. Every other command name is treated as a Vault command and forwarded after preflight. This preserves transparent delegation, so unknown top-level names are not treated as `vlt` typos.
 
 #### Dependency discovery
 
@@ -200,55 +327,45 @@ Behavior:
 - Management failures must not leave partially written config or unintentionally delete a previously valid profile/token.
 - Errors identify the failing operation and suggest a corrective action where one is known.
 - Routine management output is concise and stable enough for human use; no machine-readable output contract is promised in the initial release.
+- Explicit complete commands remain non-interactive and retain their existing behavior.
+- Interactive workflows never start unless their input and display streams are terminals.
+- Prompt cancellation and validation failure leave persistent state unchanged.
+- Help, tables, forms, selectors, and completion remain usable without color.
 - The normal success path adds minimal output before handing control to Vault.
 
 ## Tech Stack
 
-- **Language:** Go, using the stable version pinned in `go.mod` when implementation begins.
+- **Language:** Go 1.26, as pinned in `go.mod`.
 - **CLI parsing:** Go standard library plus a small explicit dispatcher; delegated arguments remain opaque to `vlt`.
+- **Terminal UX:** Standard-library formatting plus the smallest pinned Charm-family component set needed for focused forms, selectors, and styling. The interface remains inline and task-focused rather than a persistent full-screen application.
+- **Shell completion:** Scripts generated by `vlt`; no external completion framework or Vault command introspection is required.
 - **Configuration:** JSON via Go's standard library, stored under `os.UserConfigDir()` in a `vlt` directory.
-- **Credential storage:** A pinned cross-platform Go keyring dependency supporting Linux Secret Service, macOS Keychain, and Windows Credential Manager.
+- **Credential storage:** `github.com/zalando/go-keyring` v0.2.6, supporting Linux Secret Service, macOS Keychain, and Windows Credential Manager.
 - **Vault integration:** The installed official `vault` executable invoked as a subprocess.
 - **Testing:** Go's `testing` package with fakes for subprocesses, clocks, config storage, and keyring access.
 
-Dependency versions must be pinned in `go.mod`/`go.sum`. Adding dependencies beyond the keyring integration requires approval.
+Dependency versions must be pinned in `go.mod`/`go.sum`. The implementation plan must name and justify each terminal UI package before it is added. Any unrelated dependency requires separate approval.
 
 ## Commands
 
-These commands become valid once the Go module and source tree exist:
-
 ```console
-# Build
-go build ./cmd/vlt
+# Apply canonical formatting
+just fmt
+
+# Run formatting, tests, race detection, vet, and the local build
+just check
+
+# Verify Linux, macOS, and Windows builds
+just build-all
 
 # Run during development
 go run ./cmd/vlt --help
-
-# Unit and integration tests (using fakes; no live Vault required)
-go test ./...
-
-# Race detection
-go test -race ./...
-
-# Static analysis
-go vet ./...
-
-# Verify formatting without changing files
-test -z "$(gofmt -l .)"
-
-# Apply formatting
-gofmt -w .
+go run ./cmd/vlt completion bash
+go run ./cmd/vlt completion zsh
+go run ./cmd/vlt completion fish
 ```
 
-Cross-platform compilation checks should include:
-
-```console
-GOOS=linux GOARCH=amd64 go build ./cmd/vlt
-GOOS=darwin GOARCH=amd64 go build ./cmd/vlt
-GOOS=windows GOARCH=amd64 go build ./cmd/vlt
-```
-
-These compilation checks verify code portability, not runtime keyring behavior.
+`just build-all` verifies code portability, not runtime keyring or shell behavior.
 
 ## Project Structure
 
@@ -256,7 +373,7 @@ These compilation checks verify code portability, not runtime keyring behavior.
 cmd/vlt/
   main.go                 Application entry point and dependency wiring
 internal/cli/
-  ...                     Argument dispatch, command behavior, user-facing output
+  ...                     Dispatch, command behavior, help, output, prompts, and completion
 internal/profile/
   ...                     Profile model, validation, selection, and operations
 internal/config/
@@ -312,7 +429,16 @@ Use table-driven tests for:
 - Vault environment construction and removal of leaked namespace values;
 - token state decisions: absent, valid, near expiry, renewable, expired, and lookup failure;
 - command parsing and exact argument forwarding;
-- error redaction.
+- error redaction;
+- exact explicit and automatic help text, command-specific output streams and exit status, absence of duplicate missing-input diagnostics, and unambiguous subcommand suggestions;
+- profile table ordering, columns, active markers, and empty namespace display;
+- color enablement for terminals and suppression for redirection or `NO_COLOR`;
+- interactive versus non-interactive dispatch at injected terminal boundaries;
+- add and update form defaults, in-place validation, and cancellation;
+- selector ordering, active preselection, empty-profile handling, and cancellation;
+- removal confirmation and unchanged state after decline or cancellation;
+- Bash, Zsh, and Fish script generation and completion candidates;
+- silent dynamic-completion failure when profile configuration cannot load.
 
 ### Component tests
 
@@ -327,6 +453,12 @@ Use temporary directories, a fake keyring, a controllable clock, and a fake `vau
 - delegated authentication failure is not retried;
 - failed add/update leaves no partial or regressed state;
 - remove deletes metadata and token;
+- bare `vlt` and missing management input outside a terminal return non-zero, write only the relevant full help to standard error, and do not read input;
+- explicit `-h` and `--help` write the same command-specific text to standard output and return zero;
+- interactive add, update, show, switch, and remove reach the same services as their explicit forms;
+- cancelled or declined interactive operations do not change metadata, active selection, or credentials;
+- generated completion scripts expose `vlt` commands, flags, shells, and stored profile names;
+- completion never invokes Vault or exposes credentials;
 - delegated exit status and standard streams are preserved;
 - tokens never appear in output or persisted config.
 
@@ -334,6 +466,7 @@ Use temporary directories, a fake keyring, a controllable clock, and a fake `vau
 
 - All unit/component tests must pass on supported CI operating systems when CI is introduced.
 - Cross-compilation must succeed for Linux, macOS, and Windows.
+- Generated completion scripts receive syntax or smoke checks with Bash, Zsh, and Fish when those shell executables are available. Unit tests remain the portable requirement when a shell is unavailable.
 - Before the initial release, manually verify Linux Secret Service integration and a real OIDC login/delegated read on this development machine.
 - Real macOS and Windows keyring/OIDC verification is deferred until those environments are available and must be documented as unverified meanwhile.
 
@@ -349,12 +482,17 @@ No numeric coverage target is imposed initially. Every success criterion and sec
 - Redact tokens and likely credential values from all diagnostics.
 - Preserve delegated arguments, streams, and exit behavior.
 - Validate inputs and use atomic config updates.
+- Keep explicit complete commands non-interactive.
+- Detect terminal capabilities through injectable boundaries.
+- Respect `NO_COLOR` and keep all management workflows understandable without styling.
+- Keep completion limited to non-secret `vlt` metadata and command structure.
 - Add or update tests for every behavior change.
 - Run formatting, tests, race tests, static analysis, and cross-platform compilation before release.
 
 ### Ask first
 
-- Add any dependency beyond the cross-platform keyring package.
+- Add terminal UI dependencies not named and justified in the approved implementation plan.
+- Add any dependency unrelated to the approved keyring or terminal UI integrations.
 - Change the profile schema or configuration location after release.
 - Add plaintext, encrypted-file, or environment-file credential fallback.
 - Add machine-readable output or promise output stability for scripts.
@@ -372,6 +510,10 @@ No numeric coverage target is imposed initially. Every success criterion and sec
 - Reimplement Vault read/write/kv behavior.
 - Mutate the official Vault CLI's token-helper state during `vlt` login.
 - Change direct `vault ...` behavior or the parent shell's environment.
+- Prompt for input when either the input or display stream is not a terminal.
+- Add ANSI styling to redirected output or when `NO_COLOR` is set.
+- Restyle, parse for presentation, or complete delegated Vault arguments.
+- Modify shell startup files or install completion scripts automatically.
 - Retry a delegated command after it may have executed.
 - Remove or skip a failing security test merely to make checks pass.
 
@@ -380,7 +522,7 @@ No numeric coverage target is imposed initially. Every success criterion and sec
 The initial release is complete when all of the following are demonstrably true:
 
 1. A user can add `team-a` and `team-b` profiles with address, username, and `oidc` auth path; each successful add completes OIDC and stores its token only in the native keyring.
-2. `vlt switch` displays the current profile and a deterministic numbered list; switching by name and number persists the same selected profile.
+2. `profile list` displays the deterministic numbered profile table, and switching by explicit name or number persists the same selected profile.
 3. After `vlt switch team-a`, `vlt read ...` delegates unchanged arguments to Vault with team-a's address and token.
 4. `vlt --profile team-b read ...` uses team-b once and leaves team-a active.
 5. A valid token avoids browser authentication; a renewable token within five minutes of expiry is renewed; an invalid or expired token authenticates before delegation.
@@ -388,14 +530,21 @@ The initial release is complete when all of the following are demonstrably true:
 7. Direct `vault ...` behavior and the parent shell environment remain unchanged.
 8. Profile metadata survives process restarts, while no token appears in the config file, terminal output, logs, or command arguments.
 9. Missing Vault, unavailable keyring, malformed login output, invalid profiles, and partial-update failures produce actionable errors without corrupting existing state.
-10. Automated tests cover the functional and security flows above and pass under `go test ./...`, `go test -race ./...`, and `go vet ./...`.
+10. Automated tests cover the functional and security flows above and pass under `just check`.
 11. The program cross-compiles for Linux, macOS, and Windows, and the complete real login/read flow is manually verified on Linux.
+12. Bare `vlt` and every missing required management command, positional argument, or flag write only the relevant full help to standard error and return non-zero. The text matches explicit `--help`, which writes to standard output and returns zero. Invalid input retains its specific diagnostic, and clear profile-subcommand typos receive one suggestion.
+13. `profile list` and `profile show` expose the specified metadata and active status without credentials, work without color, and emit no ANSI sequences when redirected or when `NO_COLOR` is set.
+14. In an interactive terminal, missing profile selectors open focused selection workflows for `switch`, `show`, `update`, and `remove`; the same invocations outside a terminal fail promptly with the relevant standard help and no separate missing-input diagnostic.
+15. Interactive add and update validate fields in place, use the specified defaults, and reach the same persistence and authentication behavior as explicit commands.
+16. Cancelling or declining an interactive operation leaves profile metadata, active selection, and credential entries unchanged.
+17. `vlt completion bash`, `vlt completion zsh`, and `vlt completion fish` generate sourceable scripts that complete `vlt` commands, flags, supported shells, and stored profile names.
+18. Completion and presentation changes neither invoke nor restyle delegated Vault operations and never expose credentials.
 
 ## Out of Scope
 
 - Reimplementing any Vault data command or embedding a Vault server/client replacement.
 - Changing the behavior of direct `vault ...` commands.
-- Parent-shell environment mutation or shell-specific activation scripts.
+- Parent-shell environment mutation or profile activation scripts.
 - Authentication methods other than OIDC.
 - Multiple users, shared/team configuration, or profile synchronization between machines.
 - Plaintext or file-based token fallback.
@@ -405,6 +554,11 @@ The initial release is complete when all of the following are demonstrably true:
 - Initial runtime certification on macOS or Windows.
 - Installers, package-manager publication, automatic updates, telemetry, and CI configuration.
 - A stable machine-readable output API.
+- JSON, YAML, or other structured management output.
+- A persistent full-screen profile-management TUI.
+- Completion for delegated Vault commands, flags, paths, or secrets.
+- Automatic installation of completion scripts or edits to shell startup files.
+- Suppressing `exit status 1` or other status text emitted by `go run` rather than by `vlt`.
 
 ## Open Questions
 
