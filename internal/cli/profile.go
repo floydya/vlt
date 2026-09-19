@@ -8,6 +8,8 @@ import (
 	"io"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"vlt/internal/profile"
 	"vlt/internal/vaultexec"
 )
@@ -603,7 +605,7 @@ func safeManagementError(err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
-	return errors.New(vaultexec.RedactDiagnostic(err.Error()))
+	return errors.New(ansi.Strip(vaultexec.RedactDiagnostic(err.Error())))
 }
 
 func isHelpFlag(value string) bool {

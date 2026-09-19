@@ -7,7 +7,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"vlt/internal/cli"
 	"vlt/internal/config"
@@ -27,7 +30,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	dispatcher, err := newDispatcher(stdin, stdout, stderr)
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "vlt: %v\n", err)
+		_, _ = fmt.Fprintln(stderr, processDiagnostic(err))
 		return 1
 	}
 	return dispatch(ctx, dispatcher, args, stderr)
@@ -93,10 +96,18 @@ func dispatch(ctx context.Context, dispatcher *cli.Dispatcher, args []string, st
 			_, _ = fmt.Fprint(stderr, automaticHelp.Text)
 			return 1
 		}
-		_, _ = fmt.Fprintf(stderr, "vlt: %v\n", err)
+		_, _ = fmt.Fprintln(stderr, processDiagnostic(err))
 		return vaultexec.ExitCode(err)
 	}
 	return 0
+}
+
+func processDiagnostic(err error) string {
+	diagnostic := ansi.Strip(err.Error())
+	for strings.HasPrefix(diagnostic, "vlt: ") {
+		diagnostic = strings.TrimPrefix(diagnostic, "vlt: ")
+	}
+	return "vlt: " + diagnostic
 }
 
 func unavailable(capability string) cli.Handler {

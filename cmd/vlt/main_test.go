@@ -219,6 +219,47 @@ func TestDispatchReturnsSuccessWithoutErrorOutput(t *testing.T) {
 	}
 }
 
+func TestDispatchWritesOneANSIFreeDiagnosticPrefix(t *testing.T) {
+	dispatcher := cli.NewDispatcher(cli.Dependencies{
+		Output: &bytes.Buffer{},
+		Vault: func(context.Context, []string) error {
+			return errors.New("vlt: \x1b[31mrequest failed\x1b[0m")
+		},
+	})
+	var stderr bytes.Buffer
+
+	exitCode := dispatch(context.Background(), dispatcher, []string{"status"}, &stderr)
+
+	if exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1", exitCode)
+	}
+	if got, want := stderr.String(), "vlt: request failed\n"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
+func TestNewDispatcherRedirectedOutputIsPlainAndDeterministic(t *testing.T) {
+	configDirectory := t.TempDir()
+	var first bytes.Buffer
+	firstDispatcher := newDispatcherAt(configDirectory, strings.NewReader(""), &first, io.Discard)
+	if err := firstDispatcher.Dispatch(context.Background(), []string{"profile", "list"}); err != nil {
+		t.Fatalf("first profile list error = %v", err)
+	}
+
+	var second bytes.Buffer
+	secondDispatcher := newDispatcherAt(configDirectory, strings.NewReader(""), &second, io.Discard)
+	if err := secondDispatcher.Dispatch(context.Background(), []string{"profile", "list"}); err != nil {
+		t.Fatalf("second profile list error = %v", err)
+	}
+
+	if strings.Contains(first.String(), "\x1b[") {
+		t.Fatalf("redirected output contains ANSI: %q", first.String())
+	}
+	if got, want := second.String(), first.String(); got != want {
+		t.Fatalf("second output = %q, want deterministic %q", got, want)
+	}
+}
+
 func TestRunRootHelpDoesNotRequireConfigDirectory(t *testing.T) {
 	for _, name := range []string{"HOME", "XDG_CONFIG_HOME", "AppData"} {
 		t.Setenv(name, "")

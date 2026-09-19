@@ -48,6 +48,23 @@ func TestFakeBackedPreflightRenewsBeforeDelegation(t *testing.T) {
 	harness.assertNoCredentialLeaks(t, err, token)
 }
 
+func TestManagementDiagnosticRedactsCredentialAndStripsANSI(t *testing.T) {
+	const token = "hvs.synthetic-diagnostic-token"
+	mutator := &fakeProfileMutator{removeErr: errors.New("\x1b[31mdelete failed with VAULT_TOKEN=" + token + "\x1b[0m")}
+	handler := NewProfileHandler(ProfileDependencies{Mutations: mutator, Output: io.Discard})
+
+	err := handler(context.Background(), []string{"remove", "team-a"})
+	if err == nil {
+		t.Fatal("profile remove error = nil, want failure")
+	}
+	if strings.Contains(err.Error(), token) || strings.Contains(err.Error(), "\x1b[") {
+		t.Fatalf("profile remove error exposed credential or ANSI: %q", err)
+	}
+	if !strings.Contains(err.Error(), vaultexec.RedactedValue) {
+		t.Fatalf("profile remove error = %q, want redacted marker", err)
+	}
+}
+
 func TestFakeBackedPreflightAuthenticatesInvalidCredentialBeforeDelegation(t *testing.T) {
 	const oldToken = "synthetic-expired-token"
 	const newToken = "synthetic-replacement-token"
