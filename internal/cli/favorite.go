@@ -173,10 +173,7 @@ func favoriteExecute(ctx context.Context, dependencies FavoriteDependencies) err
 	}
 	selected, err := dependencies.Selector.Select(ctx, ordered)
 	if err != nil {
-		if errors.Is(err, ErrFavoriteSelectionCanceled) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return err
-		}
-		return safeManagementError(fmt.Errorf("execute favorite: %w", err))
+		return interactiveOperationError(fmt.Errorf("execute favorite: %w", err))
 	}
 	resolved := favorite.Favorite{}
 	found := false
@@ -245,13 +242,16 @@ func favoriteAdd(ctx context.Context, dependencies FavoriteDependencies, args []
 			Favorite: favorite.Favorite{Operation: favorite.OperationRead}, Profiles: profiles,
 		})
 		if err != nil {
-			return safeManagementError(fmt.Errorf("add favorite: %w", err))
+			return interactiveOperationError(fmt.Errorf("add favorite: %w", err))
 		}
 	}
 	if err := dependencies.Mutations.Add(ctx, candidate); err != nil {
 		return safeManagementError(err)
 	}
-	if _, err := fmt.Fprintf(dependencies.Output, "Added favorite %q for profile %q.\n", candidate.Path, candidate.Profile); err != nil {
+	status := newPresentation(dependencies.Terminal).status(fmt.Sprintf(
+		"Added favorite %q for profile %q.", candidate.Path, candidate.Profile,
+	))
+	if _, err := io.WriteString(dependencies.Output, status); err != nil {
 		return fmt.Errorf("display added favorite: %w", err)
 	}
 	return nil
@@ -354,7 +354,7 @@ func favoriteUpdate(ctx context.Context, dependencies FavoriteDependencies, args
 		}
 		updated, err := dependencies.Form.Run(ctx, FavoriteFormRequest{Favorite: selection.favorite, Profiles: profiles})
 		if err != nil {
-			return safeManagementError(fmt.Errorf("update favorite: %w", err))
+			return interactiveOperationError(fmt.Errorf("update favorite: %w", err))
 		}
 		selector = selection.selector
 		changes = favoriteChangesBetween(selection.favorite, updated)
@@ -362,7 +362,8 @@ func favoriteUpdate(ctx context.Context, dependencies FavoriteDependencies, args
 	if err := dependencies.Mutations.Update(ctx, selector, changes); err != nil {
 		return safeManagementError(err)
 	}
-	if _, err := fmt.Fprintf(dependencies.Output, "Updated favorite %s.\n", selector); err != nil {
+	status := newPresentation(dependencies.Terminal).status(fmt.Sprintf("Updated favorite %s.", selector))
+	if _, err := io.WriteString(dependencies.Output, status); err != nil {
 		return fmt.Errorf("display updated favorite: %w", err)
 	}
 	return nil
@@ -397,7 +398,7 @@ func favoriteRemove(ctx context.Context, dependencies FavoriteDependencies, args
 		}
 		confirmed, err := dependencies.RemovalConfirmer.Confirm(ctx, FavoriteRemovalConfirmation{Favorite: selection.favorite})
 		if err != nil {
-			return safeManagementError(fmt.Errorf("remove favorite: %w", err))
+			return interactiveOperationError(fmt.Errorf("remove favorite: %w", err))
 		}
 		if !confirmed {
 			return nil
@@ -407,7 +408,8 @@ func favoriteRemove(ctx context.Context, dependencies FavoriteDependencies, args
 	if err := dependencies.Mutations.Remove(ctx, selector); err != nil {
 		return safeManagementError(err)
 	}
-	if _, err := fmt.Fprintf(dependencies.Output, "Removed favorite %s.\n", selector); err != nil {
+	status := newPresentation(dependencies.Terminal).status(fmt.Sprintf("Removed favorite %s.", selector))
+	if _, err := io.WriteString(dependencies.Output, status); err != nil {
 		return fmt.Errorf("display removed favorite: %w", err)
 	}
 	return nil

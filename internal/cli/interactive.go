@@ -270,6 +270,7 @@ func interactiveProfileError(err error, usage, command string) error {
 
 func interactiveOperationError(err error) error {
 	if errors.Is(err, ErrSharedSelectorCanceled) ||
+		errors.Is(err, ErrFavoriteSelectionCanceled) ||
 		errors.Is(err, huh.ErrUserAborted) ||
 		errors.Is(err, context.Canceled) ||
 		errors.Is(err, context.DeadlineExceeded) {

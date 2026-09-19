@@ -241,7 +241,7 @@ func interactiveFavoriteError(err error, usage, command string) error {
 	case errors.Is(err, errNoFavoritesConfigured):
 		return managementUsageError("no favorites configured; add one with 'vlt favorite add'", usage, command)
 	default:
-		return safeManagementError(err)
+		return interactiveOperationError(err)
 	}
 }
 

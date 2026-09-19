@@ -8,8 +8,12 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/huh/v2"
+	"github.com/charmbracelet/x/ansi"
+
 	"vlt/internal/config"
 	"vlt/internal/favorite"
+	"vlt/internal/profile"
 )
 
 type fakeFavoriteStore struct {
@@ -40,6 +44,162 @@ type recordingFavoriteMutator struct {
 type recordedFavoriteUpdate struct {
 	selector string
 	changes  favorite.FavoriteChanges
+}
+
+func TestFavoriteMutationSuccessOutputUsesSharedStatusPresentation(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+		run  func(*bytes.Buffer) error
+	}{
+		{
+			name: "add",
+			want: "Added favorite \"secret/a\" for profile \"team-a\".\n",
+			run: func(output *bytes.Buffer) error {
+				handler := NewFavoriteHandler(FavoriteDependencies{
+					Mutations: &recordingFavoriteMutator{}, Output: output, Terminal: switchTerminal{color: true},
+				})
+				return handler(context.Background(), []string{
+					"add", "secret/a", "--profile", "team-a", "--operation", "read",
+				})
+			},
+		},
+		{
+			name: "update",
+			want: "Updated favorite 2.\n",
+			run: func(output *bytes.Buffer) error {
+				handler := NewFavoriteHandler(FavoriteDependencies{
+					Mutations: &recordingFavoriteMutator{}, Output: output, Terminal: switchTerminal{color: true},
+				})
+				return handler(context.Background(), []string{"update", "2", "--note", "daily"})
+			},
+		},
+		{
+			name: "remove",
+			want: "Removed favorite 3.\n",
+			run: func(output *bytes.Buffer) error {
+				handler := NewFavoriteHandler(FavoriteDependencies{
+					Mutations: &recordingFavoriteMutator{}, Output: output, Terminal: switchTerminal{color: true},
+				})
+				return handler(context.Background(), []string{"remove", "3"})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var output bytes.Buffer
+			if err := tt.run(&output); err != nil {
+				t.Fatalf("mutation error = %v", err)
+			}
+			if !strings.Contains(output.String(), "\x1b[") {
+				t.Fatalf("styled output contains no ANSI: %q", output.String())
+			}
+			if got := ansi.Strip(output.String()); got != tt.want {
+				t.Fatalf("unstyled output = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFavoriteCancellationUsesOneDiagnosticAndNoWork(t *testing.T) {
+	selected := favorite.Favorite{Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/a"}
+	tests := []struct {
+		name  string
+		cause error
+		run   func(*bytes.Buffer, error) (int, error)
+	}{
+		{
+			name: "execute selector", cause: ErrFavoriteSelectionCanceled,
+			run: func(output *bytes.Buffer, cause error) (int, error) {
+				vaultCalls := 0
+				handler := NewFavoriteHandler(FavoriteDependencies{
+					Favorites: &fakeFavoriteStore{configuration: favorite.Configuration{Favorites: []favorite.Favorite{selected}}},
+					Output:    output, Terminal: switchTerminal{prompts: true},
+					Selector: &fakeFavoriteExecutionSelector{err: cause},
+					Vault:    func(context.Context, []string) error { vaultCalls++; return nil },
+				})
+				return vaultCalls, handler(context.Background(), nil)
+			},
+		},
+		{
+			name: "add form", cause: huh.ErrUserAborted,
+			run: func(output *bytes.Buffer, cause error) (int, error) {
+				mutations := &recordingFavoriteMutator{}
+				handler := NewFavoriteHandler(FavoriteDependencies{
+					Profiles:  &fakeProfileStore{configuration: config.Configuration{Profiles: []profile.Profile{{Name: "team-a"}}}},
+					Mutations: mutations, Output: output, Terminal: switchTerminal{prompts: true},
+					Form: &fakeFavoriteForm{err: cause},
+				})
+				err := handler(context.Background(), []string{"add"})
+				return len(mutations.added), err
+			},
+		},
+		{
+			name: "update selector", cause: ErrFavoriteSelectionCanceled,
+			run: func(output *bytes.Buffer, cause error) (int, error) {
+				mutations := &recordingFavoriteMutator{}
+				handler := NewFavoriteHandler(FavoriteDependencies{
+					Favorites: &fakeFavoriteStore{configuration: favorite.Configuration{Favorites: []favorite.Favorite{selected}}},
+					Mutations: mutations, Output: output, Terminal: switchTerminal{prompts: true},
+					ManagementSelector: &fakeFavoriteManagementSelector{err: cause},
+				})
+				err := handler(context.Background(), []string{"update"})
+				return len(mutations.updated), err
+			},
+		},
+		{
+			name: "remove confirmation", cause: huh.ErrUserAborted,
+			run: func(output *bytes.Buffer, cause error) (int, error) {
+				mutations := &recordingFavoriteMutator{}
+				handler := NewFavoriteHandler(FavoriteDependencies{
+					Favorites: &fakeFavoriteStore{configuration: favorite.Configuration{Favorites: []favorite.Favorite{selected}}},
+					Mutations: mutations, Output: output, Terminal: switchTerminal{prompts: true},
+					ManagementSelector: &fakeFavoriteManagementSelector{selected: selected},
+					RemovalConfirmer:   &fakeFavoriteRemovalConfirmer{err: cause},
+				})
+				err := handler(context.Background(), []string{"remove"})
+				return len(mutations.removed), err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var output bytes.Buffer
+			calls, err := tt.run(&output, tt.cause)
+			if err == nil || err.Error() != "operation canceled" {
+				t.Fatalf("cancellation error = %v, want operation canceled", err)
+			}
+			if !errors.Is(err, tt.cause) {
+				t.Fatalf("cancellation error = %v, want cause %v", err, tt.cause)
+			}
+			if calls != 0 || output.Len() != 0 {
+				t.Fatalf("cancellation work calls = %d, output = %q; want none", calls, output.String())
+			}
+		})
+	}
+}
+
+func TestFavoriteExecutionOutputContainsOnlyDelegatedVaultBytes(t *testing.T) {
+	selected := favorite.Favorite{Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/a"}
+	var output bytes.Buffer
+	handler := NewFavoriteHandler(FavoriteDependencies{
+		Favorites: &fakeFavoriteStore{configuration: favorite.Configuration{Favorites: []favorite.Favorite{selected}}},
+		Output:    &output, Terminal: switchTerminal{prompts: true},
+		Selector: &fakeFavoriteExecutionSelector{selected: selected},
+		Vault: func(context.Context, []string) error {
+			_, err := output.WriteString("delegated Vault output\n")
+			return err
+		},
+	})
+
+	if err := handler(context.Background(), nil); err != nil {
+		t.Fatalf("favorite execution error = %v", err)
+	}
+	if got, want := output.String(), "delegated Vault output\n"; got != want {
+		t.Fatalf("execution output = %q, want %q", got, want)
+	}
 }
 
 type fakeFavoriteExecutionSelector struct {
