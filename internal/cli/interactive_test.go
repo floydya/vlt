@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -14,6 +15,28 @@ import (
 
 type promptLineReader struct {
 	lines [][]byte
+}
+
+type recordingSharedSelector struct {
+	title         string
+	items         []SharedSelectorItem
+	preselectedID string
+	selectedID    string
+	err           error
+	calls         int
+}
+
+func (s *recordingSharedSelector) Select(
+	_ context.Context,
+	title string,
+	items []SharedSelectorItem,
+	preselectedID string,
+) (string, error) {
+	s.calls++
+	s.title = title
+	s.items = append([]SharedSelectorItem(nil), items...)
+	s.preselectedID = preselectedID
+	return s.selectedID, s.err
 }
 
 func (r *promptLineReader) Read(value []byte) (int, error) {
@@ -29,39 +52,73 @@ func (r *promptLineReader) Read(value []byte) (int, error) {
 	return n, nil
 }
 
-func TestHuhProfileSelectorShowsSortedNamesAndPreselectsActive(t *testing.T) {
-	var output bytes.Buffer
-	selector := huhProfileSelector{input: strings.NewReader("\n"), output: &output, accessible: true}
+func TestSharedProfileSelectorBuildsDeterministicSearchRowsAndPreselectsActive(t *testing.T) {
+	shared := &recordingSharedSelector{selectedID: "team-a"}
+	selector := NewSharedProfileSelector(shared)
+	candidates := []profile.Profile{
+		{
+			Name: "team-b", Address: "https://vault.team-b.example", Username: "hidden-b",
+			AuthPath: "hidden-auth-b", Namespace: "",
+		},
+		{
+			Name: "team-a", Address: "https://vault.team-a.example", Username: "hidden-a",
+			AuthPath: "hidden-auth-a", Namespace: "engineering",
+		},
+	}
 
-	selected, err := selector.Select(context.Background(), []string{"team-a", "team-b"}, "team-b")
+	selected, err := selector.Select(context.Background(), candidates, "team-b")
 	if err != nil {
-		t.Fatalf("select profile: %v", err)
+		t.Fatalf("select profile error = %v", err)
 	}
-	if selected != "team-b" {
-		t.Errorf("selected profile = %q, want active team-b", selected)
+	if selected != "team-a" {
+		t.Errorf("selected profile = %q, want stable name team-a", selected)
 	}
-	teamA := strings.Index(output.String(), "1. team-a")
-	teamB := strings.Index(output.String(), "2. team-b (active)")
-	if teamA < 0 || teamB < 0 || teamA > teamB {
-		t.Errorf("selector output = %q, want sorted names with active context", output.String())
+	if shared.title != "Select a profile" || shared.preselectedID != "team-b" {
+		t.Errorf("shared selector request = title %q, preselected %q", shared.title, shared.preselectedID)
 	}
-	for _, forbidden := range []string{"https://", "username", "namespace", "credential", "token"} {
-		if strings.Contains(strings.ToLower(output.String()), forbidden) {
-			t.Errorf("selector output exposed %q: %q", forbidden, output.String())
+	if len(shared.items) != 2 {
+		t.Fatalf("shared selector item count = %d, want 2", len(shared.items))
+	}
+	if shared.items[0].ID != "team-a" || shared.items[1].ID != "team-b" {
+		t.Fatalf("shared selector IDs = %q, %q, want deterministic profile order", shared.items[0].ID, shared.items[1].ID)
+	}
+	for _, text := range []string{"1", "team-a", "https://vault.team-a.example", "engineering"} {
+		if !strings.Contains(shared.items[0].Label, text) {
+			t.Errorf("team-a label = %q, want %q", shared.items[0].Label, text)
 		}
+	}
+	for _, text := range []string{"2", "*", "team-b", "https://vault.team-b.example", "-"} {
+		if !strings.Contains(shared.items[1].Label, text) {
+			t.Errorf("team-b label = %q, want %q", shared.items[1].Label, text)
+		}
+	}
+	for _, item := range shared.items {
+		for _, forbidden := range []string{"hidden-a", "hidden-b", "hidden-auth-a", "hidden-auth-b"} {
+			if strings.Contains(item.Label+item.SearchText, forbidden) {
+				t.Errorf("profile selector item exposes %q: %#v", forbidden, item)
+			}
+		}
+	}
+	filtered := filterSharedSelectorItems("ENG", shared.items)
+	if len(filtered) != 1 || filtered[0].ID != "team-a" {
+		t.Errorf("namespace filter = %#v, want team-a", filtered)
+	}
+	filtered = filterSharedSelectorItems("TMBEX", shared.items)
+	if len(filtered) != 1 || filtered[0].ID != "team-b" {
+		t.Errorf("address filter = %#v, want team-b", filtered)
 	}
 }
 
-func TestHuhProfileSelectorReturnsChosenName(t *testing.T) {
-	var output bytes.Buffer
-	selector := huhProfileSelector{input: strings.NewReader("1\n"), output: &output, accessible: true}
+func TestSharedProfileSelectorPropagatesCancellationWithoutSelection(t *testing.T) {
+	shared := &recordingSharedSelector{err: ErrSharedSelectorCanceled}
+	selector := NewSharedProfileSelector(shared)
 
-	selected, err := selector.Select(context.Background(), []string{"team-a", "team-b"}, "team-b")
-	if err != nil {
-		t.Fatalf("select profile: %v", err)
+	selected, err := selector.Select(context.Background(), []profile.Profile{managementTestProfile("team-a")}, "team-a")
+	if !errors.Is(err, ErrSharedSelectorCanceled) {
+		t.Fatalf("select profile error = %v, want shared cancellation", err)
 	}
-	if selected != "team-a" {
-		t.Errorf("selected profile = %q, want team-a", selected)
+	if selected != "" {
+		t.Errorf("selected profile = %q, want empty after cancellation", selected)
 	}
 }
 

@@ -21,6 +21,7 @@ type fakeProfileStore struct {
 }
 
 type fakeProfileSelector struct {
+	profiles []profile.Profile
 	names    []string
 	active   string
 	selected string
@@ -41,9 +42,13 @@ func (f *fakeProfileForm) Run(_ context.Context, request ProfileFormRequest) (pr
 	return f.result, f.err
 }
 
-func (f *fakeProfileSelector) Select(_ context.Context, names []string, active string) (string, error) {
+func (f *fakeProfileSelector) Select(_ context.Context, candidates []profile.Profile, active string) (string, error) {
 	f.calls++
-	f.names = append([]string(nil), names...)
+	f.profiles = append([]profile.Profile(nil), candidates...)
+	f.names = make([]string, len(candidates))
+	for index, candidate := range candidates {
+		f.names[index] = candidate.Name
+	}
 	f.active = active
 	return f.selected, f.err
 }

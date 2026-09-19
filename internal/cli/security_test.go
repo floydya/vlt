@@ -258,12 +258,18 @@ func TestGuidedOutputsPromptsCompletionAndFailuresDoNotExposeCredentials(t *test
 		t.Fatalf("management output or completion invoked Vault: %#v", harness.vaultRunner.commandArguments())
 	}
 
-	var selectorOutput bytes.Buffer
-	selector := huhProfileSelector{input: strings.NewReader("\n"), output: &selectorOutput, accessible: true}
-	if _, err := selector.Select(context.Background(), []string{"team-a"}, "team-a"); err != nil {
+	configuration, err := harness.profiles.Load(context.Background())
+	if err != nil {
+		t.Fatalf("load selector profiles: %v", err)
+	}
+	sharedSelector := &recordingSharedSelector{selectedID: "team-a"}
+	selector := NewSharedProfileSelector(sharedSelector)
+	if _, err := selector.Select(context.Background(), configuration.Profiles, configuration.ActiveProfile); err != nil {
 		t.Fatalf("selector prompt error = %v", err)
 	}
-	surfaces = append(surfaces, selectorOutput.String())
+	for _, item := range sharedSelector.items {
+		surfaces = append(surfaces, item.Label, item.SearchText)
+	}
 
 	var formOutput bytes.Buffer
 	form := huhProfileForm{

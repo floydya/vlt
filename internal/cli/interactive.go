@@ -18,7 +18,7 @@ var (
 )
 
 type ProfileSelector interface {
-	Select(context.Context, []string, string) (string, error)
+	Select(context.Context, []profile.Profile, string) (string, error)
 }
 
 type ProfileFormRequest struct {
@@ -40,10 +40,8 @@ type ProfileRemovalConfirmer interface {
 	Confirm(context.Context, ProfileRemovalConfirmation) (bool, error)
 }
 
-type huhProfileSelector struct {
-	input      io.Reader
-	output     io.Writer
-	accessible bool
+type sharedProfileSelector struct {
+	selector SharedSelector
 }
 
 type huhProfileForm struct {
@@ -58,8 +56,8 @@ type huhProfileRemovalConfirmer struct {
 	accessible bool
 }
 
-func NewHuhProfileSelector(input io.Reader, output io.Writer) ProfileSelector {
-	return huhProfileSelector{input: input, output: output}
+func NewSharedProfileSelector(selector SharedSelector) ProfileSelector {
+	return sharedProfileSelector{selector: selector}
 }
 
 func NewHuhProfileForm(input io.Reader, output io.Writer) ProfileForm {
@@ -70,38 +68,26 @@ func NewHuhProfileRemovalConfirmer(input io.Reader, output io.Writer) ProfileRem
 	return huhProfileRemovalConfirmer{input: input, output: output}
 }
 
-func (s huhProfileSelector) Select(ctx context.Context, names []string, active string) (string, error) {
-	if len(names) == 0 {
-		return "", errors.New("select profile: no profile choices")
+func (s sharedProfileSelector) Select(ctx context.Context, candidates []profile.Profile, active string) (string, error) {
+	if s.selector == nil {
+		return "", errors.New("select profile: shared selector is not configured")
 	}
-	if s.input == nil {
-		return "", errors.New("select profile: input is not configured")
-	}
-	if s.output == nil {
-		return "", errors.New("select profile: output is not configured")
-	}
-
-	selected := names[0]
-	options := make([]huh.Option[string], 0, len(names))
-	for _, name := range names {
-		label := name
-		isActive := name == active
-		if isActive {
-			label += " (active)"
-			selected = name
+	ordered := profile.NewService(candidates).List()
+	items := make([]SharedSelectorItem, 0, len(ordered))
+	for index, candidate := range ordered {
+		marker := ""
+		if candidate.Name == active {
+			marker = "*"
 		}
-		options = append(options, huh.NewOption(label, name).Selected(isActive))
+		namespace := candidate.Namespace
+		if namespace == "" {
+			namespace = "-"
+		}
+		label := fmt.Sprintf("%d  %s  %s  %s  %s", index+1, marker, candidate.Name, candidate.Address, namespace)
+		items = append(items, SharedSelectorItem{ID: candidate.Name, Label: label, SearchText: label})
 	}
-
-	field := huh.NewSelect[string]().
-		Title("Select a profile").
-		Options(options...).
-		Value(&selected)
-	form := huh.NewForm(huh.NewGroup(field)).
-		WithInput(s.input).
-		WithOutput(s.output).
-		WithAccessible(s.accessible)
-	if err := form.RunWithContext(ctx); err != nil {
+	selected, err := s.selector.Select(ctx, "Select a profile", items, active)
+	if err != nil {
 		return "", fmt.Errorf("select profile: %w", err)
 	}
 	return selected, nil
@@ -237,11 +223,7 @@ func selectProfileInteractively(
 		return profile.Profile{}, "", errors.New("profile selection: interactive selector is not configured")
 	}
 
-	names := make([]string, len(candidates))
-	for index, candidate := range candidates {
-		names[index] = candidate.Name
-	}
-	selectedName, err := selector.Select(ctx, names, configuration.ActiveProfile)
+	selectedName, err := selector.Select(ctx, candidates, configuration.ActiveProfile)
 	if err != nil {
 		return profile.Profile{}, "", fmt.Errorf("profile selection: %w", err)
 	}
