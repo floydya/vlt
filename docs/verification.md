@@ -18,6 +18,8 @@ The clean module cache resolved only the versions pinned by `go.mod` and `go.sum
 
 The release-checkpoint refinements also passed `just check`, `just build-all`, `go mod verify`, and `golangci-lint run --build-tags=gms_pure_go ./...` in the current worktree. The guided CLI regression suite covers the complete interactive, presentation, and completion boundaries without a live Vault or desktop keyring. Bash and Zsh completion passed installed-shell syntax checks. Fish was not installed, so its generated script remains covered by exact-output and semantic unit tests rather than a local Fish parser.
 
+The favorite-workflow increment passed `just check`, `just build-all`, and `go mod verify`. Fake-backed component tests cover explicit and guided favorite CRUD, both delegated read mappings, selector cancellation and absence, cascade approval, and cascade rollback. Security canaries confirm that favorite configuration and management output do not retain keyring tokens or delegated secret values.
+
 ## Runtime verification
 
 | Platform | Native credential store | Real OIDC and delegated read | Status |
@@ -31,6 +33,8 @@ The Linux config directory and file use `0700` and `0600` permissions. The offic
 After VPN connection, the configured Vault health endpoint returned an HTTP response. The active credential was invalid or expired, so `vlt` completed OIDC and replaced the profile token in GNOME Keyring. A delegated `vlt read -format=json sys/health` then succeeded. The read did not change the refreshed token, and the token did not appear in profile configuration, captured standard output, or captured standard error. No raw Vault response or credential was written to this document.
 
 Cross-compilation does not certify macOS or Windows runtime behavior.
+
+The installed Linux `fzf` selected the expected opaque row from synthetic metadata using the same delimiter, display-field, search-field, header, prompt, and layout arguments as `vlt`. The check used no credential or Vault response. Fake-backed delegated `read PATH` and `kv get PATH` checks confirmed the one-command profile override and left the active profile unchanged. No raw secret output was recorded.
 
 ## Success criteria
 
@@ -54,6 +58,12 @@ Cross-compilation does not certify macOS or Windows runtime behavior.
 | 16. Preserve metadata, active selection, and credentials after cancellation or decline | `TestFakeBackedInteractiveCancellationAndDeclineLeaveStateUnchanged`, `TestProfileHandlerAddCancelAndInterruptDoNotMutate`, `TestProfileHandlerUpdateFormFailureDoesNotMutate`, and `TestProfileHandlerRemoveStopsBeforeMutationWhenNotConfirmed` |
 | 17. Generate valid Bash, Zsh, and Fish completion with stored profile names | `TestCompletionHandlerWritesScripts`, `TestCompletionHandlerEmitsSortedProfileNamesOnly`, `TestCompletionScriptsDescribeOnlyVLTCommands`, and `TestCompletionScriptsHaveValidInstalledShellSyntax` |
 | 18. Keep completion and presentation separate from Vault delegation and credentials | `TestFakeBackedCompletionNoColorAndDelegationStayIndependent`, `TestGuidedOutputsPromptsCompletionAndFailuresDoNotExposeCredentials`, and `TestDelegateUsesActiveProfileAndPreservesOpaqueInvocation` |
+| 19. Persist and manage favorite metadata through explicit and guided workflows | `TestFakeBackedFavoriteExplicitAndGuidedCRUD` and the favorite mutation and store suites |
+| 20. Delegate favorite reads through the stored profile without changing the active profile | `TestFakeBackedFavoriteExecutionMapsReadOperationsWithoutChangingActiveProfile` |
+| 21. Stop before Vault when `fzf` is cancelled or unavailable | `TestFakeBackedFavoriteSelectionStopsBeforeVault` and the installed Linux `fzf` check above |
+| 22. Remove linked favorites only with cascade approval and restore them after failure | `TestFakeBackedFavoriteCascadeApprovalAndRollback` and the cascade service rollback suite |
+| 23. Keep tokens and returned secret values out of favorite metadata and management output | `TestFavoriteManagementSurfacesDoNotRetainVaultCanaries` and `TestFakeBackedFavoriteExecutionMapsReadOperationsWithoutChangingActiveProfile` |
+| 24. Complete favorite commands, profile values, and operations in supported shells | `TestBashCompletionProvidesFavoriteCommandsAndValues`, `TestCompletionScriptsDescribeFavoriteCommandsAndValues`, and `TestCompletionScriptsHaveValidInstalledShellSyntax` |
 
 ## Dependency review
 

@@ -5,12 +5,15 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"vlt/internal/config"
 	"vlt/internal/credential"
+	"vlt/internal/profile"
 	"vlt/internal/vaultexec"
 )
 
@@ -303,6 +306,50 @@ func TestGuidedOutputsPromptsCompletionAndFailuresDoNotExposeCredentials(t *test
 	}
 	if len(harness.vaultRunner.commands) != 0 {
 		t.Fatalf("prompt or failure invoked Vault: %#v", harness.vaultRunner.commandArguments())
+	}
+}
+
+func TestFavoriteManagementSurfacesDoNotRetainVaultCanaries(t *testing.T) {
+	const token = "hvs.synthetic-favorite-management-token"
+	const secretValue = "synthetic-favorite-secret-value"
+	harness := newFavoriteComponentHarness(t)
+	harness.seedProfiles(t, config.Configuration{Profiles: []profile.Profile{{
+		Name: "team-a", Address: "https://team-a.example", Username: "alice", AuthPath: "oidc",
+	}}}, map[string]string{"team-a": token})
+	harness.vaultRunner.run = func(vaultexec.Command) (vaultexec.Result, error) {
+		return vaultexec.Result{Stdout: []byte(secretValue)}, errors.New("Vault returned " + secretValue)
+	}
+	harness.wire(favoriteComponentAdapters{})
+
+	commands := [][]string{
+		{"favorite", "add", "secret/app", "--profile", "team-a", "--operation", "read", "--note", "daily"},
+		{"favorite", "list"},
+		{"favorite", "update", "1", "--note=updated"},
+		{"favorite", "remove", "1"},
+	}
+	var surfaces []string
+	for _, arguments := range commands {
+		harness.stdout.Reset()
+		err := harness.dispatcher.Dispatch(context.Background(), arguments)
+		if err != nil {
+			t.Fatalf("Dispatch(%q) error = %v", arguments, err)
+		}
+		surfaces = append(surfaces, harness.stdout.String())
+	}
+	contents, err := os.ReadFile(harness.favoritePath)
+	if err != nil {
+		t.Fatalf("read favorite config: %v", err)
+	}
+	surfaces = append(surfaces, string(contents))
+	for _, surface := range surfaces {
+		for _, forbidden := range []string{token, secretValue} {
+			if strings.Contains(surface, forbidden) {
+				t.Errorf("favorite management surface exposed %q: %q", forbidden, surface)
+			}
+		}
+	}
+	if len(harness.vaultRunner.commands) != 0 {
+		t.Fatalf("favorite management invoked Vault: %#v", harness.vaultRunner.commandArguments())
 	}
 }
 

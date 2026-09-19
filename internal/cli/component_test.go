@@ -104,7 +104,8 @@ func TestFakeBackedProfileFlowUsesActiveAndOneCommandProfiles(t *testing.T) {
 }
 
 type componentCredentialStore struct {
-	values map[string]string
+	values    map[string]string
+	deleteErr error
 }
 
 func (s *componentCredentialStore) Get(_ context.Context, profileName string) (string, error) {
@@ -121,6 +122,9 @@ func (s *componentCredentialStore) Set(_ context.Context, profileName, token str
 }
 
 func (s *componentCredentialStore) Delete(_ context.Context, profileName string) error {
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
 	if _, found := s.values[profileName]; !found {
 		return credential.ErrNotFound
 	}
