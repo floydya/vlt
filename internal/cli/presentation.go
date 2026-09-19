@@ -212,72 +212,57 @@ func (p presentation) huhTheme() huh.Theme {
 	})
 }
 
-func (p profilePresentation) list(profiles []profile.Profile, activeName string) string {
-	rows := [][]profileTableCell{{
-		{value: "#", header: true},
-		{value: "ACTIVE", header: true},
-		{value: "NAME", header: true},
-		{value: "ADDRESS", header: true},
-		{value: "NAMESPACE", header: true},
+func profileListOutput(profiles []profile.Profile, activeName string, terminal Terminal) string {
+	rows := [][]presentationCell{{
+		{value: "#", role: presentationHeading},
+		{value: "ACTIVE", role: presentationHeading},
+		{value: "NAME", role: presentationHeading},
+		{value: "ADDRESS", role: presentationHeading},
+		{value: "NAMESPACE", role: presentationHeading},
 	}}
-	for index, candidate := range profiles {
+	for index, candidate := range profile.NewService(profiles).List() {
 		active := candidate.Name == activeName
 		marker := ""
+		markerRole := presentationPlain
 		if active {
 			marker = "*"
+			markerRole = presentationSelected
 		}
 		namespace := candidate.Namespace
 		if namespace == "" {
 			namespace = "-"
 		}
-		rows = append(rows, []profileTableCell{
+		rows = append(rows, []presentationCell{
 			{value: strconv.Itoa(index + 1)},
-			{value: marker, active: active},
+			{value: marker, role: markerRole},
 			{value: candidate.Name},
 			{value: candidate.Address},
 			{value: namespace},
 		})
 	}
-	return p.table(rows)
+	return newPresentation(terminal).renderTable(rows)
 }
 
-func (p profilePresentation) details(candidate profile.Profile, active bool) string {
+func profileShowOutput(candidate profile.Profile, active bool, terminal Terminal) string {
 	namespace := candidate.Namespace
 	if namespace == "" {
 		namespace = "-"
 	}
 	activeValue := "no"
+	activeRole := presentationPlain
 	if active {
 		activeValue = "yes"
+		activeRole = presentationSelected
 	}
-	rows := []struct {
-		label  string
-		value  string
-		active bool
-	}{
-		{label: "Name:", value: candidate.Name},
-		{label: "Address:", value: candidate.Address},
-		{label: "Username:", value: candidate.Username},
-		{label: "Auth path:", value: candidate.AuthPath},
-		{label: "Namespace:", value: namespace},
-		{label: "Active:", value: activeValue, active: active},
+	rows := []presentationDetail{
+		{label: "Name", value: candidate.Name},
+		{label: "Address", value: candidate.Address},
+		{label: "Username", value: candidate.Username},
+		{label: "Auth path", value: candidate.AuthPath},
+		{label: "Namespace", value: namespace},
+		{label: "Active", value: activeValue, role: activeRole},
 	}
-	labelWidth := 0
-	for _, row := range rows {
-		labelWidth = max(labelWidth, lipgloss.Width(row.label))
-	}
-	var output strings.Builder
-	for _, row := range rows {
-		output.WriteString(p.heading(row.label))
-		output.WriteString(strings.Repeat(" ", labelWidth-lipgloss.Width(row.label)+1))
-		if row.active {
-			output.WriteString(p.selected(row.value))
-		} else {
-			output.WriteString(row.value)
-		}
-		output.WriteByte('\n')
-	}
-	return output.String()
+	return newPresentation(terminal).renderDetails(rows)
 }
 
 func (p profilePresentation) table(rows [][]profileTableCell) string {

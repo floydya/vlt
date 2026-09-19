@@ -55,6 +55,59 @@ func TestProfilePresentationStylesOnlyEligibleTerminals(t *testing.T) {
 	}
 }
 
+func TestProfileListPresentationPlainAndStyledAreExact(t *testing.T) {
+	profiles := []profile.Profile{
+		{Name: "team-b", Address: "https://vault-b.example", Namespace: ""},
+		{Name: "team-a", Address: "https://vault-a.example", Namespace: "engineering"},
+	}
+	want := "#  ACTIVE  NAME    ADDRESS                  NAMESPACE\n" +
+		"1  *       team-a  https://vault-a.example  engineering\n" +
+		"2          team-b  https://vault-b.example  -\n"
+
+	plain := profileListOutput(profiles, "team-a", fixedTerminal{color: false})
+	if plain != want {
+		t.Fatalf("plain profile list = %q, want %q", plain, want)
+	}
+	if strings.Contains(plain, "\x1b[") {
+		t.Fatalf("plain profile list contains ANSI: %q", plain)
+	}
+	styled := profileListOutput(profiles, "team-a", fixedTerminal{color: true})
+	if !strings.Contains(styled, "\x1b[") {
+		t.Fatalf("styled profile list contains no ANSI: %q", styled)
+	}
+	if got := ansi.Strip(styled); got != plain {
+		t.Fatalf("unstyled profile list = %q, want plain output %q", got, plain)
+	}
+}
+
+func TestProfileShowPresentationPlainAndStyledAreExact(t *testing.T) {
+	candidate := profile.Profile{
+		Name: "team-a", Address: "https://vault-a.example", Username: "alice",
+		AuthPath: "company-oidc", Namespace: "",
+	}
+	want := "Name:      team-a\n" +
+		"Address:   https://vault-a.example\n" +
+		"Username:  alice\n" +
+		"Auth path: company-oidc\n" +
+		"Namespace: -\n" +
+		"Active:    yes\n"
+
+	plain := profileShowOutput(candidate, true, fixedTerminal{color: false})
+	if plain != want {
+		t.Fatalf("plain profile show = %q, want %q", plain, want)
+	}
+	if strings.Contains(plain, "\x1b[") {
+		t.Fatalf("plain profile show contains ANSI: %q", plain)
+	}
+	styled := profileShowOutput(candidate, true, fixedTerminal{color: true})
+	if !strings.Contains(styled, "\x1b[") {
+		t.Fatalf("styled profile show contains no ANSI: %q", styled)
+	}
+	if got := ansi.Strip(styled); got != plain {
+		t.Fatalf("unstyled profile show = %q, want plain output %q", got, plain)
+	}
+}
+
 func TestPresentationPlainPrimitivesAreExactAndANSIFree(t *testing.T) {
 	presentation := newPresentation(fixedTerminal{color: false})
 

@@ -316,12 +316,8 @@ func profileList(ctx context.Context, dependencies ProfileDependencies, args []s
 	if err != nil {
 		return safeManagementError(fmt.Errorf("list profiles: load configuration: %w", err))
 	}
-	var output strings.Builder
-	output.WriteString(newProfilePresentation(dependencies.Terminal).list(
-		profile.NewService(configuration.Profiles).List(),
-		configuration.ActiveProfile,
-	))
-	if _, err := io.WriteString(dependencies.Output, output.String()); err != nil {
+	output := profileListOutput(configuration.Profiles, configuration.ActiveProfile, dependencies.Terminal)
+	if _, err := io.WriteString(dependencies.Output, output); err != nil {
 		return fmt.Errorf("display profiles: %w", err)
 	}
 	return nil
@@ -365,7 +361,7 @@ func profileShow(ctx context.Context, dependencies ProfileDependencies, args []s
 		}
 		activeProfile = configuration.ActiveProfile
 	}
-	details := newProfilePresentation(dependencies.Terminal).details(selected, selected.Name == activeProfile)
+	details := profileShowOutput(selected, selected.Name == activeProfile, dependencies.Terminal)
 	if _, err := io.WriteString(dependencies.Output, details); err != nil {
 		return fmt.Errorf("display profile %q: %w", selected.Name, err)
 	}
