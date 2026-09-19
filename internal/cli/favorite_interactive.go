@@ -264,10 +264,3 @@ func favoriteChangesBetween(original, updated favorite.Favorite) favorite.Favori
 	}
 	return changes
 }
-
-func requireInteractiveFavoriteTerminal(terminal Terminal) error {
-	if terminal == nil || !terminal.PromptsEnabled() {
-		return errProfileSelectionRequiresTerminal
-	}
-	return nil
-}
