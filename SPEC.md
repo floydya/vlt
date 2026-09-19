@@ -4,6 +4,10 @@
 
 **Automatic-help revision:** Approved
 
+**Favorites revision:** Approved
+
+**Unified terminal UX revision:** Approved
+
 **Scope:** Initial cross-platform release with guided terminal workflows
 
 **Primary verification platform:** Linux
@@ -11,6 +15,8 @@
 ## Objective
 
 Build `vlt`, a cross-platform command-line profile manager and transparent launcher for the official HashiCorp Vault CLI. It lets a user switch frequently between Vault hosts without repeatedly completing OIDC authentication or manually changing `VAULT_ADDR` and `VAULT_TOKEN`. Its own commands must be self-explanatory during interactive terminal use, while explicit commands remain fast and predictable for automation.
+
+The unified terminal UX revision replaces the visually separate `fzf` favorite picker with the same compact component system used by forms and brings every `vlt`-owned output surface under one restrained presentation contract. It improves the human experience without changing delegated Vault output or introducing a machine-readable output API.
 
 The initial user is a developer who uses multiple independent Vault hosts with the same or different usernames and OIDC settings.
 
@@ -31,6 +37,14 @@ $ vlt read secret/example
 
 $ vlt --profile team-b read secret/example
 # Uses team-b for this command only; team-a remains active.
+
+$ vlt favorite add secret/data/platform/database \
+    --profile team-a \
+    --operation kv-get \
+    --note "daily database credentials"
+
+$ vlt favorite
+# Selects a saved target, then runs the matching Vault read with its profile.
 ```
 
 `vlt` does not reimplement Vault operations. It performs profile and credential lifecycle work, then launches the installed `vault` executable with the requested arguments.
@@ -42,15 +56,17 @@ $ vlt --profile team-b read secret/example
 | `profile-management` | Create, list, inspect, update, remove, and select profile metadata | — |
 | `credential-lifecycle` | OIDC login, native keyring storage, token validation, and renewal | `profile-management` |
 | `vault-delegation` | Resolve a profile, inject Vault environment variables, and execute the official `vault` binary | `profile-management`, `credential-lifecycle` |
-| `cli-presentation` | Contextual help, errors, profile tables, active markers, and restrained terminal styling | `profile-management` |
-| `interactive-profile-workflows` | TTY-only profile forms, selectors, validation, confirmation, and cancellation | `profile-management`, `cli-presentation` |
+| `cli-presentation` | Shared output rules for help, errors, tables, details, confirmations, and restrained terminal styling | `profile-management` |
+| `interactive-profile-workflows` | TTY-only profile forms, shared searchable selectors, validation, confirmation, and cancellation | `profile-management`, `cli-presentation` |
 | `shell-completion` | Bash, Zsh, and Fish completion for `vlt` commands, flags, and profile names | `profile-management` |
+| `favorite-workflows` | Persist local favorite read targets, manage them explicitly or interactively, search them, and delegate the selected read | `profile-management`, `vault-delegation`, `cli-presentation`, `interactive-profile-workflows` |
 
 Build order:
 
 - `profile-management` → `credential-lifecycle` → `vault-delegation`;
 - `profile-management` → `cli-presentation` → `interactive-profile-workflows`;
 - `profile-management` → `shell-completion`.
+- `profile-management`, `vault-delegation`, `cli-presentation`, `interactive-profile-workflows` → `favorite-workflows`.
 
 The requirement headings below identify the owning module so implementation and tests remain traceable to this map.
 
@@ -145,17 +161,31 @@ For example, `vlt profile` prints only the profile help for `add`, `list`, `show
 
 The one-based number remains a valid `switch` selector. `*` marks the active profile. Empty namespaces display as `-`. The table never includes usernames, credentials, keyring identifiers, or token-derived state.
 
-`profile show` displays aligned labels for name, address, username, auth path, namespace, and active status. Add, update, remove, and switch continue to print one concise success message after the state change succeeds. No success message may precede persistence or authentication success.
+`profile show` displays aligned labels for name, address, username, auth path, namespace, and active status.
 
-Human-readable output is not a stable machine-readable interface. No JSON or other structured output mode is included in this scope.
+#### Shared presentation contract
+
+All output owned by `vlt` follows one presentation contract:
+
+- Read-only commands print only the requested data. They add no success banner, introduction, or closing hint.
+- A successful mutation prints one short sentence after the state change succeeds. It starts with a past-tense action, names the affected resource, ends with a period, and adds no separate heading. No success message may precede persistence or authentication success.
+- List commands use aligned tables with uppercase headings, deterministic row order, and `-` for an empty displayed value.
+- Detail commands use aligned, consistently ordered labels. They do not switch between tables, prose, and ad hoc key-value syntax for the same resource type.
+- Help uses the existing purpose, usage, options or subcommands, and examples structure at every command level.
+- Diagnostics write to standard error and use the single `vlt: <diagnostic>` prefix unless the automatic-help contract requires canonical help without an added diagnostic.
+- Cancellation uses one concise sentence, writes no success output, and preserves state.
+- Plain output uses ASCII punctuation and markers. It does not depend on color, icons, patched fonts, decorative boxes, or banners.
+
+Existing `vlt` wording and layouts may change to satisfy this contract. Plain output must be deterministic and covered by exact tests, but it is not a stable machine-readable interface. No JSON or other structured output mode is included in this scope.
 
 #### Terminal styling
 
-- Use restrained color for headings, labels, selections, and success or error states only.
+- Use one shared semantic style set for headings, labels, selections, muted secondary text, success states, and error states.
+- Keep the palette restrained. Styling must clarify structure or state instead of decorating the output.
 - Enable color only when the destination is an interactive terminal that supports it.
 - Disable color when output is redirected or `NO_COLOR` is set to a non-empty value.
 - Keep spacing, markers, and wording understandable without color.
-- Use ASCII markers and do not require patched fonts or icon glyphs.
+- Forms and selectors use the same semantic style set as non-interactive output.
 - Keep delegated Vault output byte-for-byte under Vault's control; `vlt` must not restyle it.
 
 ### `interactive-profile-workflows`
@@ -173,7 +203,7 @@ vlt profile update
 vlt profile remove
 ```
 
-The selector shows the same number, active marker, name, address, and namespace information as `profile list`. It preselects the active profile when one exists. Selecting an entry supplies its stable profile name to the existing operation. If no profiles exist, the command does not open an empty selector; it explains how to run `vlt profile add`.
+The selector uses the shared searchable-selector contract. It shows the same number, active marker, name, address, and namespace information as `profile list`. It preselects the active profile when one exists. Selecting an entry supplies its stable profile name to the existing operation. If no profiles exist, the command does not open an empty selector; it explains how to run `vlt profile add`.
 
 Cancelling with the interface's cancel action or an interrupt changes no configuration or credential state, prints a concise cancellation message, and exits non-zero.
 
@@ -199,7 +229,108 @@ Supplying `NAME` and one or more update flags remains a direct partial update an
 
 `profile remove` without `NAME` opens the selector and then asks for confirmation. The confirmation names the selected profile and states when removing it will leave no active profile. Declining or cancelling changes nothing.
 
-`profile remove NAME` remains an explicit, immediate operation without an additional prompt. Automation must not gain a prompt after supplying the required argument.
+When a profile has no linked favorites, `profile remove NAME` remains an explicit, immediate operation without an additional prompt. Automation must not gain a prompt after supplying the required argument.
+
+When the selected profile has linked favorites, removal becomes a cascade operation:
+
+- In an interactive terminal, `profile remove NAME` reports the number of linked favorites and asks whether to remove the profile and those favorites together.
+- Outside an interactive terminal, profile removal fails without changing state unless `--remove-favorites` is supplied.
+- `profile remove NAME --remove-favorites` performs the cascade without prompting in any terminal mode.
+- Declining or cancelling the cascade changes no profile, favorite, active selection, or credential state.
+- A failed cascade must not leave favorites that reference a removed profile or remove favorites while retaining the profile.
+
+### `favorite-workflows`
+
+#### Favorite model and persistence
+
+A favorite is local metadata owned by one operating-system user. It has:
+
+- `profile`: required stable name of an existing profile;
+- `operation`: required value of `read` or `kv-get`;
+- `path`: required non-blank Vault secret path;
+- `note`: optional plain-text context for display and search.
+
+The exact tuple `(profile, operation, path)` identifies a favorite. Adding the same tuple twice fails without modifying the existing favorite, even when the new note differs. The error directs the user to `favorite update`. Profile names and paths retain their existing case-sensitive meaning. Notes do not participate in identity or ordering.
+
+Favorites are stored in the user's local `vlt` configuration. Writes are atomic and use the same platform permissions as profile metadata. Favorite storage must never contain Vault values, tokens, or other credentials. Paths and notes are intentionally displayable metadata and are not a secure place for secret values.
+
+Loading or mutating a favorite whose profile does not exist fails with an actionable error. Normal profile removal cannot create an orphan because linked favorites follow the cascade rules above.
+
+#### Favorite commands
+
+```text
+vlt favorite
+vlt favorite add
+vlt favorite add PATH --profile NAME --operation read|kv-get [--note NOTE]
+vlt favorite list
+vlt favorite update
+vlt favorite update NUMBER [--profile NAME] [--operation read|kv-get] [--path PATH] [--note NOTE]
+vlt favorite remove
+vlt favorite remove NUMBER
+```
+
+Behavior:
+
+- In an interactive terminal, `vlt favorite` opens the searchable selector defined below. Outside a terminal, it writes its full help to standard error and exits non-zero. It does not accept a favorite number or name for direct execution.
+- `favorite add` with no values opens the guided add form in an interactive terminal.
+- Supplying any explicit add value selects direct command-line mode. `PATH`, `--profile`, and `--operation` are then required; `--note` remains optional. Missing required input follows the standard automatic-help contract and never falls back to the active profile.
+- `favorite list` sorts entries lexicographically by path, then profile, then operation, and assigns one-based numbers from that order.
+- A number accepted by `update` or `remove` refers to the current `favorite list` order. An unknown or out-of-range number fails without changing state.
+- `favorite update NUMBER` with one or more update flags changes only supplied values. Omitted values remain unchanged, while `--note=` explicitly clears the note. Every update revalidates the profile, operation, path, and duplicate tuple before persistence.
+- `favorite update` without a number opens the selector and then the populated update form. `favorite update NUMBER` without change flags opens the populated form in an interactive terminal and follows automatic-help behavior outside a terminal.
+- `favorite remove` without a number opens the selector and asks for confirmation. `favorite remove NUMBER` is an explicit immediate removal. Declining or cancelling changes nothing.
+- Successful add, update, and remove operations print one concise message after persistence succeeds. They never read or print the Vault secret.
+
+`favorite list` displays the stable number and all searchable metadata:
+
+```text
+#  OPERATION  PROFILE  PATH                           NOTE
+1  read       team-b   database/creds/reporting       reporting credentials
+2  kv-get     team-a   secret/data/platform/database  daily database credentials
+```
+
+An empty note displays as `-`. Human-readable favorite output is not a stable machine-readable interface.
+
+#### Guided favorite management
+
+Interactive favorite workflows require terminal input and display streams. The add form collects:
+
+1. profile, selected from existing profiles;
+2. operation, selected from `read` and `kv-get`, with `read` preselected;
+3. path, required and non-blank;
+4. note, optional and empty by default.
+
+The update form shows the current values and allows every field to change. Both forms validate before writing and use the same mutation behavior as explicit commands. If no profiles exist, the workflow does not open an empty form; it explains how to run `vlt profile add`.
+
+The profile and operation fields, plus the update and removal selectors, use the shared searchable-selector contract. The update and removal selectors use the same path-first order and row metadata as `favorite list`. Cancellation follows the existing interactive cancellation contract and leaves persistent state unchanged.
+
+#### Searchable read selector
+
+In an interactive terminal, `vlt favorite` opens the shared searchable selector. Search covers every visible field: path, note, profile, and operation. The selector starts with all favorites visible in deterministic path-first order. If no favorites exist, it explains how to run `vlt favorite add` instead of opening an empty selector.
+
+#### Shared searchable-selector contract
+
+Every interactive list-backed choice uses one in-process selector component. This includes profile switching and selection, favorite execution and management, and list-backed fields inside forms.
+
+The selector must:
+
+- render as a compact inline workflow instead of a separate full-screen application;
+- start with every item visible in the resource's deterministic order;
+- support keyboard navigation and immediate type-to-filter search;
+- match case-insensitively across all visible searchable fields and rank fuzzy matches predictably;
+- preserve enough row context to distinguish similar entries;
+- use the shared semantic style set and remain usable without color;
+- return the stable resource identity instead of reconstructing it from displayed text;
+- handle empty results, cancellation, and interrupts without changing state or starting credential or Vault work.
+
+The implementation uses Huh and Lip Gloss when they can meet this contract cleanly. If they cannot, the implementation plan must identify the exact missing behavior and justify the smallest maintained Go dependency that supplies it. The selector remains in-process. `vlt` must not invoke, require, download, or install `fzf` or another external selector executable.
+
+Cancelling the selector performs no credential preflight or Vault operation, prints a concise cancellation message, and exits non-zero. Selecting an entry closes the selector and delegates exactly one operation:
+
+- `read` executes Vault arguments equivalent to `read PATH`;
+- `kv-get` executes Vault arguments equivalent to `kv get PATH`.
+
+The favorite's profile acts as a one-command override. It never changes the active profile. Credential preflight, environment isolation, attached streams, Vault output, exit status, and error redaction follow the existing `credential-lifecycle` and `vault-delegation` contracts. `vlt` does not parse, extract, restyle, or copy fields from the returned secret.
 
 ### `shell-completion`
 
@@ -217,7 +348,8 @@ Completion covers:
 - profile subcommands;
 - management and global flags;
 - valid values for the shell argument;
-- stored profile names for `--profile`, `switch`, `profile show`, `profile update`, and `profile remove`.
+- stored profile names for `--profile`, `switch`, `profile show`, `profile update`, and `profile remove`;
+- favorite subcommands and flags, stored profile names for favorite profile flags, and the valid `read` and `kv-get` operation values.
 
 Completion does not suggest existing names for `profile add`. After an invocation enters delegated Vault arguments, `vlt` supplies no Vault command, flag, path, or secret completion and does not invoke the Vault executable. Failure to load profile configuration returns no dynamic candidates and does not corrupt the user's shell prompt with diagnostics.
 
@@ -295,7 +427,7 @@ Behavior:
 - `vlt` never writes a selected token to the process-wide parent environment, command arguments, config files, logs, or terminal output.
 - The delegated process's exit code is preserved. On platforms supporting process signals, signal termination is reflected using platform-appropriate conventions.
 
-`vlt` reserves `switch`, `profile`, and `completion` as management commands. Every other command name is treated as a Vault command and forwarded after preflight. This preserves transparent delegation, so unknown top-level names are not treated as `vlt` typos.
+`vlt` reserves `switch`, `profile`, `favorite`, and `completion` as management commands. Every other command name is treated as a Vault command and forwarded after preflight. This preserves transparent delegation, so unknown top-level names are not treated as `vlt` typos.
 
 #### Dependency discovery
 
@@ -337,14 +469,15 @@ Behavior:
 
 - **Language:** Go 1.26, as pinned in `go.mod`.
 - **CLI parsing:** Go standard library plus a small explicit dispatcher; delegated arguments remain opaque to `vlt`.
-- **Terminal UX:** Standard-library formatting plus the smallest pinned Charm-family component set needed for focused forms, selectors, and styling. The interface remains inline and task-focused rather than a persistent full-screen application.
+- **Terminal UX:** Standard-library formatting, Huh, and Lip Gloss for focused forms, shared searchable selectors, and semantic styling. The interface remains inline and task-focused rather than a persistent full-screen application.
+- **Selector search:** In-process fuzzy filtering. Add the smallest maintained Go dependency only if the implementation plan demonstrates that the existing Charm stack cannot meet the shared selector contract cleanly.
 - **Shell completion:** Scripts generated by `vlt`; no external completion framework or Vault command introspection is required.
 - **Configuration:** JSON via Go's standard library, stored under `os.UserConfigDir()` in a `vlt` directory.
 - **Credential storage:** `github.com/zalando/go-keyring` v0.2.6, supporting Linux Secret Service, macOS Keychain, and Windows Credential Manager.
 - **Vault integration:** The installed official `vault` executable invoked as a subprocess.
 - **Testing:** Go's `testing` package with fakes for subprocesses, clocks, config storage, and keyring access.
 
-Dependency versions must be pinned in `go.mod`/`go.sum`. The implementation plan must name and justify each terminal UI package before it is added. Any unrelated dependency requires separate approval.
+Dependency versions must be pinned in `go.mod`/`go.sum`. The implementation plan must name and justify each terminal UI package before it is added. It must prefer the existing Huh and Lip Gloss stack and document the unmet requirement before proposing another selector dependency. Any unrelated dependency requires separate approval.
 
 ## Commands
 
@@ -376,6 +509,8 @@ internal/cli/
   ...                     Dispatch, command behavior, help, output, prompts, and completion
 internal/profile/
   ...                     Profile model, validation, selection, and operations
+internal/favorite/
+  ...                     Favorite model, validation, ordering, persistence, and operations
 internal/config/
   ...                     Atomic platform-aware configuration persistence
 internal/credential/
@@ -431,14 +566,25 @@ Use table-driven tests for:
 - command parsing and exact argument forwarding;
 - error redaction;
 - exact explicit and automatic help text, command-specific output streams and exit status, absence of duplicate missing-input diagnostics, and unambiguous subcommand suggestions;
+- exact plain output for help, diagnostics, tables, details, mutation confirmations, cancellation, and empty states;
+- consistent table headings, detail labels, mutation wording, diagnostic prefixes, and output streams across profile and favorite commands;
 - profile table ordering, columns, active markers, and empty namespace display;
 - color enablement for terminals and suppression for redirection or `NO_COLOR`;
+- shared semantic styles across non-interactive output, forms, and selectors;
 - interactive versus non-interactive dispatch at injected terminal boundaries;
 - add and update form defaults, in-place validation, and cancellation;
-- selector ordering, active preselection, empty-profile handling, and cancellation;
+- shared selector ordering, active preselection, keyboard navigation, fuzzy ranking, filtering across visible fields, stable identity mapping, empty states, and cancellation;
 - removal confirmation and unchanged state after decline or cancellation;
 - Bash, Zsh, and Fish script generation and completion candidates;
 - silent dynamic-completion failure when profile configuration cannot load.
+- favorite validation, exact tuple uniqueness, path-first ordering, and one-based numeric resolution;
+- direct add requirements, partial updates, explicit note clearing, and duplicate rejection;
+- favorite list columns and empty-note display;
+- fuzzy matching across path, note, profile, and operation;
+- operation mapping from `read` to `read PATH` and from `kv-get` to `kv get PATH`;
+- favorite selectors and forms at injected terminal boundaries, including defaults, empty states, and cancellation;
+- linked-favorite profile removal, explicit cascade approval, and unchanged state after rejection or failure;
+- absence of any external selector process or runtime dependency.
 
 ### Component tests
 
@@ -455,18 +601,26 @@ Use temporary directories, a fake keyring, a controllable clock, and a fake `vau
 - remove deletes metadata and token;
 - bare `vlt` and missing management input outside a terminal return non-zero, write only the relevant full help to standard error, and do not read input;
 - explicit `-h` and `--help` write the same command-specific text to standard output and return zero;
+- profile and favorite output use the same presentation rules in both terminal and redirected modes;
 - interactive add, update, show, switch, and remove reach the same services as their explicit forms;
 - cancelled or declined interactive operations do not change metadata, active selection, or credentials;
 - generated completion scripts expose `vlt` commands, flags, shells, and stored profile names;
 - completion never invokes Vault or exposes credentials;
 - delegated exit status and standard streams are preserved;
 - tokens never appear in output or persisted config.
+- guided and explicit favorite CRUD reach the same persistence behavior;
+- selecting a `read` favorite delegates with its stored profile and path without changing the active profile;
+- selecting a `kv-get` favorite delegates `kv get` with its stored profile and path without changing the active profile;
+- selector cancellation performs no credential lookup or Vault process execution;
+- removing a profile with linked favorites either removes the complete cascade after explicit approval or leaves all state unchanged;
+- favorite metadata never contains or exposes a Vault value or token.
 
 ### Platform checks
 
 - All unit/component tests must pass on supported CI operating systems when CI is introduced.
 - Cross-compilation must succeed for Linux, macOS, and Windows.
 - Generated completion scripts receive syntax or smoke checks with Bash, Zsh, and Fish when those shell executables are available. Unit tests remain the portable requirement when a shell is unavailable.
+- Shared selector integration receives contract tests on all supported targets without requiring a live Vault server or external selector executable. Manual Linux verification confirms compact rendering, filtering, selection, and cancellation in a real terminal.
 - Before the initial release, manually verify Linux Secret Service integration and a real OIDC login/delegated read on this development machine.
 - Real macOS and Windows keyring/OIDC verification is deferred until those environments are available and must be documented as unverified meanwhile.
 
@@ -485,13 +639,18 @@ No numeric coverage target is imposed initially. Every success criterion and sec
 - Keep explicit complete commands non-interactive.
 - Detect terminal capabilities through injectable boundaries.
 - Respect `NO_COLOR` and keep all management workflows understandable without styling.
+- Route vlt-owned output through the shared presentation and selector contracts.
+- Keep selectors in-process and independent of an installed `fzf` or other selector executable.
 - Keep completion limited to non-secret `vlt` metadata and command structure.
+- Keep favorites local, reference only existing profiles, and store only profile, operation, path, and optional note metadata.
+- Use a favorite's profile only for its delegated operation and leave the active profile unchanged.
+- Require explicit approval before profile removal cascades to linked favorites.
 - Add or update tests for every behavior change.
 - Run formatting, tests, race tests, static analysis, and cross-platform compilation before release.
 
 ### Ask first
 
-- Add terminal UI dependencies not named and justified in the approved implementation plan.
+- Add a terminal UI dependency before the implementation plan demonstrates the exact gap in Huh and Lip Gloss and justifies the smallest maintained alternative.
 - Add any dependency unrelated to the approved keyring or terminal UI integrations.
 - Change the profile schema or configuration location after release.
 - Add plaintext, encrypted-file, or environment-file credential fallback.
@@ -500,6 +659,8 @@ No numeric coverage target is imposed initially. Every success criterion and sec
 - Add automatic retry of delegated Vault operations.
 - Add support for authentication methods other than OIDC.
 - Change reserved management command names.
+- Add a favorite operation beyond `read` and `kv-get`.
+- Add an external selector process or runtime executable dependency.
 - Add CI, packaging, installers, auto-update, or telemetry.
 
 ### Never do
@@ -512,9 +673,12 @@ No numeric coverage target is imposed initially. Every success criterion and sec
 - Change direct `vault ...` behavior or the parent shell's environment.
 - Prompt for input when either the input or display stream is not a terminal.
 - Add ANSI styling to redirected output or when `NO_COLOR` is set.
+- Give different commands ad hoc headings, table conventions, detail layouts, success wording, or diagnostic prefixes.
 - Restyle, parse for presentation, or complete delegated Vault arguments.
 - Modify shell startup files or install completion scripts automatically.
 - Retry a delegated command after it may have executed.
+- Store secret values in favorite paths, notes, or configuration.
+- Change the active profile after selecting a favorite.
 - Remove or skip a failing security test merely to make checks pass.
 
 ## Success Criteria
@@ -533,12 +697,19 @@ The initial release is complete when all of the following are demonstrably true:
 10. Automated tests cover the functional and security flows above and pass under `just check`.
 11. The program cross-compiles for Linux, macOS, and Windows, and the complete real login/read flow is manually verified on Linux.
 12. Bare `vlt` and every missing required management command, positional argument, or flag write only the relevant full help to standard error and return non-zero. The text matches explicit `--help`, which writes to standard output and returns zero. Invalid input retains its specific diagnostic, and clear profile-subcommand typos receive one suggestion.
-13. `profile list` and `profile show` expose the specified metadata and active status without credentials, work without color, and emit no ANSI sequences when redirected or when `NO_COLOR` is set.
-14. In an interactive terminal, missing profile selectors open focused selection workflows for `switch`, `show`, `update`, and `remove`; the same invocations outside a terminal fail promptly with the relevant standard help and no separate missing-input diagnostic.
+13. Help, diagnostics, profile and favorite tables, detail views, mutation confirmations, cancellation, and empty states follow the shared presentation contract. Their plain output is deterministic, remains understandable without color, and emits no ANSI sequences when redirected or when `NO_COLOR` is set.
+14. Every interactive profile or favorite choice uses the same compact in-process selector with deterministic initial order, keyboard navigation, immediate case-insensitive fuzzy filtering across visible fields, stable identity mapping, and safe empty and cancellation behavior. The corresponding incomplete invocations outside a terminal fail promptly with the relevant standard help and no separate missing-input diagnostic.
 15. Interactive add and update validate fields in place, use the specified defaults, and reach the same persistence and authentication behavior as explicit commands.
 16. Cancelling or declining an interactive operation leaves profile metadata, active selection, and credential entries unchanged.
 17. `vlt completion bash`, `vlt completion zsh`, and `vlt completion fish` generate sourceable scripts that complete `vlt` commands, flags, supported shells, and stored profile names.
 18. Completion and presentation changes neither invoke nor restyle delegated Vault operations and never expose credentials.
+19. A user can add, list, update, and remove a local favorite through both guided and explicit command-line workflows, and incomplete non-interactive commands fail with contextual help instead of prompting.
+20. Favorite identity is the exact profile, operation, and path tuple; duplicates are rejected; list numbers remain deterministic under path-profile-operation sorting; and changing a note does not change ordering.
+21. `vlt favorite` supports fuzzy type-to-filter search across path, note, profile, and operation without invoking or requiring `fzf` or another external selector executable.
+22. Selecting a `read` favorite delegates `read PATH`, and selecting a `kv-get` favorite delegates `kv get PATH`, using the stored profile once without changing the active profile.
+23. Favorite execution preserves Vault output, attached streams, exit status, credential preflight, environment isolation, and diagnostic redaction without parsing secret fields.
+24. Removing a profile with linked favorites reports their count and requires interactive confirmation or `--remove-favorites`; decline, cancellation, or cascade failure leaves profile and favorite state unchanged.
+25. Favorite metadata persists locally with atomic writes and user-only permissions, contains no secret values or tokens, and cannot normally reference a missing profile.
 
 ## Out of Scope
 
@@ -555,10 +726,16 @@ The initial release is complete when all of the following are demonstrably true:
 - Installers, package-manager publication, automatic updates, telemetry, and CI configuration.
 - A stable machine-readable output API.
 - JSON, YAML, or other structured management output.
+- Configurable themes, formatting flags, or output-style modes.
 - A persistent full-screen profile-management TUI.
+- External selector executables or automatic installation of terminal UI tools.
 - Completion for delegated Vault commands, flags, paths, or secrets.
 - Automatic installation of completion scripts or edits to shell startup files.
 - Suppressing `exit status 1` or other status text emitted by `go run` rather than by `vlt`.
+- Shared or synchronized team favorites.
+- Secret field extraction, transformation, clipboard integration, or output parsing.
+- Favorite operations other than Vault `read` and `kv get`.
+- Storing secret values in favorite notes or any other `vlt` configuration.
 
 ## Open Questions
 

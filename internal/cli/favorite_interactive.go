@@ -69,7 +69,7 @@ func NewHuhFavoriteRemovalConfirmer(input io.Reader, output io.Writer) FavoriteR
 }
 
 func (s sharedFavoriteManagementSelector) Select(ctx context.Context, candidates []favorite.Favorite) (favorite.Favorite, error) {
-	return sharedFavoriteSelector{selector: s.selector}.Select(ctx, candidates)
+	return sharedFavoriteSelector(s).Select(ctx, candidates)
 }
 
 func (f huhFavoriteForm) Run(ctx context.Context, request FavoriteFormRequest) (favorite.Favorite, error) {
@@ -223,13 +223,6 @@ func favoriteFormProfiles(ctx context.Context, dependencies FavoriteDependencies
 		return nil, errNoProfilesConfigured
 	}
 	return profiles, nil
-}
-
-func favoriteNote(note string) string {
-	if note == "" {
-		return "-"
-	}
-	return note
 }
 
 func interactiveFavoriteError(err error, usage, command string) error {

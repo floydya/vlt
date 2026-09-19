@@ -260,3 +260,95 @@ Planning gate: `vlt-51r.1` — Plan automatic help implementation
 ### Open Questions
 
 None. The project owner approved this plan on 2026-09-19.
+
+## Favorite Shortcuts Revision
+
+**Status:** Approved
+
+### Overview
+
+Implement the approved `favorite-workflows` capability as small, testable slices. Store personal favorite targets locally, manage them through explicit and guided commands, search them with `fzf`, delegate the selected `read` or `kv get` operation through the existing Vault boundary, and require approval before profile removal deletes linked favorites. Beads feature `vlt-47y` owns this revision and its child issues are the task list target.
+
+### Architecture Decisions
+
+- Store favorite metadata in a separate `favorites.json` file under the existing `vlt` user configuration directory. Keep the current profile schema unchanged.
+- Put favorite validation, exact tuple identity, path-profile-operation ordering, persistence, and mutations in `internal/favorite`.
+- Use the user-installed `fzf` executable for the read selector. The pinned Huh v2.0.3 selector performs case-insensitive substring filtering, so it does not meet the approved fuzzy-search contract.
+- Pass searchable rows to `fzf` without a shell and map its opaque selected value back to a loaded favorite. Never parse profile, path, operation, or note text to recover identity.
+- Reuse Huh for guided add, update, and removal workflows. These workflows need forms and ordinary selection, not fuzzy search.
+- Send selected favorite operations through the existing Vault handler as `--profile NAME read PATH` or `--profile NAME kv get PATH`. Keep preflight, environment isolation, streams, exit status, and redaction in the existing boundary.
+- Coordinate profile and favorite removal with a snapshot and compensating restoration because the metadata lives in two atomic files.
+- Implement behavior changes with RED/GREEN TDD. Keep the feature in one final commit and obtain current-message authority before committing.
+
+### Dependency Graph
+
+```text
+vlt-47y.1 -> vlt-47y.2 -> vlt-47y.3 -> vlt-47y.4
+
+vlt-47y.4 -> vlt-47y.5
+vlt-47y.4 -> vlt-47y.6
+vlt-47y.5 + vlt-47y.6 -> vlt-47y.7 -> vlt-47y.8
+
+vlt-47y.8 -> vlt-47y.9 -> vlt-47y.10
+vlt-47y.4 -> vlt-47y.11
+vlt-47y.10 + vlt-47y.11 -> vlt-47y.12 -> vlt-47y.13
+
+vlt-47y.8 -> vlt-47y.14
+vlt-47y.13 + vlt-47y.14 -> vlt-47y.15 -> vlt-47y.16
+```
+
+### Task List
+
+Planning gate: `vlt-47y.1` — Plan favorite shortcuts implementation
+
+#### Phase 13: Favorite storage foundation
+
+1. `vlt-47y.2` — Persist and query favorite metadata
+2. `vlt-47y.3` — Mutate favorites against stored profiles
+3. `vlt-47y.4` — Checkpoint: favorite storage foundation
+
+#### Phase 14: Explicit commands and fuzzy selector
+
+4. `vlt-47y.5` — Select favorites through `fzf`
+5. `vlt-47y.6` — Expose explicit favorite management commands
+6. `vlt-47y.7` — Route and wire the favorite command
+7. `vlt-47y.8` — Checkpoint: explicit favorite CLI
+
+#### Phase 15: Guided execution and safe profile removal
+
+8. `vlt-47y.9` — Guide favorite add, update, and removal
+9. `vlt-47y.10` — Execute the selected favorite once
+10. `vlt-47y.11` — Coordinate profile and favorite cascade removal
+11. `vlt-47y.12` — Require approval for linked profile removal
+12. `vlt-47y.13` — Checkpoint: guided favorite workflows
+
+#### Phase 16: Completion and integrated verification
+
+13. `vlt-47y.14` — Complete favorite commands and values in shells
+14. `vlt-47y.15` — Verify favorite workflows end to end
+15. `vlt-47y.16` — Checkpoint: favorite workflow readiness
+
+### Parallelization
+
+- After the storage checkpoint, `fzf` selection (`vlt-47y.5`), explicit command handling (`vlt-47y.6`), and cascade coordination (`vlt-47y.11`) can proceed independently.
+- Application wiring waits for both the selector and explicit handler. The explicit CLI checkpoint gates every user-facing workflow.
+- After that checkpoint, guided management (`vlt-47y.9`) and shell completion (`vlt-47y.14`) can proceed independently.
+- One-shot execution follows guided management to avoid concurrent edits to the favorite handler. Profile-removal wiring then waits for execution and the independent cascade coordinator.
+- Integrated verification waits for both the guided-workflow checkpoint and shell completion. Final readiness remains sequential.
+
+### Risks and Mitigations
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Visible `fzf` rows are ambiguous or contain user-controlled separators | High | Map a selected opaque value to the loaded snapshot and sanitize display-only rows; never reconstruct identity from visible text. |
+| Missing or cancelled `fzf` starts credential work or Vault execution | High | Resolve the selector result before delegation and assert zero preflight and process calls on every early exit. |
+| Separate profile and favorite files leave a partial cascade | High | Snapshot linked favorites, use compensating restoration, inject failure at each persistence and credential boundary, and stop at the cascade checkpoint if rollback is not proven. |
+| Numeric selectors resolve against a different order during mutation | Medium | Resolve and mutate from one freshly loaded snapshot inside the favorite service. |
+| Guided and explicit paths drift into separate behavior | Medium | Keep validation and persistence in shared favorite services; UI adapters only collect values and selectors. |
+| New routing captures opaque Vault arguments | High | Reserve only the documented `favorite` namespace and keep unknown-command delegation regression tests. |
+| Paths, notes, tokens, or Vault output leak through diagnostics or fixtures | High | Use synthetic canaries, central redaction, sanitized manual evidence, and no raw secret output in tests or documentation. |
+| `fzf` process behavior differs across supported systems | Medium | Inject discovery and execution, cross-build all targets, use a fake executable in automation, and perform sanitized Linux runtime verification. |
+
+### Open Questions
+
+None. The project owner approved this plan on 2026-09-19.
