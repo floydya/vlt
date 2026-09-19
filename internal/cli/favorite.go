@@ -114,6 +114,8 @@ type FavoriteDependencies struct {
 	Mutations FavoriteMutator
 	Output    io.Writer
 	Terminal  Terminal
+	Selector  FavoriteSelector
+	Vault     Handler
 }
 
 func NewFavoriteHandler(dependencies FavoriteDependencies) Handler {

@@ -35,6 +35,18 @@ func TestDispatcherRoutesCommands(t *testing.T) {
 			wantArgs:  []string{"bash", "unchanged"},
 		},
 		{
+			name:      "favorite command is reserved",
+			arguments: []string{"favorite", "list"},
+			wantRoute: "favorite",
+			wantArgs:  []string{"list"},
+		},
+		{
+			name:      "similar favorite command remains opaque",
+			arguments: []string{"favorites", "list"},
+			wantRoute: "vault",
+			wantArgs:  []string{"favorites", "list"},
+		},
+		{
 			name:      "similar top-level command remains opaque",
 			arguments: []string{"complete", "status"},
 			wantRoute: "vault",
@@ -70,6 +82,7 @@ func TestDispatcherRoutesCommands(t *testing.T) {
 				Output:     &bytes.Buffer{},
 				Profile:    record("profile"),
 				Switch:     record("switch"),
+				Favorite:   record("favorite"),
 				Completion: record("completion"),
 				Vault:      record("vault"),
 			})
@@ -110,7 +123,7 @@ func TestDispatcherDisplaysHelpWithoutCallingAHandler(t *testing.T) {
 			if called {
 				t.Fatal("Dispatch() called a handler for help")
 			}
-			for _, want := range []string{"Usage: vlt", "Commands:", "completion", "Examples:"} {
+			for _, want := range []string{"Usage: vlt", "Commands:", "favorite", "completion", "Examples:"} {
 				if !strings.Contains(output.String(), want) {
 					t.Errorf("help output = %q, want text %q", output.String(), want)
 				}

@@ -22,6 +22,7 @@ type Dependencies struct {
 	Output     io.Writer
 	Profile    Handler
 	Switch     Handler
+	Favorite   Handler
 	Completion Handler
 	Vault      Handler
 }
@@ -51,6 +52,8 @@ func (d *Dispatcher) Dispatch(ctx context.Context, args []string) error {
 		return d.dependencies.Profile(ctx, args[1:])
 	case "switch":
 		return d.dependencies.Switch(ctx, args[1:])
+	case "favorite":
+		return d.dependencies.Favorite(ctx, args[1:])
 	case "completion":
 		return d.dependencies.Completion(ctx, args[1:])
 	default:
@@ -63,11 +66,13 @@ const helpText = `Manage Vault profiles and delegate Vault commands.
 Usage: vlt [--profile NAME] VAULT_ARGUMENT...
        vlt profile COMMAND [ARGUMENT...]
        vlt switch [NAME|NUMBER]
+       vlt favorite COMMAND [ARGUMENT...]
        vlt completion SHELL
 
 Commands:
   profile     Manage Vault profiles
   switch      Show or select the active profile
+  favorite    Manage favorite Vault read targets
   completion  Generate shell completion
 
 Options:
@@ -76,6 +81,7 @@ Options:
 Examples:
   vlt profile list
   vlt switch team-a
+  vlt favorite list
   vlt completion bash
   vlt status
 

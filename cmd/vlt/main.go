@@ -12,6 +12,7 @@ import (
 	"vlt/internal/cli"
 	"vlt/internal/config"
 	"vlt/internal/credential"
+	"vlt/internal/favorite"
 	"vlt/internal/profile"
 	"vlt/internal/vaultexec"
 )
@@ -42,14 +43,17 @@ func newDispatcher(stdin io.Reader, stdout, stderr io.Writer) (*cli.Dispatcher, 
 
 func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.Writer) *cli.Dispatcher {
 	profiles := config.NewStore(filepath.Join(configDirectory, "vlt", "profiles.json"))
+	favorites := favorite.NewStore(filepath.Join(configDirectory, "vlt", "favorites.json"))
 	terminal := cli.NewTerminal(stdin, stdout, os.Environ())
 	selector := cli.NewHuhProfileSelector(stdin, stdout)
+	favoriteSelector := cli.NewFZFFavoriteSelector()
 	form := cli.NewHuhProfileForm(stdin, stdout)
 	removalConfirmer := cli.NewHuhProfileRemovalConfirmer(stdin, stdout)
 	vault := vaultexec.NewOSExecutor()
 	credentials := credential.NewNativeStore()
 	authenticator := credential.NewAuthenticator(vault, credentials)
 	mutations := profile.NewMutationService(profiles, credentials, authenticator)
+	favoriteMutations := favorite.NewMutationService(favorites, profiles)
 	preflight := credential.NewPreflight(vault, credentials, authenticator, time.Now, stderr)
 	delegate := cli.NewDelegateHandler(cli.DelegateDependencies{
 		Profiles:  profiles,
@@ -66,7 +70,11 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 			Profiles: profiles, Mutations: mutations, Output: stdout, Terminal: terminal,
 			Selector: selector, Form: form, RemovalConfirmer: removalConfirmer,
 		}),
-		Switch:     cli.NewSwitchHandler(cli.SwitchDependencies{Profiles: profiles, Output: stdout, Terminal: terminal, Selector: selector}),
+		Switch: cli.NewSwitchHandler(cli.SwitchDependencies{Profiles: profiles, Output: stdout, Terminal: terminal, Selector: selector}),
+		Favorite: cli.NewFavoriteHandler(cli.FavoriteDependencies{
+			Favorites: favorites, Mutations: favoriteMutations, Output: stdout, Terminal: terminal,
+			Selector: favoriteSelector, Vault: delegate,
+		}),
 		Completion: cli.NewCompletionHandler(cli.CompletionDependencies{Profiles: profiles, Output: stdout}),
 		Vault:      delegate,
 	})

@@ -6,11 +6,13 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"vlt/internal/cli"
 	"vlt/internal/config"
+	"vlt/internal/favorite"
 	"vlt/internal/profile"
 )
 
@@ -53,6 +55,7 @@ func (s *automaticHelpServices) handler(output io.Writer) *cli.Dispatcher {
 			Profiles: s, Mutations: s, Output: output,
 		}),
 		Switch:     cli.NewSwitchHandler(cli.SwitchDependencies{Profiles: s, Output: output}),
+		Favorite:   cli.NewFavoriteHandler(cli.FavoriteDependencies{Output: output}),
 		Completion: cli.NewCompletionHandler(cli.CompletionDependencies{Profiles: s, Output: output}),
 		Vault: func(context.Context, []string) error {
 			s.vaultCalls++
@@ -87,6 +90,49 @@ func TestNewDispatcherWiresProfileManagement(t *testing.T) {
 	}
 	if stdout.Len() != 0 {
 		t.Errorf("switch output = %q, want empty", stdout.String())
+	}
+}
+
+func TestNewDispatcherWiresFavoriteManagement(t *testing.T) {
+	configDirectory := t.TempDir()
+	profiles := config.NewStore(filepath.Join(configDirectory, "vlt", "profiles.json"))
+	if err := profiles.Save(context.Background(), config.Configuration{Profiles: []profile.Profile{{
+		Name: "team-a", Address: "https://vault.example.com", Username: "alice", AuthPath: "oidc",
+	}}}); err != nil {
+		t.Fatalf("save profiles: %v", err)
+	}
+	var stdout bytes.Buffer
+	dispatcher := newDispatcherAt(configDirectory, strings.NewReader(""), &stdout, io.Discard)
+
+	if err := dispatcher.Dispatch(context.Background(), []string{
+		"favorite", "add", "secret/data/app", "--profile", "team-a", "--operation", "kv-get", "--note", "daily",
+	}); err != nil {
+		t.Fatalf("favorite add error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Added favorite") {
+		t.Fatalf("favorite add output = %q, want success", stdout.String())
+	}
+
+	store := favorite.NewStore(filepath.Join(configDirectory, "vlt", "favorites.json"))
+	configuration, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("load favorites: %v", err)
+	}
+	want := []favorite.Favorite{{
+		Profile: "team-a", Operation: favorite.OperationKVGet, Path: "secret/data/app", Note: "daily",
+	}}
+	if !reflect.DeepEqual(configuration.Favorites, want) {
+		t.Fatalf("stored favorites = %#v, want %#v", configuration.Favorites, want)
+	}
+
+	stdout.Reset()
+	if err := dispatcher.Dispatch(context.Background(), []string{"favorite", "list"}); err != nil {
+		t.Fatalf("favorite list error = %v", err)
+	}
+	for _, text := range []string{"OPERATION", "PROFILE", "PATH", "NOTE", "kv-get", "team-a", "secret/data/app", "daily"} {
+		if !strings.Contains(stdout.String(), text) {
+			t.Errorf("favorite list output = %q, want %q", stdout.String(), text)
+		}
 	}
 }
 
@@ -200,6 +246,10 @@ func TestDispatchWritesAutomaticManagementHelpToStderr(t *testing.T) {
 		{name: "update name", automatic: []string{"profile", "update", "--address", "https://vault.example.com"}, explicit: []string{"profile", "update", "--help"}},
 		{name: "remove", automatic: []string{"profile", "remove"}, explicit: []string{"profile", "remove", "--help"}},
 		{name: "switch", automatic: []string{"switch"}, explicit: []string{"switch", "--help"}},
+		{name: "favorite", automatic: []string{"favorite"}, explicit: []string{"favorite", "--help"}},
+		{name: "favorite add", automatic: []string{"favorite", "add"}, explicit: []string{"favorite", "add", "--help"}},
+		{name: "favorite update", automatic: []string{"favorite", "update"}, explicit: []string{"favorite", "update", "--help"}},
+		{name: "favorite remove", automatic: []string{"favorite", "remove"}, explicit: []string{"favorite", "remove", "--help"}},
 		{name: "completion", automatic: []string{"completion"}, explicit: []string{"completion", "--help"}},
 	}
 
