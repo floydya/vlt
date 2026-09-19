@@ -42,7 +42,7 @@ func NewCompletionHandler(dependencies CompletionDependencies) Handler {
 			return writeCompletionProfiles(ctx, dependencies)
 		}
 		if len(args) == 0 {
-			return managementUsageError("completion SHELL is required", "vlt completion SHELL", "vlt completion")
+			return AutomaticHelp{Text: completionHelpText}
 		}
 		if len(args) > 1 {
 			return managementUsageError(fmt.Sprintf("unexpected argument %q", args[1]), "vlt completion SHELL", "vlt completion")

@@ -56,17 +56,35 @@ func TestCompletionHandlerWritesScripts(t *testing.T) {
 
 func TestCompletionHandlerDisplaysHelp(t *testing.T) {
 	for _, arguments := range [][]string{{"-h"}, {"--help"}, {"bash", "--help"}} {
+		loader := &completionProfileLoader{}
 		var output bytes.Buffer
-		handler := NewCompletionHandler(CompletionDependencies{Output: &output})
+		handler := NewCompletionHandler(CompletionDependencies{Profiles: loader, Output: &output})
 
 		if err := handler(context.Background(), arguments); err != nil {
 			t.Fatalf("completion help %v error = %v", arguments, err)
 		}
-		for _, want := range []string{"Generate shell completion", "Usage:", "bash", "zsh", "fish", "Examples:"} {
-			if !strings.Contains(output.String(), want) {
-				t.Errorf("completion help = %q, want text %q", output.String(), want)
-			}
+		if got := output.String(); got != completionHelpText {
+			t.Errorf("completion help = %q, want %q", got, completionHelpText)
 		}
+		if loader.loads != 0 {
+			t.Errorf("completion help profile loads = %d, want 0", loader.loads)
+		}
+	}
+}
+
+func TestCompletionHandlerReturnsAutomaticHelpWhenShellMissing(t *testing.T) {
+	loader := &completionProfileLoader{}
+	var output bytes.Buffer
+	handler := NewCompletionHandler(CompletionDependencies{Profiles: loader, Output: &output})
+
+	err := handler(context.Background(), nil)
+
+	requireAutomaticHelp(t, err, completionHelpText)
+	if loader.loads != 0 {
+		t.Errorf("profile loads = %d, want 0", loader.loads)
+	}
+	if output.Len() != 0 {
+		t.Errorf("completion output = %q, want empty", output.String())
 	}
 }
 
@@ -76,7 +94,6 @@ func TestCompletionHandlerRejectsInvalidFormsWithoutOutput(t *testing.T) {
 		arguments []string
 		want      string
 	}{
-		{name: "missing shell", want: "SHELL is required"},
 		{name: "unsupported shell", arguments: []string{"powershell"}, want: "unsupported shell"},
 		{name: "extra argument", arguments: []string{"bash", "extra"}, want: "unexpected argument"},
 	}
