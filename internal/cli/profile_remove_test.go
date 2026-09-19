@@ -139,20 +139,22 @@ func TestProfileHandlerRemoveWithNameBypassesInteractiveServices(t *testing.T) {
 	}
 }
 
-func TestProfileHandlerRemoveWithoutNameRequiresTerminal(t *testing.T) {
+func TestProfileHandlerRemoveWithoutNameReturnsAutomaticHelpOutsideTerminal(t *testing.T) {
 	store := &fakeProfileStore{}
 	confirmer := &fakeProfileRemovalConfirmer{}
+	var output bytes.Buffer
 	handler := NewProfileHandler(ProfileDependencies{
-		Profiles: store, Output: &bytes.Buffer{}, Terminal: switchTerminal{},
+		Profiles: store, Output: &output, Terminal: switchTerminal{},
 		Selector: &fakeProfileSelector{}, RemovalConfirmer: confirmer,
 	})
 
 	err := handler(context.Background(), []string{"remove"})
-	if err == nil || !strings.Contains(err.Error(), "interactive terminal") || !strings.Contains(err.Error(), profileRemoveUsage) {
-		t.Fatalf("profile remove error = %v, want contextual terminal guidance", err)
-	}
+	requireAutomaticHelp(t, err, profileRemoveHelpText)
 	if store.loads != 0 || confirmer.calls != 0 {
 		t.Errorf("non-terminal removal used services: loads=%d confirmer=%d", store.loads, confirmer.calls)
+	}
+	if output.Len() != 0 {
+		t.Errorf("output = %q, want empty", output.String())
 	}
 }
 

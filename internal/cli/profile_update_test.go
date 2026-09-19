@@ -127,22 +127,36 @@ func TestProfileHandlerUpdateFlagsBypassSelectionAndForm(t *testing.T) {
 	}
 }
 
-func TestProfileHandlerUpdateFormRequiresTerminal(t *testing.T) {
+func TestProfileHandlerUpdateIncompleteReturnsAutomaticHelp(t *testing.T) {
 	store := &fakeProfileStore{configuration: config.Configuration{Profiles: []profile.Profile{managementTestProfile("team-a")}}}
 	mutator := &fakeProfileMutator{}
 	form := &fakeProfileForm{}
-	handler := NewProfileHandler(ProfileDependencies{
-		Profiles: store, Mutations: mutator, Output: &bytes.Buffer{}, Terminal: switchTerminal{}, Form: form,
-	})
+	selector := &fakeProfileSelector{}
+	for _, tt := range []struct {
+		name      string
+		arguments []string
+		terminal  switchTerminal
+	}{
+		{name: "missing selection outside terminal", arguments: []string{"update"}},
+		{name: "missing changes outside terminal", arguments: []string{"update", "team-a"}},
+		{name: "flags without name", arguments: []string{"update", "--address", "https://new.example.com"}, terminal: switchTerminal{prompts: true}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var output bytes.Buffer
+			handler := NewProfileHandler(ProfileDependencies{
+				Profiles: store, Mutations: mutator, Output: &output, Terminal: tt.terminal, Selector: selector, Form: form,
+			})
 
-	for _, arguments := range [][]string{{"update"}, {"update", "team-a"}} {
-		err := handler(context.Background(), arguments)
-		if err == nil || !strings.Contains(err.Error(), "interactive terminal") {
-			t.Errorf("profile update %v error = %v, want terminal guidance", arguments, err)
-		}
+			err := handler(context.Background(), tt.arguments)
+
+			requireAutomaticHelp(t, err, profileUpdateHelpText)
+			if output.Len() != 0 {
+				t.Errorf("output = %q, want empty", output.String())
+			}
+		})
 	}
-	if store.loads != 0 || form.calls != 0 || len(mutator.updated) != 0 {
-		t.Errorf("non-terminal update used services: loads=%d form=%d updates=%#v", store.loads, form.calls, mutator.updated)
+	if store.loads != 0 || selector.calls != 0 || form.calls != 0 || len(mutator.updated) != 0 {
+		t.Errorf("incomplete update used services: loads=%d selector=%d form=%d updates=%#v", store.loads, selector.calls, form.calls, mutator.updated)
 	}
 }
 

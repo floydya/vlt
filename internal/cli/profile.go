@@ -160,7 +160,7 @@ type SwitchDependencies struct {
 func NewProfileHandler(dependencies ProfileDependencies) Handler {
 	return func(ctx context.Context, args []string) error {
 		if len(args) == 0 {
-			return managementUsageError("profile command is required", profileUsage, "vlt profile")
+			return AutomaticHelp{Text: profileHelpText}
 		}
 		if isHelpFlag(args[0]) {
 			return writeManagementHelp(dependencies.Output, "profile", profileHelpText)
@@ -194,6 +194,9 @@ func NewSwitchHandler(dependencies SwitchDependencies) Handler {
 		}
 		if len(args) > 1 {
 			return managementUsageError(fmt.Sprintf("unexpected argument %q", args[1]), switchUsage, "vlt switch")
+		}
+		if len(args) == 0 && (dependencies.Terminal == nil || !dependencies.Terminal.PromptsEnabled()) {
+			return AutomaticHelp{Text: switchHelpText}
 		}
 		if dependencies.Profiles == nil {
 			return errors.New("switch profile: profile configuration is not configured")
@@ -248,7 +251,7 @@ func profileAdd(ctx context.Context, dependencies ProfileDependencies, args []st
 	}
 	missing := missingProfileAddFields(candidate)
 	if len(missing) != 0 && (dependencies.Terminal == nil || !dependencies.Terminal.PromptsEnabled()) {
-		return managementUsageError(missingProfileAddDiagnostic(missing), profileAddUsage, "vlt profile add")
+		return AutomaticHelp{Text: profileAddHelpText}
 	}
 	if dependencies.Mutations == nil {
 		return errors.New("add profile: profile mutations are not configured")
@@ -288,17 +291,6 @@ func missingProfileAddFields(candidate profile.Profile) []string {
 	return missing
 }
 
-func missingProfileAddDiagnostic(missing []string) string {
-	if len(missing) == 1 {
-		return missing[0] + " is required outside an interactive terminal"
-	}
-	if len(missing) == 2 {
-		return missing[0] + " and " + missing[1] + " are required outside an interactive terminal"
-	}
-	return strings.Join(missing[:len(missing)-1], ", ") + ", and " + missing[len(missing)-1] +
-		" are required outside an interactive terminal"
-}
-
 func profileList(ctx context.Context, dependencies ProfileDependencies, args []string) error {
 	if containsHelpFlag(args) {
 		return writeManagementHelp(dependencies.Output, "profile list", profileListHelpText)
@@ -333,6 +325,9 @@ func profileShow(ctx context.Context, dependencies ProfileDependencies, args []s
 	}
 	if len(args) > 1 {
 		return managementUsageError(fmt.Sprintf("unexpected argument %q", args[1]), profileShowUsage, "vlt profile show")
+	}
+	if len(args) == 0 && (dependencies.Terminal == nil || !dependencies.Terminal.PromptsEnabled()) {
+		return AutomaticHelp{Text: profileShowHelpText}
 	}
 	if dependencies.Profiles == nil {
 		return errors.New("show profile: profile configuration is not configured")
@@ -384,7 +379,10 @@ func profileUpdateCommand(ctx context.Context, dependencies ProfileDependencies,
 		return managementUsageError(fmt.Sprintf("invalid profile update option: %v", err), profileUpdateUsage, "vlt profile update")
 	}
 	if name == "" && len(options.set) != 0 {
-		return managementUsageError("profile NAME is required with update options", profileUpdateUsage, "vlt profile update")
+		return AutomaticHelp{Text: profileUpdateHelpText}
+	}
+	if len(options.set) == 0 && (dependencies.Terminal == nil || !dependencies.Terminal.PromptsEnabled()) {
+		return AutomaticHelp{Text: profileUpdateHelpText}
 	}
 	if dependencies.Mutations == nil {
 		return errors.New("update profile: profile mutations are not configured")
@@ -481,8 +479,8 @@ func profileRemove(ctx context.Context, dependencies ProfileDependencies, args [
 		return managementUsageError(fmt.Sprintf("unexpected argument %q", args[1]), profileRemoveUsage, "vlt profile remove")
 	}
 	if len(args) == 0 {
-		if err := requireInteractiveProfileTerminal(dependencies.Terminal); err != nil {
-			return interactiveProfileError(err, profileRemoveUsage, "vlt profile remove")
+		if dependencies.Terminal == nil || !dependencies.Terminal.PromptsEnabled() {
+			return AutomaticHelp{Text: profileRemoveHelpText}
 		}
 	}
 	if dependencies.Mutations == nil {

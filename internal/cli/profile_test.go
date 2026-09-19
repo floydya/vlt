@@ -52,6 +52,17 @@ type switchTerminal struct {
 	prompts bool
 }
 
+func requireAutomaticHelp(t *testing.T, err error, want string) {
+	t.Helper()
+	var automaticHelp AutomaticHelp
+	if !errors.As(err, &automaticHelp) {
+		t.Fatalf("error = %v, want AutomaticHelp", err)
+	}
+	if automaticHelp.Text != want {
+		t.Errorf("automatic help = %q, want %q", automaticHelp.Text, want)
+	}
+}
+
 func (switchTerminal) InputIsTerminal() bool   { return false }
 func (switchTerminal) DisplayIsTerminal() bool { return false }
 func (t switchTerminal) PromptsEnabled() bool  { return t.prompts }
@@ -117,6 +128,20 @@ func TestProfileHandlerDisplaysHelpAfterExplicitArguments(t *testing.T) {
 	}
 	if len(mutator.added) != 0 {
 		t.Fatalf("help added profiles = %#v, want none", mutator.added)
+	}
+}
+
+func TestProfileHandlerReturnsAutomaticHelpForMissingSubcommand(t *testing.T) {
+	store := &fakeProfileStore{}
+	mutator := &fakeProfileMutator{}
+	var output bytes.Buffer
+	handler := NewProfileHandler(ProfileDependencies{Profiles: store, Mutations: mutator, Output: &output})
+
+	err := handler(context.Background(), nil)
+
+	requireAutomaticHelp(t, err, profileHelpText)
+	if output.Len() != 0 || store.loads != 0 || len(mutator.added)+len(mutator.updated)+len(mutator.removed) != 0 {
+		t.Errorf("missing subcommand used services: output=%q loads=%d mutator=%#v", output.String(), store.loads, mutator)
 	}
 }
 
@@ -204,17 +229,6 @@ func TestManagementErrorsIncludeContextualGuidance(t *testing.T) {
 		args    []string
 		want    []string
 	}{
-		{
-			name:    "missing profile subcommand",
-			handler: NewProfileHandler(ProfileDependencies{Output: &bytes.Buffer{}}),
-			want:    []string{"profile command is required", "Usage: vlt profile", "Run 'vlt profile --help'"},
-		},
-		{
-			name:    "missing add values",
-			handler: NewProfileHandler(ProfileDependencies{Output: &bytes.Buffer{}}),
-			args:    []string{"add"},
-			want:    []string{"required outside an interactive terminal", "Usage: vlt profile add", "Run 'vlt profile add --help'"},
-		},
 		{
 			name:    "invalid switch arguments",
 			handler: NewSwitchHandler(SwitchDependencies{Output: &bytes.Buffer{}}),
@@ -384,26 +398,36 @@ func TestProfileHandlerAddCollectsMissingFieldsInteractively(t *testing.T) {
 }
 
 func TestProfileHandlerAddRejectsMissingInputOutsideTerminal(t *testing.T) {
-	mutator := &fakeProfileMutator{}
-	form := &fakeProfileForm{result: managementTestProfile("team-a")}
-	handler := NewProfileHandler(ProfileDependencies{
-		Mutations: mutator, Output: &bytes.Buffer{}, Terminal: switchTerminal{}, Form: form,
-	})
+	for _, tt := range []struct {
+		name      string
+		arguments []string
+	}{
+		{name: "all required values", arguments: []string{"add"}},
+		{name: "name", arguments: []string{"add", "--address", "https://vault.example.com", "--username", "alice"}},
+		{name: "address", arguments: []string{"add", "team-a", "--username", "alice"}},
+		{name: "username", arguments: []string{"add", "team-a", "--address", "https://vault.example.com"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mutator := &fakeProfileMutator{}
+			form := &fakeProfileForm{result: managementTestProfile("team-a")}
+			var output bytes.Buffer
+			handler := NewProfileHandler(ProfileDependencies{
+				Mutations: mutator, Output: &output, Terminal: switchTerminal{}, Form: form,
+			})
 
-	err := handler(context.Background(), []string{"add", "team-a", "--address", "https://vault.example.com"})
-	if err == nil {
-		t.Fatal("profile add error = nil, want non-terminal guidance")
-	}
-	for _, want := range []string{"--username is required outside an interactive terminal", "Usage: vlt profile add"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("profile add error = %q, want text %q", err, want)
-		}
-	}
-	if form.calls != 0 {
-		t.Errorf("form calls = %d, want 0", form.calls)
-	}
-	if len(mutator.added) != 0 {
-		t.Errorf("added profiles = %#v, want none", mutator.added)
+			err := handler(context.Background(), tt.arguments)
+
+			requireAutomaticHelp(t, err, profileAddHelpText)
+			if form.calls != 0 {
+				t.Errorf("form calls = %d, want 0", form.calls)
+			}
+			if len(mutator.added) != 0 {
+				t.Errorf("added profiles = %#v, want none", mutator.added)
+			}
+			if output.Len() != 0 {
+				t.Errorf("output = %q, want empty", output.String())
+			}
+		})
 	}
 }
 
@@ -572,14 +596,7 @@ func TestProfileHandlerShowRejectsMissingNameOutsideTerminal(t *testing.T) {
 	})
 
 	err := handler(context.Background(), []string{"show"})
-	if err == nil {
-		t.Fatal("profile show error = nil, want non-terminal guidance")
-	}
-	for _, want := range []string{"profile selection is required outside an interactive terminal", "Usage: vlt profile show [NAME]"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("profile show error = %q, want text %q", err, want)
-		}
-	}
+	requireAutomaticHelp(t, err, profileShowHelpText)
 	if selector.calls != 0 || store.loads != 0 {
 		t.Errorf("non-terminal show used services: selector calls=%d profile loads=%d", selector.calls, store.loads)
 	}
@@ -694,7 +711,6 @@ func TestProfileHandlerRejectsInvalidCommandForms(t *testing.T) {
 		arguments []string
 		want      string
 	}{
-		{name: "missing subcommand", want: "profile command"},
 		{name: "unknown subcommand", arguments: []string{"rename"}, want: "unknown profile command"},
 		{name: "add missing name", arguments: []string{"add"}, want: "profile add [NAME]"},
 		{name: "add missing address", arguments: []string{"add", "team-a", "--username", "alice"}, want: "--address"},
@@ -779,14 +795,7 @@ func TestSwitchHandlerRejectsMissingSelectionOutsideTerminal(t *testing.T) {
 	})
 
 	err := handler(context.Background(), nil)
-	if err == nil {
-		t.Fatal("switch error = nil, want non-terminal guidance")
-	}
-	for _, want := range []string{"profile selection is required outside an interactive terminal", "Usage: vlt switch"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("switch error = %q, want text %q", err, want)
-		}
-	}
+	requireAutomaticHelp(t, err, switchHelpText)
 	if selector.calls != 0 {
 		t.Errorf("selector calls = %d, want 0", selector.calls)
 	}

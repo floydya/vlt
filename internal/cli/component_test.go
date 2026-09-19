@@ -391,12 +391,14 @@ func TestFakeBackedNonTTYManagementFlowsStopBeforeServices(t *testing.T) {
 	tests := []struct {
 		name      string
 		arguments []string
+		wantHelp  string
 	}{
-		{name: "add", arguments: []string{"profile", "add"}},
-		{name: "switch", arguments: []string{"switch"}},
-		{name: "show", arguments: []string{"profile", "show"}},
-		{name: "update", arguments: []string{"profile", "update"}},
-		{name: "remove", arguments: []string{"profile", "remove"}},
+		{name: "profile", arguments: []string{"profile"}, wantHelp: profileHelpText},
+		{name: "add", arguments: []string{"profile", "add"}, wantHelp: profileAddHelpText},
+		{name: "switch", arguments: []string{"switch"}, wantHelp: switchHelpText},
+		{name: "show", arguments: []string{"profile", "show"}, wantHelp: profileShowHelpText},
+		{name: "update", arguments: []string{"profile", "update"}, wantHelp: profileUpdateHelpText},
+		{name: "remove", arguments: []string{"profile", "remove"}, wantHelp: profileRemoveHelpText},
 	}
 
 	for _, tt := range tests {
@@ -404,9 +406,7 @@ func TestFakeBackedNonTTYManagementFlowsStopBeforeServices(t *testing.T) {
 			harness := newComponentHarness(t, time.Date(2026, time.September, 19, 8, 0, 0, 0, time.UTC))
 
 			err := harness.dispatcher.Dispatch(context.Background(), tt.arguments)
-			if err == nil || !strings.Contains(err.Error(), "interactive terminal") {
-				t.Fatalf("Dispatch(%q) error = %v, want terminal guidance", tt.arguments, err)
-			}
+			requireAutomaticHelp(t, err, tt.wantHelp)
 			configuration, loadErr := harness.profiles.Load(context.Background())
 			if loadErr != nil {
 				t.Fatalf("load profiles: %v", loadErr)
