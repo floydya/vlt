@@ -13,7 +13,7 @@ func signalExitCode(err error) (int, bool) {
 	if !errors.As(err, &exitErr) {
 		return 0, false
 	}
-	status, ok := exitErr.ProcessState.Sys().(syscall.WaitStatus)
+	status, ok := exitErr.Sys().(syscall.WaitStatus)
 	if !ok || !status.Signaled() {
 		return 0, false
 	}

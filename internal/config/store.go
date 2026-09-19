@@ -62,7 +62,7 @@ func (s *Store) Load(ctx context.Context) (Configuration, error) {
 	if err != nil {
 		return Configuration{}, fmt.Errorf("open configuration: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	decoder := json.NewDecoder(file)
 	decoder.DisallowUnknownFields()

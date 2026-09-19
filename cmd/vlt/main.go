@@ -23,7 +23,7 @@ func main() {
 func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	dispatcher, err := newDispatcher(stdin, stdout, stderr)
 	if err != nil {
-		fmt.Fprintf(stderr, "vlt: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "vlt: %v\n", err)
 		return 1
 	}
 	return dispatch(ctx, dispatcher, args, stderr)
@@ -63,7 +63,7 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 
 func dispatch(ctx context.Context, dispatcher *cli.Dispatcher, args []string, stderr io.Writer) int {
 	if err := dispatcher.Dispatch(ctx, args); err != nil {
-		fmt.Fprintf(stderr, "vlt: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "vlt: %v\n", err)
 		return vaultexec.ExitCode(err)
 	}
 	return 0

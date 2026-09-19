@@ -102,7 +102,7 @@ func (p *Preflight) Prepare(ctx context.Context, selected profile.Profile) (stri
 		return token, nil
 	}
 	if lookup.expiry.After(p.now()) {
-		fmt.Fprintln(p.warnings, "warning: Vault token renewal failed; continuing with the existing credential")
+		_, _ = fmt.Fprintln(p.warnings, "warning: Vault token renewal failed; continuing with the existing credential")
 		return token, nil
 	}
 	return p.authenticate(ctx, selected)

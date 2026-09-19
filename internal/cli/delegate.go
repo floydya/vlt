@@ -87,7 +87,7 @@ func NewDelegateHandler(dependencies DelegateDependencies) Handler {
 
 func parseDelegateArguments(args []string) (string, []string, error) {
 	if len(args) == 0 {
-		return "", nil, errors.New("Vault command is required")
+		return "", nil, errors.New("delegate Vault command: command is required")
 	}
 	if args[0] != "--profile" {
 		return "", args, nil
@@ -96,7 +96,7 @@ func parseDelegateArguments(args []string) (string, []string, error) {
 		return "", nil, errors.New("--profile requires a profile name")
 	}
 	if len(args) == 2 {
-		return "", nil, errors.New("Vault command is required after --profile NAME")
+		return "", nil, errors.New("delegate Vault command: command is required after --profile NAME")
 	}
 	if err := profile.ValidateName(args[1]); err != nil {
 		return "", nil, fmt.Errorf("--profile value is invalid: %w", err)

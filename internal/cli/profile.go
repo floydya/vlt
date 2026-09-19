@@ -276,7 +276,7 @@ func parseProfileOptions(command string, args []string, defaultAuthPath string) 
 
 func writeProfileList(output io.Writer, profiles []profile.Profile) {
 	for index, candidate := range profiles {
-		fmt.Fprintf(output, "%d. %s\n", index+1, candidate.Name)
+		_, _ = fmt.Fprintf(output, "%d. %s\n", index+1, candidate.Name)
 	}
 }
 

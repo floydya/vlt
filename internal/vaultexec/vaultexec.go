@@ -131,10 +131,10 @@ func (e *Executor) FindVault() (string, error) {
 	}
 	path, err := e.lookPath("vault")
 	if err != nil {
-		return "", fmt.Errorf("Vault CLI was not found in PATH; install the HashiCorp Vault CLI or add its executable to PATH: %w", err)
+		return "", fmt.Errorf("discover Vault CLI: executable was not found in PATH; install the HashiCorp Vault CLI or add its executable to PATH: %w", err)
 	}
 	if path == "" {
-		return "", errors.New("Vault CLI was not found in PATH; install the HashiCorp Vault CLI or add its executable to PATH")
+		return "", errors.New("discover Vault CLI: executable was not found in PATH; install the HashiCorp Vault CLI or add its executable to PATH")
 	}
 	return path, nil
 }
