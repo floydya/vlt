@@ -22,6 +22,8 @@ The favorite-workflow increment passed `just check`, `just build-all`, and `go m
 
 The unified terminal UX increment passed the focused presentation, selector, dispatch, component, and security suites at commit `e32e941`. It also passed `just check`, `just build-all`, `go mod tidy -diff`, `go mod verify`, and `git diff --check`. The cross-build gate compiled Linux, macOS, and Windows amd64 targets. macOS and Windows runtime behavior remains unverified.
 
+The insecure-transport opt-in increment passed focused domain, persistence, mutation, credential, delegation, CLI, completion, and interactive-form tests. It also passed `just check`, `just build-all`, `go mod verify`, `golangci-lint run --build-tags=gms_pure_go ./...`, and `git diff --check`. `govulncheck` was not installed, so that optional final security scan did not run. Tests cover HTTPS defaults, remote and loopback HTTP rejection, persisted opt-in compatibility, enable and clear updates, secret-safe diagnostics, and login, preflight, and delegated execution boundaries.
+
 ## Runtime verification
 
 | Platform | Native credential store | Real OIDC and delegated read | Status |
@@ -71,6 +73,7 @@ Fake-backed delegated `read PATH` and `kv get PATH` checks confirmed the one-com
 | 23. Preserve delegated output, streams, exit status, preflight, environment isolation, and redacted failures | `TestFakeBackedFavoriteExecutionMapsReadOperationsWithoutChangingActiveProfile`, `TestFavoriteExecutionPreservesDelegatedError`, and `TestFakeBackedDelegatedFailurePreservesStreamsAndExitWithoutRetry` |
 | 24. Require approval for linked-profile cascades and preserve all state after rejection or failure | `TestFakeBackedFavoriteCascadeApprovalAndRollback`, `TestProfileRemoveWithLinkedFavoritesPromptsWithExactCount`, and the cascade service rollback suite |
 | 25. Persist private atomic favorite metadata without tokens, secret values, or normal profile orphans | `TestStoreAtomicWriteFailurePreservesPriorConfiguration`, `TestStoreCreatesPrivateDirectoryAndFile`, `TestMutationServiceAddRejectsInvalidDuplicateOrMissingProfileWithoutChangingState`, and `TestFavoriteManagementSurfacesDoNotRetainVaultCanaries` |
+| 26. Require a persisted per-profile opt-in before any HTTP login, preflight, or delegated execution | `TestProfileValidation`, `TestStoreLoadsLegacyHTTPSProfileWithoutInsecureOptIn`, `TestMutationServiceUpdateCanEnableAndClearHTTPOptIn`, `TestAuthenticatorLoginRejectsHTTPWithoutOptInBeforeVaultOrStore`, `TestPreflightRejectsHTTPWithoutOptInBeforeCredentialOrVaultAccess`, `TestDelegateRejectsHTTPWithoutOptInBeforeVaultDiscoveryOrCredentialAccess`, and `TestHuhProfileFormCanEnableAndClearInsecureHTTPOptIn` |
 
 ## Dependency review
 

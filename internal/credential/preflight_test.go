@@ -78,6 +78,47 @@ type fakePreflightAuthenticator struct {
 	calls int
 }
 
+func TestPreflightRejectsHTTPWithoutOptInBeforeCredentialOrVaultAccess(t *testing.T) {
+	executor := &fakePreflightExecutor{}
+	store := &fakePreflightStore{token: preflightToken}
+	authenticator := &fakePreflightAuthenticator{store: store}
+	selected := loginTestProfile()
+	selected.Address = "http://vault.example.com"
+	preflight := NewPreflight(executor, store, authenticator, time.Now, &bytes.Buffer{})
+
+	_, err := preflight.Prepare(context.Background(), selected)
+	if err == nil || !strings.Contains(err.Error(), "allow-insecure") {
+		t.Fatalf("Prepare() error = %v, want insecure transport diagnostic", err)
+	}
+	if store.getCalls != 0 || len(executor.invocations) != 0 || authenticator.calls != 0 {
+		t.Fatalf("unsafe preflight calls: store=%d Vault=%d login=%d, want none", store.getCalls, len(executor.invocations), authenticator.calls)
+	}
+}
+
+func TestPreflightAllowsOptedInHTTP(t *testing.T) {
+	now := time.Date(2030, time.January, 2, 15, 4, 5, 0, time.UTC)
+	executor := &fakePreflightExecutor{executions: []preflightExecution{{
+		result: vaultexec.Result{Stdout: []byte(`{"data":{"expire_time":"","renewable":false}}`)},
+	}}}
+	store := &fakePreflightStore{token: preflightToken}
+	authenticator := &fakePreflightAuthenticator{store: store}
+	selected := loginTestProfile()
+	selected.Address = "http://127.0.0.1:8200"
+	selected.AllowInsecure = true
+	preflight := NewPreflight(executor, store, authenticator, func() time.Time { return now }, &bytes.Buffer{})
+
+	token, err := preflight.Prepare(context.Background(), selected)
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if token != preflightToken {
+		t.Fatalf("Prepare() token = %q, want stored token", token)
+	}
+	if got, want := executor.invocations[0].Environment, vaultexec.ProfileEnvironment(selected.Address, preflightToken, selected.Namespace); !reflect.DeepEqual(got, want) {
+		t.Fatalf("preflight environment = %#v, want %#v", got, want)
+	}
+}
+
 func (f *fakePreflightAuthenticator) Login(context.Context, profile.Profile) error {
 	f.calls++
 	if f.err == nil {

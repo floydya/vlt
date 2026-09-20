@@ -75,7 +75,7 @@ func TestNewDispatcherWiresProfileManagement(t *testing.T) {
 	if err := dispatcher.Dispatch(context.Background(), []string{"profile", "list"}); err != nil {
 		t.Fatalf("profile list error = %v", err)
 	}
-	if got, want := stdout.String(), "#  ACTIVE  NAME  ADDRESS  NAMESPACE\n"; got != want {
+	if got, want := stdout.String(), "#  ACTIVE  NAME  ADDRESS  NAMESPACE  ALLOW HTTP\n"; got != want {
 		t.Errorf("profile list output = %q, want %q", got, want)
 	}
 	stdout.Reset()

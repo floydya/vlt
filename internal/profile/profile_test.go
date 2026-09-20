@@ -87,6 +87,21 @@ func TestValidateAddressDoesNotExposeMalformedInput(t *testing.T) {
 	}
 }
 
+func TestProfileHTTPOptInDiagnosticDoesNotExposeAddress(t *testing.T) {
+	const canary = "TOKEN-CANARY-DO-NOT-LEAK"
+	selected := Profile{
+		Name: "team-a", Address: "http://" + canary + ".example.com", Username: "user", AuthPath: "oidc",
+	}
+
+	err := selected.Validate()
+	if err == nil || !strings.Contains(err.Error(), "allow-insecure") {
+		t.Fatalf("Validate() error = %v, want insecure transport diagnostic", err)
+	}
+	if strings.Contains(err.Error(), canary) {
+		t.Fatalf("Validate() error exposed address: %q", err)
+	}
+}
+
 func TestProfileValidation(t *testing.T) {
 	valid := Profile{
 		Name:      "team-a",
@@ -120,6 +135,17 @@ func TestProfileValidation(t *testing.T) {
 		{name: "control character in namespace", mutate: func(p *Profile) { p.Namespace = "engineering\tteam" }, wantErr: "namespace"},
 		{name: "invalid name", mutate: func(p *Profile) { p.Name = "bad name" }, wantErr: "name"},
 		{name: "invalid address", mutate: func(p *Profile) { p.Address = "vault.example.com" }, wantErr: "address"},
+		{name: "remote HTTP requires opt-in", mutate: func(p *Profile) { p.Address = "http://vault.example.com" }, wantErr: "allow-insecure"},
+		{name: "loopback HTTP requires opt-in", mutate: func(p *Profile) { p.Address = "http://127.0.0.1:8200" }, wantErr: "allow-insecure"},
+		{name: "remote HTTP with opt-in", mutate: func(p *Profile) {
+			p.Address = "http://vault.example.com"
+			p.AllowInsecure = true
+		}},
+		{name: "loopback HTTP with opt-in", mutate: func(p *Profile) {
+			p.Address = "http://127.0.0.1:8200"
+			p.AllowInsecure = true
+		}},
+		{name: "HTTPS ignores opt-in", mutate: func(p *Profile) { p.AllowInsecure = true }},
 	}
 
 	for _, tt := range tests {

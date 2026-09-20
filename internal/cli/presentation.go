@@ -205,6 +205,7 @@ func profileListOutput(profiles []profile.Profile, activeName string, terminal T
 		{value: "NAME", role: presentationHeading},
 		{value: "ADDRESS", role: presentationHeading},
 		{value: "NAMESPACE", role: presentationHeading},
+		{value: "ALLOW HTTP", role: presentationHeading},
 	}}
 	for index, candidate := range profile.NewService(profiles).List() {
 		active := candidate.Name == activeName
@@ -224,6 +225,7 @@ func profileListOutput(profiles []profile.Profile, activeName string, terminal T
 			{value: candidate.Name},
 			{value: candidate.Address},
 			{value: namespace},
+			{value: yesNo(candidate.AllowInsecure)},
 		})
 	}
 	return newPresentation(terminal).renderTable(rows)
@@ -246,7 +248,15 @@ func profileShowOutput(candidate profile.Profile, active bool, terminal Terminal
 		{label: "Username", value: candidate.Username},
 		{label: "Auth path", value: candidate.AuthPath},
 		{label: "Namespace", value: namespace},
+		{label: "Allow HTTP", value: yesNo(candidate.AllowInsecure)},
 		{label: "Active", value: activeValue, role: activeRole},
 	}
 	return newPresentation(terminal).renderDetails(rows)
+}
+
+func yesNo(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
 }

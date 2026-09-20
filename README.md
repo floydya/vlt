@@ -63,12 +63,15 @@ $ vlt --profile team-b read secret/example
 
 `vlt` will not reimplement Vault data operations. It will resolve a profile, manage its credential lifecycle, and execute the installed `vault` binary with the original arguments and attached streams.
 
+Vault profiles use HTTPS by default. To connect to a trusted local test Vault over HTTP, add the profile with `--allow-insecure`. Clear the opt-in with `vlt profile update NAME --address https://... --allow-insecure=false`.
+
 ## Security model
 
 - Tokens belong only in Secret Service, Keychain, or Credential Manager.
 - Tokens must never enter profile configuration, process arguments, logs, or terminal output.
 - Vault subprocesses use argument vectors rather than shell interpolation.
 - There is no plaintext or file-based credential fallback.
+- HTTP Vault addresses require an explicit per-profile `--allow-insecure` opt-in.
 - Delegated operations are never automatically retried.
 
 Do not use real credentials in tests, fixtures, bug reports, or commits.

@@ -16,10 +16,10 @@ import (
 
 const (
 	profileUsage       = "vlt profile COMMAND [ARGUMENT...]"
-	profileAddUsage    = "vlt profile add [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE]"
+	profileAddUsage    = "vlt profile add [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure]"
 	profileListUsage   = "vlt profile list"
 	profileShowUsage   = "vlt profile show [NAME]"
-	profileUpdateUsage = "vlt profile update [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE]"
+	profileUpdateUsage = "vlt profile update [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure=BOOL]"
 	profileRemoveUsage = "vlt profile remove [NAME] [--remove-favorites]"
 	switchUsage        = "vlt switch [NAME|NUMBER]"
 )
@@ -47,13 +47,14 @@ Examples:
 const profileAddHelpText = `Add a Vault profile and authenticate it.
 
 Usage:
-  vlt profile add [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE]
+  vlt profile add [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure]
 
 Options:
   --address URL          Vault server URL
   --username USER        OIDC username
   --auth-path PATH       OIDC mount path (default: oidc)
   --namespace NAMESPACE  Vault Enterprise namespace
+  --allow-insecure       Allow this profile to use unencrypted HTTP
   -h, --help             Show help
 
 Examples:
@@ -88,13 +89,14 @@ Examples:
 const profileUpdateHelpText = `Update a Vault profile and reauthenticate when required.
 
 Usage:
-  vlt profile update [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE]
+  vlt profile update [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure=BOOL]
 
 Options:
   --address URL          Vault server URL
   --username USER        OIDC username
   --auth-path PATH       OIDC mount path
   --namespace NAMESPACE  Vault Enterprise namespace
+  --allow-insecure=BOOL  Allow or reject unencrypted HTTP
   -h, --help             Show help
 
 Examples:
@@ -258,7 +260,7 @@ func profileAdd(ctx context.Context, dependencies ProfileDependencies, args []st
 	}
 	candidate := profile.Profile{
 		Name: name, Address: options.address, Username: options.username,
-		AuthPath: options.authPath, Namespace: options.namespace,
+		AuthPath: options.authPath, Namespace: options.namespace, AllowInsecure: options.allowInsecure,
 	}
 	missing := missingProfileAddFields(candidate)
 	if len(missing) != 0 && (dependencies.Terminal == nil || !dependencies.Terminal.PromptsEnabled()) {
@@ -460,6 +462,9 @@ func profileChangesFromOptions(options profileOptions) profile.ProfileChanges {
 	if options.set["namespace"] {
 		changes.Namespace = &options.namespace
 	}
+	if options.set["allow-insecure"] {
+		changes.AllowInsecure = &options.allowInsecure
+	}
 	return changes
 }
 
@@ -476,6 +481,9 @@ func profileChangesBetween(original, updated profile.Profile) profile.ProfileCha
 	}
 	if original.Namespace != updated.Namespace {
 		changes.Namespace = &updated.Namespace
+	}
+	if original.AllowInsecure != updated.AllowInsecure {
+		changes.AllowInsecure = &updated.AllowInsecure
 	}
 	return changes
 }
@@ -574,11 +582,12 @@ func profileRemove(ctx context.Context, dependencies ProfileDependencies, args [
 }
 
 type profileOptions struct {
-	address   string
-	username  string
-	authPath  string
-	namespace string
-	set       map[string]bool
+	address       string
+	username      string
+	authPath      string
+	namespace     string
+	allowInsecure bool
+	set           map[string]bool
 }
 
 func parseProfileOptions(command string, args []string, defaultAuthPath string) (profileOptions, error) {
@@ -589,6 +598,7 @@ func parseProfileOptions(command string, args []string, defaultAuthPath string) 
 	flags.StringVar(&options.username, "username", "", "")
 	flags.StringVar(&options.authPath, "auth-path", defaultAuthPath, "")
 	flags.StringVar(&options.namespace, "namespace", "", "")
+	flags.BoolVar(&options.allowInsecure, "allow-insecure", false, "")
 	if err := flags.Parse(args); err != nil {
 		return profileOptions{}, err
 	}

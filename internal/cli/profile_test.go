@@ -461,14 +461,14 @@ func TestProfileHandlerAddParsesRequiredAndOptionalFields(t *testing.T) {
 			},
 		},
 		{
-			name: "accepts optional fields",
+			name: "accepts optional fields and insecure HTTP opt-in",
 			arguments: []string{
-				"add", "team-b", "--address=https://vault.example.com", "--username=bob",
-				"--auth-path=company-oidc", "--namespace=engineering",
+				"add", "team-b", "--address=http://127.0.0.1:8200", "--username=bob",
+				"--auth-path=company-oidc", "--namespace=engineering", "--allow-insecure",
 			},
 			want: profile.Profile{
-				Name: "team-b", Address: "https://vault.example.com", Username: "bob",
-				AuthPath: "company-oidc", Namespace: "engineering",
+				Name: "team-b", Address: "http://127.0.0.1:8200", Username: "bob",
+				AuthPath: "company-oidc", Namespace: "engineering", AllowInsecure: true,
 			},
 		},
 	}
@@ -654,9 +654,10 @@ func TestProfileHandlerListUsesStableNumberedOrder(t *testing.T) {
 		t.Fatalf("profile list error = %v", err)
 	}
 	want := "#  ACTIVE  NAME    ADDRESS                    NAMESPACE\n" +
-		"1          Alpha   https://vault.example.org  -\n" +
-		"2  *       team-a  https://vault.example.com  platform\n" +
-		"3          team-b  https://vault.example.net  -\n"
+		"1          Alpha   https://vault.example.org  -          no\n" +
+		"2  *       team-a  https://vault.example.com  platform   no\n" +
+		"3          team-b  https://vault.example.net  -          no\n"
+	want = strings.Replace(want, "NAMESPACE\n", "NAMESPACE  ALLOW HTTP\n", 1)
 	if got := output.String(); got != want {
 		t.Errorf("output = %q, want %q", got, want)
 	}
@@ -673,7 +674,7 @@ func TestProfileHandlerListPrintsColumnsWhenEmpty(t *testing.T) {
 	if err := handler(context.Background(), []string{"list"}); err != nil {
 		t.Fatalf("profile list error = %v", err)
 	}
-	if got, want := output.String(), "#  ACTIVE  NAME  ADDRESS  NAMESPACE\n"; got != want {
+	if got, want := output.String(), "#  ACTIVE  NAME  ADDRESS  NAMESPACE  ALLOW HTTP\n"; got != want {
 		t.Errorf("output = %q, want %q", got, want)
 	}
 }
@@ -693,7 +694,7 @@ func TestProfileHandlerShowPrintsOnlyProfileMetadata(t *testing.T) {
 	if err := handler(context.Background(), []string{"show", "team-a"}); err != nil {
 		t.Fatalf("profile show error = %v", err)
 	}
-	want := "Name:      team-a\nAddress:   https://vault.example.com\nUsername:  alice\nAuth path: company-oidc\nNamespace: engineering\nActive:    yes\n"
+	want := "Name:       team-a\nAddress:    https://vault.example.com\nUsername:   alice\nAuth path:  company-oidc\nNamespace:  engineering\nAllow HTTP: no\nActive:     yes\n"
 	if got := output.String(); got != want {
 		t.Errorf("output = %q, want %q", got, want)
 	}
@@ -733,7 +734,7 @@ func TestProfileHandlerShowSelectsInteractively(t *testing.T) {
 	if selector.active != "team-b" {
 		t.Errorf("selector active profile = %q, want team-b", selector.active)
 	}
-	want := "Name:      team-a\nAddress:   https://vault.example.com\nUsername:  alice\nAuth path: company-oidc\nNamespace: engineering\nActive:    no\n"
+	want := "Name:       team-a\nAddress:    https://vault.example.com\nUsername:   alice\nAuth path:  company-oidc\nNamespace:  engineering\nAllow HTTP: no\nActive:     no\n"
 	if got := output.String(); got != want {
 		t.Errorf("output = %q, want %q", got, want)
 	}
@@ -817,7 +818,7 @@ func TestProfileHandlerUpdatePassesOnlySuppliedFields(t *testing.T) {
 	var output bytes.Buffer
 	handler := NewProfileHandler(ProfileDependencies{Mutations: mutator, Output: &output})
 
-	arguments := []string{"update", "team-a", "--address", "https://new.example.com", "--namespace="}
+	arguments := []string{"update", "team-a", "--address", "https://new.example.com", "--namespace=", "--allow-insecure=false"}
 	if err := handler(context.Background(), arguments); err != nil {
 		t.Fatalf("profile update error = %v", err)
 	}
@@ -833,6 +834,9 @@ func TestProfileHandlerUpdatePassesOnlySuppliedFields(t *testing.T) {
 	}
 	if got.changes.Namespace == nil || *got.changes.Namespace != "" {
 		t.Errorf("namespace change = %#v, want explicit empty value", got.changes.Namespace)
+	}
+	if got.changes.AllowInsecure == nil || *got.changes.AllowInsecure {
+		t.Errorf("allow insecure change = %#v, want explicit false", got.changes.AllowInsecure)
 	}
 	if got.changes.Username != nil || got.changes.AuthPath != nil {
 		t.Errorf("omitted changes = %#v, want nil", got.changes)

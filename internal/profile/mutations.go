@@ -36,10 +36,11 @@ type MutationService struct {
 }
 
 type ProfileChanges struct {
-	Address   *string
-	Username  *string
-	AuthPath  *string
-	Namespace *string
+	Address       *string
+	Username      *string
+	AuthPath      *string
+	Namespace     *string
+	AllowInsecure *bool
 }
 
 type credentialSnapshot struct {
@@ -265,6 +266,9 @@ func applyProfileChanges(original Profile, changes ProfileChanges) Profile {
 	}
 	if changes.Namespace != nil {
 		updated.Namespace = *changes.Namespace
+	}
+	if changes.AllowInsecure != nil {
+		updated.AllowInsecure = *changes.AllowInsecure
 	}
 	return updated
 }

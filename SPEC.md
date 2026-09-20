@@ -83,16 +83,17 @@ Each profile has:
 - `username`: required value supplied to OIDC login;
 - `auth_path`: required OIDC mount path, defaulting to `oidc` during creation;
 - `namespace`: optional Vault Enterprise namespace.
+- `allow_insecure`: explicit per-profile permission to use an unencrypted HTTP address, defaulting to false.
 
 Profile names must contain only ASCII letters, digits, hyphens, and underscores, must start with a letter or digit, must not consist entirely of digits, and are case-sensitive. Numeric-only names are invalid because they conflict with numbered profile selection. Secret values, including Vault tokens, must never be stored in profile configuration.
 
 #### Profile commands
 
 ```text
-vlt profile add NAME --address URL --username USER [--auth-path PATH] [--namespace NAMESPACE]
+vlt profile add NAME --address URL --username USER [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure]
 vlt profile list
 vlt profile show NAME
-vlt profile update NAME [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE]
+vlt profile update NAME [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure=BOOL]
 vlt profile remove NAME
 ```
 
@@ -100,7 +101,8 @@ Behavior:
 
 - `profile add` validates and persists metadata, then immediately performs OIDC authentication. If authentication fails, the incomplete profile and any token are removed.
 - Adding a duplicate name fails without modifying the existing profile.
-- `profile update` changes only supplied fields. If address, username, auth path, or namespace changes, the existing token is deleted and OIDC authentication runs immediately. Failed reauthentication leaves the original profile and token intact.
+- `profile update` changes only supplied fields. If address, username, auth path, namespace, or the insecure-transport opt-in changes, the existing token is deleted and OIDC authentication runs immediately. Failed reauthentication leaves the original profile and token intact.
+- HTTPS addresses need no transport opt-in. HTTP addresses, including loopback addresses, are rejected unless the profile has `allow_insecure` enabled. Add and update can enable it with `--allow-insecure` and update can clear it with `--allow-insecure=false`.
 - `profile remove` deletes both metadata and its keyring token. Removing the active profile leaves no active profile; another profile is never selected implicitly.
 - `profile list` sorts names lexicographically and uses one-based display numbers.
 - `profile show` and `profile list` never print token values or keyring identifiers.
@@ -154,14 +156,14 @@ For example, `vlt profile` prints only the profile help for `add`, `list`, `show
 `profile list` displays one lexicographically sorted row per profile with these columns:
 
 ```text
-#  ACTIVE  NAME    ADDRESS                    NAMESPACE
-1  *       team-a  https://vault.example.com  platform
-2          team-b  https://vault.example.net  -
+#  ACTIVE  NAME    ADDRESS                    NAMESPACE  ALLOW HTTP
+1  *       team-a  https://vault.example.com  platform   no
+2          team-b  https://vault.example.net  -          no
 ```
 
-The one-based number remains a valid `switch` selector. `*` marks the active profile. Empty namespaces display as `-`. The table never includes usernames, credentials, keyring identifiers, or token-derived state.
+The one-based number remains a valid `switch` selector. `*` marks the active profile. Empty namespaces display as `-`. `ALLOW HTTP` shows the persisted insecure-transport opt-in. The table never includes usernames, credentials, keyring identifiers, or token-derived state.
 
-`profile show` displays aligned labels for name, address, username, auth path, namespace, and active status.
+`profile show` displays aligned labels for name, address, username, auth path, namespace, the HTTP opt-in, and active status.
 
 #### Shared presentation contract
 
@@ -203,7 +205,7 @@ vlt profile update
 vlt profile remove
 ```
 
-The selector uses the shared searchable-selector contract. It shows the same number, active marker, name, address, and namespace information as `profile list`. It preselects the active profile when one exists. Selecting an entry supplies its stable profile name to the existing operation. If no profiles exist, the command does not open an empty selector; it explains how to run `vlt profile add`.
+The selector uses the shared searchable-selector contract. It shows the same number, active marker, name, address, namespace, and HTTP opt-in information as `profile list`. It preselects the active profile when one exists. Selecting an entry supplies its stable profile name to the existing operation. If no profiles exist, the command does not open an empty selector; it explains how to run `vlt profile add`.
 
 Cancelling with the interface's cancel action or an interrupt changes no configuration or credential state, prints a concise cancellation message, and exits non-zero.
 
@@ -216,12 +218,13 @@ Cancelling with the interface's cancel action or an interrupt changes no configu
 - username: required and non-blank;
 - auth path: optional input defaulting to `oidc`;
 - namespace: optional and empty by default.
+- allow insecure HTTP: disabled by default and required before the form accepts an HTTP address.
 
 Each invalid answer is explained next to its field and can be corrected without restarting the command. When name, address, and username are supplied explicitly, the command runs directly with the existing auth-path and namespace defaults. The form submits through the same mutation and authentication behavior as the explicit command.
 
 #### Update form
 
-`profile update NAME` without change flags opens a form populated with the current address, username, auth path, and namespace. The stable profile name is displayed but cannot be changed. The form validates changed values before submission and writes nothing until the complete form is valid.
+`profile update NAME` without change flags opens a form populated with the current address, username, auth path, namespace, and insecure-transport opt-in. The stable profile name is displayed but cannot be changed. The form validates changed values before submission and writes nothing until the complete form is valid.
 
 Supplying `NAME` and one or more update flags remains a direct partial update and does not open the form. This preserves the existing script-safe command contract. Running `profile update` without `NAME` first opens the selector and then the populated form.
 
@@ -371,7 +374,7 @@ Authentication is delegated to the official CLI using behavior equivalent to:
 vault login -no-store -format=json -method=oidc -path=AUTH_PATH username=USERNAME
 ```
 
-The profile address, optional namespace, and any required profile-owned Vault environment variables are provided only to that subprocess. `-no-store` prevents the official CLI from changing its own global token-helper state.
+The profile address, optional namespace, and any required profile-owned Vault environment variables are provided only to that subprocess. `vlt` validates the HTTPS default or explicit HTTP opt-in before this boundary. `-no-store` prevents the official CLI from changing its own global token-helper state.
 
 `vlt` must:
 
@@ -558,7 +561,7 @@ Conventions:
 
 Use table-driven tests for:
 
-- profile-name, URL, username, auth-path, and namespace validation;
+- profile-name, URL, insecure-transport opt-in, username, auth-path, and namespace validation;
 - deterministic sorting and numeric profile resolution;
 - active-profile selection and one-command override precedence;
 - Vault environment construction and removal of leaked namespace values;
@@ -608,6 +611,7 @@ Use temporary directories, a fake keyring, a controllable clock, and a fake `vau
 - completion never invokes Vault or exposes credentials;
 - delegated exit status and standard streams are preserved;
 - tokens never appear in output or persisted config.
+- HTTPS works by default, HTTP fails closed without an opt-in, and opted-in loopback HTTP reaches login, preflight, and delegation.
 - guided and explicit favorite CRUD reach the same persistence behavior;
 - selecting a `read` favorite delegates with its stored profile and path without changing the active profile;
 - selecting a `kv-get` favorite delegates `kv get` with its stored profile and path without changing the active profile;
@@ -677,6 +681,7 @@ No numeric coverage target is imposed initially. Every success criterion and sec
 - Restyle, parse for presentation, or complete delegated Vault arguments.
 - Modify shell startup files or install completion scripts automatically.
 - Retry a delegated command after it may have executed.
+- Send a credential to an HTTP Vault address without that profile's explicit insecure-transport opt-in.
 - Store secret values in favorite paths, notes, or configuration.
 - Change the active profile after selecting a favorite.
 - Remove or skip a failing security test merely to make checks pass.
@@ -710,6 +715,7 @@ The initial release is complete when all of the following are demonstrably true:
 23. Favorite execution preserves Vault output, attached streams, exit status, credential preflight, environment isolation, and diagnostic redaction without parsing secret fields.
 24. Removing a profile with linked favorites reports their count and requires interactive confirmation or `--remove-favorites`; decline, cancellation, or cascade failure leaves profile and favorite state unchanged.
 25. Favorite metadata persists locally with atomic writes and user-only permissions, contains no secret values or tokens, and cannot normally reference a missing profile.
+26. HTTPS profiles work without extra options. HTTP profiles fail before credential or Vault access unless they persist an explicit opt-in that add and update can enable and update can clear.
 
 ## Out of Scope
 

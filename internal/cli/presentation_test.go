@@ -61,9 +61,9 @@ func TestProfileListPresentationPlainAndStyledAreExact(t *testing.T) {
 		{Name: "team-b", Address: "https://vault-b.example", Namespace: ""},
 		{Name: "team-a", Address: "https://vault-a.example", Namespace: "engineering"},
 	}
-	want := "#  ACTIVE  NAME    ADDRESS                  NAMESPACE\n" +
-		"1  *       team-a  https://vault-a.example  engineering\n" +
-		"2          team-b  https://vault-b.example  -\n"
+	want := "#  ACTIVE  NAME    ADDRESS                  NAMESPACE    ALLOW HTTP\n" +
+		"1  *       team-a  https://vault-a.example  engineering  no\n" +
+		"2          team-b  https://vault-b.example  -            no\n"
 
 	plain := profileListOutput(profiles, "team-a", fixedTerminal{color: false})
 	if plain != want {
@@ -86,12 +86,13 @@ func TestProfileShowPresentationPlainAndStyledAreExact(t *testing.T) {
 		Name: "team-a", Address: "https://vault-a.example", Username: "alice",
 		AuthPath: "company-oidc", Namespace: "",
 	}
-	want := "Name:      team-a\n" +
-		"Address:   https://vault-a.example\n" +
-		"Username:  alice\n" +
-		"Auth path: company-oidc\n" +
-		"Namespace: -\n" +
-		"Active:    yes\n"
+	want := "Name:       team-a\n" +
+		"Address:    https://vault-a.example\n" +
+		"Username:   alice\n" +
+		"Auth path:  company-oidc\n" +
+		"Namespace:  -\n" +
+		"Allow HTTP: no\n" +
+		"Active:     yes\n"
 
 	plain := profileShowOutput(candidate, true, fixedTerminal{color: false})
 	if plain != want {

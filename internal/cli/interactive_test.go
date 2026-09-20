@@ -58,7 +58,7 @@ func TestSharedProfileSelectorBuildsDeterministicSearchRowsAndPreselectsActive(t
 	candidates := []profile.Profile{
 		{
 			Name: "team-b", Address: "https://vault.team-b.example", Username: "hidden-b",
-			AuthPath: "hidden-auth-b", Namespace: "",
+			AuthPath: "hidden-auth-b", Namespace: "", AllowInsecure: true,
 		},
 		{
 			Name: "team-a", Address: "https://vault.team-a.example", Username: "hidden-a",
@@ -87,7 +87,7 @@ func TestSharedProfileSelectorBuildsDeterministicSearchRowsAndPreselectsActive(t
 			t.Errorf("team-a label = %q, want %q", shared.items[0].Label, text)
 		}
 	}
-	for _, text := range []string{"2", "*", "team-b", "https://vault.team-b.example", "-"} {
+	for _, text := range []string{"2", "*", "team-b", "https://vault.team-b.example", "-", "yes"} {
 		if !strings.Contains(shared.items[1].Label, text) {
 			t.Errorf("team-b label = %q, want %q", shared.items[1].Label, text)
 		}
@@ -125,6 +125,7 @@ func TestSharedProfileSelectorPropagatesCancellationWithoutSelection(t *testing.
 func TestHuhProfileFormPreservesDefaultsAndCorrectsInvalidFields(t *testing.T) {
 	input := &promptLineReader{lines: [][]byte{
 		[]byte("\n"),
+		[]byte("n\n"),
 		[]byte("ftp://vault.example.com\n"),
 		[]byte("https://vault.example.com\n"),
 		[]byte("alice\n"),
@@ -146,7 +147,7 @@ func TestHuhProfileFormPreservesDefaultsAndCorrectsInvalidFields(t *testing.T) {
 	if got != want {
 		t.Errorf("profile form result = %#v, want %#v", got, want)
 	}
-	for _, text := range []string{"Name", "Address", "Username", "Auth path", "Namespace", "address scheme must be http or https"} {
+	for _, text := range []string{"Name", "Allow insecure HTTP", "Address", "Username", "Auth path", "Namespace", "address scheme must be http or https"} {
 		if !strings.Contains(output.String(), text) {
 			t.Errorf("profile form output = %q, want text %q", output.String(), text)
 		}
@@ -160,6 +161,7 @@ func TestHuhProfileFormPreservesDefaultsAndCorrectsInvalidFields(t *testing.T) {
 
 func TestHuhProfileFormKeepsUpdateNameReadOnly(t *testing.T) {
 	input := &promptLineReader{lines: [][]byte{
+		[]byte("n\n"),
 		[]byte("https://new.example.com\n"),
 		[]byte("\n"),
 		[]byte("\n"),
@@ -184,6 +186,56 @@ func TestHuhProfileFormKeepsUpdateNameReadOnly(t *testing.T) {
 	}
 	if strings.Contains(ansi.Strip(output.String()), "Name ") {
 		t.Errorf("update form output contains editable name field: %q", output.String())
+	}
+}
+
+func TestHuhProfileFormCanEnableAndClearInsecureHTTPOptIn(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		current profile.Profile
+		input   []string
+		want    profile.Profile
+	}{
+		{
+			name: "enable for HTTP",
+			current: profile.Profile{
+				Name: "team-a", Address: "https://vault.example.com", Username: "alice", AuthPath: "oidc",
+			},
+			input: []string{"y\n", "http://127.0.0.1:8200\n", "\n", "\n", "\n"},
+			want: profile.Profile{
+				Name: "team-a", Address: "http://127.0.0.1:8200", Username: "alice", AuthPath: "oidc", AllowInsecure: true,
+			},
+		},
+		{
+			name: "clear while moving to HTTPS",
+			current: profile.Profile{
+				Name: "team-a", Address: "http://127.0.0.1:8200", Username: "alice", AuthPath: "oidc", AllowInsecure: true,
+			},
+			input: []string{"n\n", "https://vault.example.com\n", "\n", "\n", "\n"},
+			want: profile.Profile{
+				Name: "team-a", Address: "https://vault.example.com", Username: "alice", AuthPath: "oidc",
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var output bytes.Buffer
+			lines := make([][]byte, len(tt.input))
+			for index, line := range tt.input {
+				lines[index] = []byte(line)
+			}
+			form := huhProfileForm{input: &promptLineReader{lines: lines}, output: &output, accessible: true}
+
+			got, err := form.Run(context.Background(), ProfileFormRequest{Profile: tt.current})
+			if err != nil {
+				t.Fatalf("run profile form: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("profile form result = %#v, want %#v", got, tt.want)
+			}
+			if !strings.Contains(ansi.Strip(output.String()), "Allow insecure HTTP") {
+				t.Fatalf("profile form output = %q, want insecure transport control", output.String())
+			}
+		})
 	}
 }
 

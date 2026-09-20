@@ -314,15 +314,15 @@ func TestCompletionScriptsDescribeOnlyVLTCommands(t *testing.T) {
 	}{
 		{
 			shell: "bash", registration: "complete -F _vlt_completion vlt", stopMarker: "return 0",
-			flags: []string{"--profile", "--address", "--username", "--auth-path", "--namespace", "-h", "--help"},
+			flags: []string{"--profile", "--address", "--username", "--auth-path", "--namespace", "--allow-insecure", "-h", "--help"},
 		},
 		{
 			shell: "zsh", registration: "compdef _vlt vlt", stopMarker: "return 0",
-			flags: []string{"--profile", "--address", "--username", "--auth-path", "--namespace", "-h", "--help"},
+			flags: []string{"--profile", "--address", "--username", "--auth-path", "--namespace", "--allow-insecure", "-h", "--help"},
 		},
 		{
 			shell: "fish", registration: "complete -c vlt", stopMarker: "__vlt_needs_command",
-			flags: []string{"-l profile", "-l address", "-l username", "-l auth-path", "-l namespace", "-s h -l help"},
+			flags: []string{"-l profile", "-l address", "-l username", "-l auth-path", "-l namespace", "-l allow-insecure", "-s h -l help"},
 		},
 	}
 	required := []string{

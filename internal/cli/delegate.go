@@ -63,6 +63,9 @@ func NewDelegateHandler(dependencies DelegateDependencies) Handler {
 		if err != nil {
 			return fmt.Errorf("select profile %q for this invocation: %w", profileName, err)
 		}
+		if err := selected.Validate(); err != nil {
+			return fmt.Errorf("select profile %q for this invocation: invalid profile: %w", profileName, err)
+		}
 
 		if _, err := dependencies.Vault.FindVault(); err != nil {
 			return err

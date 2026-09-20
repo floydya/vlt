@@ -21,6 +21,7 @@ func TestProfileHandlerUpdateUsesPopulatedReadOnlyNameForm(t *testing.T) {
 	completed.Name = "renamed"
 	completed.Address = "https://new.example.com"
 	completed.Namespace = "platform"
+	completed.AllowInsecure = true
 	store := &fakeProfileStore{configuration: config.Configuration{Profiles: []profile.Profile{current}}}
 	mutator := &fakeProfileMutator{}
 	form := &fakeProfileForm{result: completed}
@@ -55,6 +56,9 @@ func TestProfileHandlerUpdateUsesPopulatedReadOnlyNameForm(t *testing.T) {
 	}
 	if got.changes.Namespace == nil || *got.changes.Namespace != completed.Namespace {
 		t.Errorf("namespace change = %#v, want %q", got.changes.Namespace, completed.Namespace)
+	}
+	if got.changes.AllowInsecure == nil || *got.changes.AllowInsecure != completed.AllowInsecure {
+		t.Errorf("allow insecure change = %#v, want %t", got.changes.AllowInsecure, completed.AllowInsecure)
 	}
 	if got.changes.Username != nil || got.changes.AuthPath != nil {
 		t.Errorf("unchanged fields = %#v, want nil", got.changes)

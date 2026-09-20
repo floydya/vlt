@@ -112,6 +112,46 @@ func TestDelegateUsesActiveProfileAndPreservesOpaqueInvocation(t *testing.T) {
 	}
 }
 
+func TestDelegateRejectsHTTPWithoutOptInBeforeVaultDiscoveryOrCredentialAccess(t *testing.T) {
+	events := []string{}
+	selected := delegateTestProfile("team-a", "http://vault.example.com", "")
+	loader := &fakeConfigurationLoader{
+		configuration: config.Configuration{Profiles: []profile.Profile{selected}, ActiveProfile: selected.Name},
+		events:        &events,
+	}
+	preflight := &fakeCredentialPreflight{events: &events}
+	vault := &fakeDelegateVault{events: &events}
+	handler := NewDelegateHandler(DelegateDependencies{Profiles: loader, Preflight: preflight, Vault: vault})
+
+	err := handler(context.Background(), []string{"read", "secret/example"})
+	if err == nil || !strings.Contains(err.Error(), "allow-insecure") {
+		t.Fatalf("delegate error = %v, want insecure transport diagnostic", err)
+	}
+	if got, want := events, []string{"load"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("events = %#v, want %#v", got, want)
+	}
+}
+
+func TestDelegateAllowsOptedInHTTP(t *testing.T) {
+	events := []string{}
+	selected := delegateTestProfile("local", "http://127.0.0.1:8200", "")
+	selected.AllowInsecure = true
+	loader := &fakeConfigurationLoader{
+		configuration: config.Configuration{Profiles: []profile.Profile{selected}, ActiveProfile: selected.Name},
+		events:        &events,
+	}
+	preflight := &fakeCredentialPreflight{token: "synthetic-token", events: &events}
+	vault := &fakeDelegateVault{events: &events}
+	handler := NewDelegateHandler(DelegateDependencies{Profiles: loader, Preflight: preflight, Vault: vault})
+
+	if err := handler(context.Background(), []string{"read", "secret/example"}); err != nil {
+		t.Fatalf("delegate error = %v", err)
+	}
+	if got, want := vault.invocation.Environment, vaultexec.ProfileEnvironment(selected.Address, preflight.token, selected.Namespace); !reflect.DeepEqual(got, want) {
+		t.Fatalf("delegate environment = %#v, want %#v", got, want)
+	}
+}
+
 func TestDelegateProfileOverrideAppliesOnceWithoutChangingActiveSelection(t *testing.T) {
 	events := []string{}
 	teamA := delegateTestProfile("team-a", "https://team-a.example", "")

@@ -16,11 +16,12 @@ var (
 
 // Profile contains the non-secret metadata needed to use a Vault profile.
 type Profile struct {
-	Name      string `json:"name"`
-	Address   string `json:"address"`
-	Username  string `json:"username"`
-	AuthPath  string `json:"auth_path"`
-	Namespace string `json:"namespace"`
+	Name          string `json:"name"`
+	Address       string `json:"address"`
+	Username      string `json:"username"`
+	AuthPath      string `json:"auth_path"`
+	Namespace     string `json:"namespace"`
+	AllowInsecure bool   `json:"allow_insecure"`
 }
 
 // ValidateName checks the stable, case-sensitive profile identifier.
@@ -66,6 +67,10 @@ func (p Profile) Validate() error {
 	}
 	if err := ValidateAddress(p.Address); err != nil {
 		return fmt.Errorf("address: %w", err)
+	}
+	parsed, _ := url.Parse(p.Address)
+	if strings.EqualFold(parsed.Scheme, "http") && !p.AllowInsecure {
+		return fmt.Errorf("address: insecure HTTP requires --allow-insecure")
 	}
 	if strings.TrimSpace(p.Username) == "" {
 		return fmt.Errorf("username must not be empty or whitespace-only")

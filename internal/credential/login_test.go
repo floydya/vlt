@@ -92,6 +92,36 @@ func TestAuthenticatorLoginInvokesVaultAndStoresClientToken(t *testing.T) {
 	}
 }
 
+func TestAuthenticatorLoginRejectsHTTPWithoutOptInBeforeVaultOrStore(t *testing.T) {
+	executor := &fakeLoginExecutor{}
+	store := &fakeLoginStore{}
+	selected := loginTestProfile()
+	selected.Address = "http://vault.example.com"
+
+	err := NewAuthenticator(executor, store).Login(context.Background(), selected)
+	if err == nil || !strings.Contains(err.Error(), "allow-insecure") {
+		t.Fatalf("Login() error = %v, want insecure transport diagnostic", err)
+	}
+	if executor.calls != 0 || store.setCalls != 0 {
+		t.Fatalf("unsafe login calls: Vault=%d store=%d, want none", executor.calls, store.setCalls)
+	}
+}
+
+func TestAuthenticatorLoginAllowsOptedInHTTP(t *testing.T) {
+	executor := &fakeLoginExecutor{result: vaultexec.Result{Stdout: []byte(`{"auth":{"client_token":"synthetic-token"}}`)}}
+	store := &fakeLoginStore{}
+	selected := loginTestProfile()
+	selected.Address = "http://127.0.0.1:8200"
+	selected.AllowInsecure = true
+
+	if err := NewAuthenticator(executor, store).Login(context.Background(), selected); err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	if got, want := executor.invocation.Environment, vaultexec.LoginEnvironment(selected.Address, selected.Namespace); !reflect.DeepEqual(got, want) {
+		t.Fatalf("login environment = %#v, want %#v", got, want)
+	}
+}
+
 func TestAuthenticatorLoginRejectsMalformedOrMissingClientToken(t *testing.T) {
 	tests := []struct {
 		name   string

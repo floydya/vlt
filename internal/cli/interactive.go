@@ -95,7 +95,7 @@ func (s sharedProfileSelector) Select(ctx context.Context, candidates []profile.
 		if namespace == "" {
 			namespace = "-"
 		}
-		label := fmt.Sprintf("%d  %s  %s  %s  %s", index+1, marker, candidate.Name, candidate.Address, namespace)
+		label := fmt.Sprintf("%d  %s  %s  %s  %s  %s", index+1, marker, candidate.Name, candidate.Address, namespace, yesNo(candidate.AllowInsecure))
 		items = append(items, SharedSelectorItem{ID: candidate.Name, Label: label, SearchText: label})
 	}
 	selected, err := s.selector.Select(ctx, "Select a profile", items, active)
@@ -117,13 +117,19 @@ func (f huhProfileForm) Run(ctx context.Context, request ProfileFormRequest) (pr
 		candidate.AuthPath = "oidc"
 	}
 
-	fields := make([]huh.Field, 0, 5)
+	fields := make([]huh.Field, 0, 6)
 	if request.NameEditable {
 		fields = append(fields,
 			huh.NewInput().Title("Name").Value(&candidate.Name).Validate(profileFormInputValidator(candidate.Name, f.accessible, profile.ValidateName)),
 		)
 	}
 	fields = append(fields,
+		huh.NewConfirm().
+			Title("Allow insecure HTTP").
+			Description("Use only for a trusted Vault endpoint that cannot use HTTPS.").
+			Affirmative("Allow").
+			Negative("Require HTTPS").
+			Value(&candidate.AllowInsecure),
 		huh.NewInput().Title("Address").Value(&candidate.Address).Validate(profileFormInputValidator(candidate.Address, f.accessible, profile.ValidateAddress)),
 		huh.NewInput().Title("Username").Value(&candidate.Username).Validate(profileFormValidator(candidate.Username, f.accessible, func(candidate *profile.Profile, value string) {
 			candidate.Username = value

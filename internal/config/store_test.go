@@ -29,7 +29,15 @@ func TestStoreRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "vlt", "profiles.json")
 	store := NewStore(path)
 	want := Configuration{
-		Profiles:      []profile.Profile{testProfile("team-a"), testProfile("Team_B2")},
+		Profiles: []profile.Profile{
+			testProfile("team-a"),
+			func() profile.Profile {
+				candidate := testProfile("Team_B2")
+				candidate.Address = "http://127.0.0.1:8200"
+				candidate.AllowInsecure = true
+				return candidate
+			}(),
+		},
 		ActiveProfile: "Team_B2",
 	}
 
@@ -72,6 +80,7 @@ func TestStoreRoundTrip(t *testing.T) {
 		}
 		assertJSONKeys(t, entry, map[string]bool{
 			"name": true, "address": true, "username": true, "auth_path": true, "namespace": true,
+			"allow_insecure": true,
 		})
 	}
 	lower := strings.ToLower(string(contents))
@@ -79,6 +88,38 @@ func TestStoreRoundTrip(t *testing.T) {
 		if strings.Contains(lower, forbidden) {
 			t.Errorf("serialized configuration contains forbidden term %q: %s", forbidden, contents)
 		}
+	}
+}
+
+func TestStoreLoadsLegacyHTTPSProfileWithoutInsecureOptIn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "profiles.json")
+	contents := `{"version":1,"profiles":[{"name":"team-a","address":"https://vault.example.com","username":"user","auth_path":"oidc","namespace":""}],"active_profile":"team-a"}`
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	configuration, err := NewStore(path).Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(configuration.Profiles) != 1 {
+		t.Fatalf("profile count = %d, want 1", len(configuration.Profiles))
+	}
+	if configuration.Profiles[0].AllowInsecure {
+		t.Fatal("legacy profile AllowInsecure = true, want secure default")
+	}
+}
+
+func TestStoreRejectsLegacyHTTPProfileWithoutInsecureOptIn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "profiles.json")
+	contents := `{"version":1,"profiles":[{"name":"team-a","address":"http://127.0.0.1:8200","username":"user","auth_path":"oidc","namespace":""}],"active_profile":"team-a"}`
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, err := NewStore(path).Load(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "allow-insecure") {
+		t.Fatalf("Load() error = %v, want insecure transport diagnostic", err)
 	}
 }
 

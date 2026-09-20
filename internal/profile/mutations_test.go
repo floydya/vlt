@@ -187,6 +187,40 @@ func TestMutationServiceAddRejectsInvalidProfileBeforeLoadingState(t *testing.T)
 	}
 }
 
+func TestMutationServiceAddRejectsHTTPWithoutOptInBeforeLoadingState(t *testing.T) {
+	configurations := &mutationConfigStore{loadErr: errors.New("load must not run")}
+	credentials := newMutationCredentialStore()
+	authenticator := &mutationAuthenticator{credentials: credentials}
+	service := NewMutationService(configurations, credentials, authenticator)
+	candidate := mutationTestProfile("team-a")
+	candidate.Address = "http://vault.example.com"
+
+	err := service.Add(context.Background(), candidate)
+	if err == nil || !strings.Contains(err.Error(), "allow-insecure") {
+		t.Fatalf("Add() error = %v, want insecure transport diagnostic", err)
+	}
+	if configurations.loadCalls != 0 || configurations.saveCalls != 0 || len(authenticator.calls) != 0 {
+		t.Fatal("insecure Add() reached an external boundary")
+	}
+}
+
+func TestMutationServiceAddPersistsHTTPOptIn(t *testing.T) {
+	configurations := &mutationConfigStore{}
+	credentials := newMutationCredentialStore()
+	authenticator := &mutationAuthenticator{credentials: credentials, token: "synthetic-token"}
+	service := NewMutationService(configurations, credentials, authenticator)
+	candidate := mutationTestProfile("local")
+	candidate.Address = "http://127.0.0.1:8200"
+	candidate.AllowInsecure = true
+
+	if err := service.Add(context.Background(), candidate); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if got := configurations.configuration.Profiles[0]; got != candidate {
+		t.Fatalf("persisted profile = %#v, want %#v", got, candidate)
+	}
+}
+
 func TestMutationServiceAddRestoresStateAfterConfigurationFailure(t *testing.T) {
 	original := Configuration{
 		Profiles:      []Profile{mutationTestProfile("team-a")},
@@ -308,6 +342,69 @@ func TestMutationServiceUpdateChangesOnlySuppliedFieldsAndReauthenticates(t *tes
 	}
 	if !reflect.DeepEqual(authenticator.calls, []Profile{wantProfile}) {
 		t.Fatalf("Login() profiles = %#v, want updated profile", authenticator.calls)
+	}
+}
+
+func TestMutationServiceUpdateCanEnableAndClearHTTPOptIn(t *testing.T) {
+	for _, tt := range []struct {
+		name            string
+		originalAddress string
+		originalAllowed bool
+		updatedAddress  string
+		updatedAllowed  bool
+	}{
+		{
+			name:            "enable with HTTP address",
+			originalAddress: "https://vault.example.com",
+			updatedAddress:  "http://vault.example.com",
+			updatedAllowed:  true,
+		},
+		{
+			name:            "clear with HTTPS address",
+			originalAddress: "http://vault.example.com",
+			originalAllowed: true,
+			updatedAddress:  "https://vault.example.com",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			originalProfile := mutationTestProfile("team-a")
+			originalProfile.Address = tt.originalAddress
+			originalProfile.AllowInsecure = tt.originalAllowed
+			configurations := &mutationConfigStore{configuration: Configuration{Profiles: []Profile{originalProfile}}}
+			credentials := newMutationCredentialStore()
+			credentials.credentials["team-a"] = "original-token"
+			authenticator := &mutationAuthenticator{credentials: credentials, token: "replacement-token"}
+			service := NewMutationService(configurations, credentials, authenticator)
+
+			err := service.Update(context.Background(), "team-a", ProfileChanges{
+				Address:       &tt.updatedAddress,
+				AllowInsecure: &tt.updatedAllowed,
+			})
+			if err != nil {
+				t.Fatalf("Update() error = %v", err)
+			}
+			got := configurations.configuration.Profiles[0]
+			if got.Address != tt.updatedAddress || got.AllowInsecure != tt.updatedAllowed {
+				t.Fatalf("updated profile = %#v, want address %q and allow_insecure %t", got, tt.updatedAddress, tt.updatedAllowed)
+			}
+		})
+	}
+}
+
+func TestMutationServiceUpdateRejectsHTTPWithoutOptInBeforeCredentialAccess(t *testing.T) {
+	original := Configuration{Profiles: []Profile{mutationTestProfile("team-a")}}
+	configurations := &mutationConfigStore{configuration: original}
+	credentials := newMutationCredentialStore()
+	authenticator := &mutationAuthenticator{credentials: credentials}
+	service := NewMutationService(configurations, credentials, authenticator)
+	address := "http://vault.example.com"
+
+	err := service.Update(context.Background(), "team-a", ProfileChanges{Address: &address})
+	if err == nil || !strings.Contains(err.Error(), "allow-insecure") {
+		t.Fatalf("Update() error = %v, want insecure transport diagnostic", err)
+	}
+	if credentials.getCalls != 0 || configurations.saveCalls != 0 || len(authenticator.calls) != 0 {
+		t.Fatal("insecure Update() reached a mutation boundary")
 	}
 }
 
