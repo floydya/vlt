@@ -24,6 +24,8 @@ The unified terminal UX increment passed the focused presentation, selector, dis
 
 The insecure-transport opt-in increment passed focused domain, persistence, mutation, credential, delegation, CLI, completion, and interactive-form tests. It also passed `just check`, `just build-all`, `go mod verify`, `golangci-lint run --build-tags=gms_pure_go ./...`, and `git diff --check`. `govulncheck` was not installed, so that optional final security scan did not run. Tests cover HTTPS defaults, remote and loopback HTTP rejection, persisted opt-in compatibility, enable and clear updates, secret-safe diagnostics, and login, preflight, and delegated execution boundaries.
 
+The secure metadata-path increment passed focused profile, favorite, and shared filesystem tests. It also passed `just check`, `just build-all`, `go mod verify`, `golangci-lint run --build-tags=gms_pure_go ./...`, and `git diff --check`. Tests cover private creation, Unix ownership and permission checks, symbolic links, non-regular files, held-directory replacement, atomic target replacement, store parity, and path redaction. Linux behavior ran locally. macOS and Windows compiled, but their runtime behavior remains unverified.
+
 ## Runtime verification
 
 | Platform | Native credential store | Real OIDC and delegated read | Status |

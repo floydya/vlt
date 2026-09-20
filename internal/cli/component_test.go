@@ -24,7 +24,7 @@ import (
 
 func TestFakeBackedProfileFlowUsesActiveAndOneCommandProfiles(t *testing.T) {
 	ctx := context.Background()
-	configPath := filepath.Join(t.TempDir(), "profiles.json")
+	configPath := filepath.Join(t.TempDir(), "vlt", "profiles.json")
 	profiles := config.NewStore(configPath)
 	credentials := &componentCredentialStore{values: make(map[string]string)}
 	vaultRunner := &componentVaultRunner{tokensByAddress: map[string]string{
@@ -232,7 +232,7 @@ type componentHarness struct {
 func newComponentHarness(t *testing.T, now time.Time) *componentHarness {
 	t.Helper()
 	harness := &componentHarness{
-		configPath:  filepath.Join(t.TempDir(), "profiles.json"),
+		configPath:  filepath.Join(t.TempDir(), "vlt", "profiles.json"),
 		credentials: &componentCredentialStore{values: make(map[string]string)},
 		vaultRunner: &componentVaultRunner{},
 		stdin:       bytes.NewBufferString("input"),

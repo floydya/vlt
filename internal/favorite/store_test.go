@@ -17,6 +17,15 @@ func testFavorite(profileName, operation, path, note string) Favorite {
 	return Favorite{Profile: profileName, Operation: operation, Path: path, Note: note}
 }
 
+func testFavoritePath(t *testing.T) string {
+	t.Helper()
+	directory := filepath.Join(t.TempDir(), "vlt")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatalf("Mkdir(test favorite directory) error = %v", err)
+	}
+	return filepath.Join(directory, "favorites.json")
+}
+
 func TestStoreRoundTripPreservesAcceptedValues(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "vlt", "favorites.json")
 	store := NewStore(path)
@@ -110,7 +119,7 @@ func TestStoreRejectsMalformedInvalidOrDuplicateConfiguration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "favorites.json")
+			path := testFavoritePath(t)
 			if err := os.WriteFile(path, []byte(tt.contents), 0o600); err != nil {
 				t.Fatalf("WriteFile() error = %v", err)
 			}
@@ -126,7 +135,7 @@ func TestStoreRejectsUnsafePermissions(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows does not expose Unix permission bits")
 	}
-	path := filepath.Join(t.TempDir(), "favorites.json")
+	path := testFavoritePath(t)
 	contents := []byte(`{"version":1,"favorites":[]}`)
 	if err := os.WriteFile(path, contents, 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -137,6 +146,126 @@ func TestStoreRejectsUnsafePermissions(t *testing.T) {
 
 	if _, err := NewStore(path).Load(context.Background()); err == nil || !strings.Contains(err.Error(), "permissions") {
 		t.Fatalf("Load() error = %v, want unsafe permissions rejection", err)
+	}
+}
+
+func TestStoreRejectsUnsafeApplicationDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows uses a platform-specific path policy")
+	}
+	directory := filepath.Join(t.TempDir(), "vlt")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	path := filepath.Join(directory, "favorites.json")
+	if err := os.WriteFile(path, []byte(`{"version":1,"favorites":[]}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.Chmod(directory, 0o750); err != nil {
+		t.Fatalf("Chmod() error = %v", err)
+	}
+
+	if _, err := NewStore(path).Load(context.Background()); err == nil || !strings.Contains(err.Error(), "directory permissions") {
+		t.Fatalf("Load() error = %v, want unsafe directory rejection", err)
+	}
+	if err := NewStore(path).Save(context.Background(), Configuration{}); err == nil || !strings.Contains(err.Error(), "directory permissions") {
+		t.Fatalf("Save() error = %v, want unsafe directory rejection", err)
+	}
+}
+
+func TestStoreRejectsUnsafeExistingStateWithoutReplacingIt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows uses a platform-specific path policy")
+	}
+	original := []byte(`{"version":1,"favorites":[]}`)
+	tests := []struct {
+		name  string
+		setup func(*testing.T, string, string) string
+		want  string
+	}{
+		{
+			name: "permissive file",
+			setup: func(t *testing.T, path, _ string) string {
+				t.Helper()
+				if err := os.WriteFile(path, original, 0o640); err != nil {
+					t.Fatalf("WriteFile() error = %v", err)
+				}
+				return path
+			},
+			want: "file permissions",
+		},
+		{
+			name: "file symlink",
+			setup: func(t *testing.T, path, root string) string {
+				t.Helper()
+				target := filepath.Join(root, "outside.json")
+				if err := os.WriteFile(target, original, 0o600); err != nil {
+					t.Fatalf("WriteFile(target) error = %v", err)
+				}
+				if err := os.Symlink(target, path); err != nil {
+					t.Fatalf("Symlink() error = %v", err)
+				}
+				return target
+			},
+			want: "symbolic link",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			directory := filepath.Join(root, "vlt")
+			if err := os.Mkdir(directory, 0o700); err != nil {
+				t.Fatalf("Mkdir() error = %v", err)
+			}
+			path := filepath.Join(directory, "favorites.json")
+			preservedPath := tt.setup(t, path, root)
+			before, err := os.ReadFile(preservedPath)
+			if err != nil {
+				t.Fatalf("ReadFile() error = %v", err)
+			}
+
+			err = NewStore(path).Save(context.Background(), Configuration{Favorites: []Favorite{testFavorite("team-a", OperationRead, "secret/a", "")}})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Save() error = %v, want %q", err, tt.want)
+			}
+			after, readErr := os.ReadFile(preservedPath)
+			if readErr != nil {
+				t.Fatalf("ReadFile() after Save error = %v", readErr)
+			}
+			if !bytes.Equal(after, before) {
+				t.Fatalf("unsafe existing state changed\nbefore: %s\nafter: %s", before, after)
+			}
+		})
+	}
+}
+
+func TestStoreRejectsSymlinkedApplicationDirectoryAndNonRegularFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows symlink creation requires additional privileges")
+	}
+	root := t.TempDir()
+	realDirectory := filepath.Join(root, "real")
+	if err := os.Mkdir(realDirectory, 0o700); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(realDirectory, "favorites.json"), []byte(`{"version":1,"favorites":[]}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	linkedDirectory := filepath.Join(root, "linked")
+	if err := os.Symlink(realDirectory, linkedDirectory); err != nil {
+		t.Fatalf("Symlink(directory) error = %v", err)
+	}
+	if _, err := NewStore(filepath.Join(linkedDirectory, "favorites.json")).Load(context.Background()); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("Load() through directory symlink error = %v, want symbolic link rejection", err)
+	}
+
+	directoryPath := filepath.Join(realDirectory, "metadata-directory")
+	if err := os.Mkdir(directoryPath, 0o700); err != nil {
+		t.Fatalf("Mkdir(metadata path) error = %v", err)
+	}
+	if _, err := NewStore(directoryPath).Load(context.Background()); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("Load() directory error = %v, want non-regular rejection", err)
 	}
 }
 

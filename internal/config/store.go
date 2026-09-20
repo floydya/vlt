@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"vlt/internal/profile"
+	"vlt/internal/securefile"
 )
 
 const schemaVersion = 1
@@ -42,11 +43,7 @@ type Store struct {
 
 // NewStore creates a configuration store for path.
 func NewStore(path string) *Store {
-	return &Store{
-		path:          path,
-		renameFile:    os.Rename,
-		syncDirectory: syncDirectory,
-	}
+	return &Store{path: path}
 }
 
 // Load reads and strictly validates the configuration. A missing file is an
@@ -55,7 +52,16 @@ func (s *Store) Load(ctx context.Context) (Configuration, error) {
 	if err := ctx.Err(); err != nil {
 		return Configuration{}, err
 	}
-	file, err := os.Open(s.path)
+	directory, err := securefile.OpenDirectory(filepath.Dir(s.path), false)
+	if errors.Is(err, os.ErrNotExist) {
+		return Configuration{}, nil
+	}
+	if err != nil {
+		return Configuration{}, fmt.Errorf("open configuration directory: %w", err)
+	}
+	defer func() { _ = directory.Close() }()
+
+	file, err := directory.OpenRegular(filepath.Base(s.path))
 	if errors.Is(err, os.ErrNotExist) {
 		return Configuration{}, nil
 	}
@@ -152,31 +158,30 @@ func (s *Store) Save(ctx context.Context, configuration Configuration) error {
 	contents = append(contents, '\n')
 
 	directory := filepath.Dir(s.path)
-	if err := makePrivateDirectories(directory); err != nil {
+	secureDirectory, err := securefile.OpenDirectory(directory, true)
+	if err != nil {
 		return fmt.Errorf("create configuration directory: %w", err)
+	}
+	defer func() { _ = secureDirectory.Close() }()
+	targetName := filepath.Base(s.path)
+	if err := secureDirectory.ValidateTarget(targetName); err != nil {
+		return fmt.Errorf("inspect existing configuration: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	temporary, err := os.CreateTemp(directory, "."+filepath.Base(s.path)+"-*.tmp")
+	temporary, temporaryName, err := secureDirectory.CreateTemp(targetName)
 	if err != nil {
 		return fmt.Errorf("create temporary configuration: %w", err)
 	}
-	temporaryPath := temporary.Name()
-	keepTemporary := false
 	defer func() {
-		if !keepTemporary {
-			_ = os.Remove(temporaryPath)
-		}
+		_ = secureDirectory.Remove(temporaryName)
 	}()
 
 	fail := func(operation string, operationErr error) error {
 		_ = temporary.Close()
 		return fmt.Errorf("%s configuration: %w", operation, operationErr)
-	}
-	if err := temporary.Chmod(0o600); err != nil {
-		return fail("set temporary permissions for", err)
 	}
 	if _, err := temporary.Write(contents); err != nil {
 		return fail("write temporary", err)
@@ -190,11 +195,18 @@ func (s *Store) Save(ctx context.Context, configuration Configuration) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := s.renameFile(temporaryPath, s.path); err != nil {
+	replace := secureDirectory.Replace
+	if s.renameFile != nil {
+		replace = s.renameFile
+	}
+	if err := replace(temporaryName, targetName); err != nil {
 		return fmt.Errorf("rename temporary configuration: %w", err)
 	}
-	keepTemporary = true // The temporary path is now the destination path.
-	if err := s.syncDirectory(directory); err != nil {
+	sync := func(string) error { return secureDirectory.Sync() }
+	if s.syncDirectory != nil {
+		sync = s.syncDirectory
+	}
+	if err := sync(directory); err != nil {
 		return fmt.Errorf("configuration was replaced but sync containing directory failed: %w", err)
 	}
 	return nil
@@ -217,33 +229,6 @@ func validate(configuration Configuration) error {
 		}
 		if _, found := names[configuration.ActiveProfile]; !found {
 			return errors.New("active profile does not exist")
-		}
-	}
-	return nil
-}
-
-func makePrivateDirectories(path string) error {
-	var missing []string
-	for current := path; ; current = filepath.Dir(current) {
-		_, err := os.Stat(current)
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		missing = append(missing, current)
-		parent := filepath.Dir(current)
-		if parent == current {
-			break
-		}
-	}
-	if err := os.MkdirAll(path, 0o700); err != nil {
-		return err
-	}
-	for _, directory := range missing {
-		if err := os.Chmod(directory, 0o700); err != nil {
-			return err
 		}
 	}
 	return nil

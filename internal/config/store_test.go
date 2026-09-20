@@ -25,6 +25,15 @@ func testProfile(name string) profile.Profile {
 	}
 }
 
+func testConfigPath(t *testing.T) string {
+	t.Helper()
+	directory := filepath.Join(t.TempDir(), "vlt")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatalf("Mkdir(test config directory) error = %v", err)
+	}
+	return filepath.Join(directory, "profiles.json")
+}
+
 func TestStoreRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "vlt", "profiles.json")
 	store := NewStore(path)
@@ -92,7 +101,7 @@ func TestStoreRoundTrip(t *testing.T) {
 }
 
 func TestStoreLoadsLegacyHTTPSProfileWithoutInsecureOptIn(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "profiles.json")
+	path := testConfigPath(t)
 	contents := `{"version":1,"profiles":[{"name":"team-a","address":"https://vault.example.com","username":"user","auth_path":"oidc","namespace":""}],"active_profile":"team-a"}`
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -111,7 +120,7 @@ func TestStoreLoadsLegacyHTTPSProfileWithoutInsecureOptIn(t *testing.T) {
 }
 
 func TestStoreRejectsLegacyHTTPProfileWithoutInsecureOptIn(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "profiles.json")
+	path := testConfigPath(t)
 	contents := `{"version":1,"profiles":[{"name":"team-a","address":"http://127.0.0.1:8200","username":"user","auth_path":"oidc","namespace":""}],"active_profile":"team-a"}`
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -167,7 +176,7 @@ func TestStoreRejectsMalformedOrUnsafeConfiguration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "profiles.json")
+			path := testConfigPath(t)
 			if err := os.WriteFile(path, []byte(tt.contents), 0o600); err != nil {
 				t.Fatalf("WriteFile() error = %v", err)
 			}
@@ -206,7 +215,7 @@ func TestStoreLoadErrorsDoNotExposeUntrustedValues(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "profiles.json")
+			path := testConfigPath(t)
 			if err := os.WriteFile(path, []byte(tt.contents), 0o600); err != nil {
 				t.Fatalf("WriteFile() error = %v", err)
 			}
@@ -218,6 +227,149 @@ func TestStoreLoadErrorsDoNotExposeUntrustedValues(t *testing.T) {
 				t.Fatalf("Load() error exposed configuration content: %q", err)
 			}
 		})
+	}
+}
+
+func TestStoreRejectsUnsafeApplicationDirectoryAndFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows uses a platform-specific path policy")
+	}
+	valid := []byte(`{"version":1,"profiles":[],"active_profile":""}`)
+	tests := []struct {
+		name          string
+		directoryMode os.FileMode
+		fileMode      os.FileMode
+		want          string
+	}{
+		{name: "group-accessible directory", directoryMode: 0o750, fileMode: 0o600, want: "directory permissions"},
+		{name: "group-readable file", directoryMode: 0o700, fileMode: 0o640, want: "file permissions"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			directory := filepath.Join(t.TempDir(), "vlt")
+			if err := os.Mkdir(directory, 0o700); err != nil {
+				t.Fatalf("Mkdir() error = %v", err)
+			}
+			path := filepath.Join(directory, "profiles.json")
+			if err := os.WriteFile(path, valid, 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			if err := os.Chmod(path, tt.fileMode); err != nil {
+				t.Fatalf("Chmod(file) error = %v", err)
+			}
+			if err := os.Chmod(directory, tt.directoryMode); err != nil {
+				t.Fatalf("Chmod(directory) error = %v", err)
+			}
+
+			_, err := NewStore(path).Load(context.Background())
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Load() error = %v, want %q", err, tt.want)
+			}
+			if tt.directoryMode != 0o700 {
+				err = NewStore(path).Save(context.Background(), Configuration{})
+				if err == nil || !strings.Contains(err.Error(), tt.want) {
+					t.Fatalf("Save() error = %v, want %q", err, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestStoreRejectsUnsafeExistingStateWithoutReplacingIt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows uses a platform-specific path policy")
+	}
+	original := []byte(`{"version":1,"profiles":[],"active_profile":""}`)
+	tests := []struct {
+		name  string
+		setup func(*testing.T, string, string) string
+		want  string
+	}{
+		{
+			name: "permissive file",
+			setup: func(t *testing.T, path, _ string) string {
+				t.Helper()
+				if err := os.WriteFile(path, original, 0o640); err != nil {
+					t.Fatalf("WriteFile() error = %v", err)
+				}
+				return path
+			},
+			want: "file permissions",
+		},
+		{
+			name: "file symlink",
+			setup: func(t *testing.T, path, root string) string {
+				t.Helper()
+				target := filepath.Join(root, "outside.json")
+				if err := os.WriteFile(target, original, 0o600); err != nil {
+					t.Fatalf("WriteFile(target) error = %v", err)
+				}
+				if err := os.Symlink(target, path); err != nil {
+					t.Fatalf("Symlink() error = %v", err)
+				}
+				return target
+			},
+			want: "symbolic link",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			directory := filepath.Join(root, "vlt")
+			if err := os.Mkdir(directory, 0o700); err != nil {
+				t.Fatalf("Mkdir() error = %v", err)
+			}
+			path := filepath.Join(directory, "profiles.json")
+			preservedPath := tt.setup(t, path, root)
+			before, err := os.ReadFile(preservedPath)
+			if err != nil {
+				t.Fatalf("ReadFile() error = %v", err)
+			}
+
+			err = NewStore(path).Save(context.Background(), Configuration{Profiles: []profile.Profile{testProfile("team-a")}})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Save() error = %v, want %q", err, tt.want)
+			}
+			after, readErr := os.ReadFile(preservedPath)
+			if readErr != nil {
+				t.Fatalf("ReadFile() after Save error = %v", readErr)
+			}
+			if !bytes.Equal(after, before) {
+				t.Fatalf("unsafe existing state changed\nbefore: %s\nafter: %s", before, after)
+			}
+		})
+	}
+}
+
+func TestStoreRejectsSymlinkedApplicationDirectoryAndNonRegularFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows symlink creation requires additional privileges")
+	}
+	root := t.TempDir()
+	realDirectory := filepath.Join(root, "real")
+	if err := os.Mkdir(realDirectory, 0o700); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	valid := []byte(`{"version":1,"profiles":[],"active_profile":""}`)
+	if err := os.WriteFile(filepath.Join(realDirectory, "profiles.json"), valid, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	linkedDirectory := filepath.Join(root, "linked")
+	if err := os.Symlink(realDirectory, linkedDirectory); err != nil {
+		t.Fatalf("Symlink(directory) error = %v", err)
+	}
+	if _, err := NewStore(filepath.Join(linkedDirectory, "profiles.json")).Load(context.Background()); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("Load() through directory symlink error = %v, want symbolic link rejection", err)
+	}
+
+	directoryPath := filepath.Join(realDirectory, "metadata-directory")
+	if err := os.Mkdir(directoryPath, 0o700); err != nil {
+		t.Fatalf("Mkdir(metadata path) error = %v", err)
+	}
+	if _, err := NewStore(directoryPath).Load(context.Background()); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("Load() directory error = %v, want non-regular rejection", err)
 	}
 }
 

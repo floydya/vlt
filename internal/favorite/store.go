@@ -8,8 +8,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
+
+	"vlt/internal/securefile"
 )
 
 const schemaVersion = 1
@@ -37,18 +38,23 @@ type Store struct {
 }
 
 func NewStore(path string) *Store {
-	return &Store{
-		path:          path,
-		renameFile:    os.Rename,
-		syncDirectory: syncDirectory,
-	}
+	return &Store{path: path}
 }
 
 func (s *Store) Load(ctx context.Context) (Configuration, error) {
 	if err := ctx.Err(); err != nil {
 		return Configuration{}, err
 	}
-	file, err := os.Open(s.path)
+	directory, err := securefile.OpenDirectory(filepath.Dir(s.path), false)
+	if errors.Is(err, os.ErrNotExist) {
+		return Configuration{}, nil
+	}
+	if err != nil {
+		return Configuration{}, fmt.Errorf("open favorite directory: %w", err)
+	}
+	defer func() { _ = directory.Close() }()
+
+	file, err := directory.OpenRegular(filepath.Base(s.path))
 	if errors.Is(err, os.ErrNotExist) {
 		return Configuration{}, nil
 	}
@@ -56,16 +62,6 @@ func (s *Store) Load(ctx context.Context) (Configuration, error) {
 		return Configuration{}, fmt.Errorf("open favorites: %w", err)
 	}
 	defer func() { _ = file.Close() }()
-
-	if runtime.GOOS != "windows" {
-		info, err := file.Stat()
-		if err != nil {
-			return Configuration{}, fmt.Errorf("inspect favorite permissions: %w", err)
-		}
-		if info.Mode().Perm()&0o077 != 0 {
-			return Configuration{}, errors.New("favorite file permissions must not allow group or other access")
-		}
-	}
 
 	decoder := json.NewDecoder(file)
 	decoder.DisallowUnknownFields()
@@ -113,26 +109,28 @@ func (s *Store) Save(ctx context.Context, configuration Configuration) error {
 	contents = append(contents, '\n')
 
 	directory := filepath.Dir(s.path)
-	if err := makePrivateDirectories(directory); err != nil {
+	secureDirectory, err := securefile.OpenDirectory(directory, true)
+	if err != nil {
 		return fmt.Errorf("create favorite directory: %w", err)
+	}
+	defer func() { _ = secureDirectory.Close() }()
+	targetName := filepath.Base(s.path)
+	if err := secureDirectory.ValidateTarget(targetName); err != nil {
+		return fmt.Errorf("inspect existing favorites: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	temporary, err := os.CreateTemp(directory, "."+filepath.Base(s.path)+"-*.tmp")
+	temporary, temporaryName, err := secureDirectory.CreateTemp(targetName)
 	if err != nil {
 		return fmt.Errorf("create temporary favorites: %w", err)
 	}
-	temporaryPath := temporary.Name()
-	defer func() { _ = os.Remove(temporaryPath) }()
+	defer func() { _ = secureDirectory.Remove(temporaryName) }()
 
 	fail := func(operation string, operationErr error) error {
 		_ = temporary.Close()
 		return fmt.Errorf("%s favorites: %w", operation, operationErr)
-	}
-	if err := temporary.Chmod(0o600); err != nil {
-		return fail("set temporary permissions for", err)
 	}
 	if _, err := temporary.Write(contents); err != nil {
 		return fail("write temporary", err)
@@ -146,10 +144,18 @@ func (s *Store) Save(ctx context.Context, configuration Configuration) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := s.renameFile(temporaryPath, s.path); err != nil {
+	replace := secureDirectory.Replace
+	if s.renameFile != nil {
+		replace = s.renameFile
+	}
+	if err := replace(temporaryName, targetName); err != nil {
 		return fmt.Errorf("rename temporary favorites: %w", err)
 	}
-	if err := s.syncDirectory(directory); err != nil {
+	sync := func(string) error { return secureDirectory.Sync() }
+	if s.syncDirectory != nil {
+		sync = s.syncDirectory
+	}
+	if err := sync(directory); err != nil {
 		return fmt.Errorf("favorites were replaced but sync containing directory failed: %w", err)
 	}
 	return nil
@@ -168,43 +174,4 @@ func validate(configuration Configuration) error {
 		identities[identity] = struct{}{}
 	}
 	return nil
-}
-
-func makePrivateDirectories(path string) error {
-	var missing []string
-	for current := path; ; current = filepath.Dir(current) {
-		_, err := os.Stat(current)
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		missing = append(missing, current)
-		parent := filepath.Dir(current)
-		if parent == current {
-			break
-		}
-	}
-	if err := os.MkdirAll(path, 0o700); err != nil {
-		return err
-	}
-	for _, directory := range missing {
-		if err := os.Chmod(directory, 0o700); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func syncDirectory(path string) error {
-	if runtime.GOOS == "windows" {
-		return nil
-	}
-	directory, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = directory.Close() }()
-	return directory.Sync()
 }

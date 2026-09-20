@@ -445,7 +445,8 @@ Behavior:
 - Tokens must be handled as secrets at every boundary.
 - Error messages and debug output must be redacted before display.
 - Config writes must be atomic to avoid truncation or partial profile state.
-- On Unix-like systems, newly created config directories and files use user-only permissions (`0700` directories and `0600` files). On Windows, files rely on the current user's standard profile-directory ACLs.
+- On Unix-like systems, newly created config directories and files use user-only permissions (`0700` directories and `0600` files). Profile and favorite storage rejects application directories or metadata files with group or other access, an unexpected owner, a symbolic link, or a non-regular type.
+- On Windows, profile and favorite storage relies on the current user's standard profile-directory ACLs. It still rejects symbolic links and non-regular metadata files and performs reads and atomic replacements through one held application-directory handle.
 - Subprocess arguments must be passed as an argument vector, never through shell interpolation.
 - URLs and profile inputs must be validated before persistence or subprocess execution.
 - Automated tests must prove that normal and failing paths do not print tokens.
