@@ -445,6 +445,7 @@ Behavior:
 - Tokens must be handled as secrets at every boundary.
 - Error messages and debug output must be redacted before display.
 - Config writes must be atomic to avoid truncation or partial profile state.
+- Profile, favorite, active-selection, and cascade mutations share one advisory lock in the private `vlt` directory. The lock covers metadata, authentication, credential changes, compensation, and rollback. Waiting honors command cancellation. Read-only and delegated Vault commands do not acquire this lock.
 - On Unix-like systems, newly created config directories and files use user-only permissions (`0700` directories and `0600` files). Profile and favorite storage rejects application directories or metadata files with group or other access, an unexpected owner, a symbolic link, or a non-regular type.
 - On Windows, profile and favorite storage relies on the current user's standard profile-directory ACLs. It still rejects symbolic links and non-regular metadata files and performs reads and atomic replacements through one held application-directory handle.
 - Subprocess arguments must be passed as an argument vector, never through shell interpolation.
@@ -517,6 +518,10 @@ internal/favorite/
   ...                     Favorite model, validation, ordering, persistence, and operations
 internal/config/
   ...                     Atomic platform-aware configuration persistence
+internal/securefile/
+  ...                     Trusted directory and metadata file operations
+internal/statelock/
+  ...                     Cross-process application mutation lock
 internal/credential/
   ...                     Keyring contract, token preflight, login, and renewal
 internal/vaultexec/

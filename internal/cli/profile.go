@@ -149,6 +149,7 @@ type ProfileCascade interface {
 type ProfileDependencies struct {
 	Profiles         ConfigurationLoader
 	Mutations        ProfileMutator
+	Lock             MutationLock
 	Output           io.Writer
 	Terminal         Terminal
 	Selector         ProfileSelector
@@ -164,6 +165,7 @@ type ActiveProfileStore interface {
 
 type SwitchDependencies struct {
 	Profiles ActiveProfileStore
+	Lock     MutationLock
 	Output   io.Writer
 	Terminal Terminal
 	Selector ProfileSelector
@@ -233,7 +235,9 @@ func NewSwitchHandler(dependencies SwitchDependencies) Handler {
 				return safeManagementError(fmt.Errorf("select profile %q: %w", args[0], err))
 			}
 		}
-		if err := dependencies.Profiles.SetActiveProfile(ctx, selected.Name); err != nil {
+		if err := withMutationLock(ctx, dependencies.Lock, func(lockContext context.Context) error {
+			return dependencies.Profiles.SetActiveProfile(lockContext, selected.Name)
+		}); err != nil {
 			return safeManagementError(fmt.Errorf("switch to profile %q: %w", selected.Name, err))
 		}
 		status := newPresentation(dependencies.Terminal).status(fmt.Sprintf("Switched to profile %q.", selected.Name))
@@ -281,7 +285,9 @@ func profileAdd(ctx context.Context, dependencies ProfileDependencies, args []st
 			return interactiveOperationError(fmt.Errorf("add profile: %w", err))
 		}
 	}
-	if err := dependencies.Mutations.Add(ctx, candidate); err != nil {
+	if err := withMutationLock(ctx, dependencies.Lock, func(lockContext context.Context) error {
+		return dependencies.Mutations.Add(lockContext, candidate)
+	}); err != nil {
 		return safeManagementError(err)
 	}
 	status := newPresentation(dependencies.Terminal).status(fmt.Sprintf("Added profile %q.", candidate.Name))
@@ -438,7 +444,9 @@ func profileUpdateCommand(ctx context.Context, dependencies ProfileDependencies,
 		name = current.Name
 		changes = profileChangesBetween(current, completed)
 	}
-	if err := dependencies.Mutations.Update(ctx, name, changes); err != nil {
+	if err := withMutationLock(ctx, dependencies.Lock, func(lockContext context.Context) error {
+		return dependencies.Mutations.Update(lockContext, name, changes)
+	}); err != nil {
 		return safeManagementError(err)
 	}
 	status := newPresentation(dependencies.Terminal).status(fmt.Sprintf("Updated profile %q.", name))
@@ -567,11 +575,13 @@ func profileRemove(ctx context.Context, dependencies ProfileDependencies, args [
 			return nil
 		}
 	}
-	if dependencies.Cascade != nil {
-		if err := dependencies.Cascade.Remove(ctx, name, removeFavorites || linkedCount > 0); err != nil {
-			return safeManagementError(err)
+	err := withMutationLock(ctx, dependencies.Lock, func(lockContext context.Context) error {
+		if dependencies.Cascade != nil {
+			return dependencies.Cascade.Remove(lockContext, name, removeFavorites || linkedCount > 0)
 		}
-	} else if err := dependencies.Mutations.Remove(ctx, name); err != nil {
+		return dependencies.Mutations.Remove(lockContext, name)
+	})
+	if err != nil {
 		return safeManagementError(err)
 	}
 	status := newPresentation(dependencies.Terminal).status(fmt.Sprintf("Removed profile %q.", name))

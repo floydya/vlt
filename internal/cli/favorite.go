@@ -113,6 +113,7 @@ type FavoriteDependencies struct {
 	Profiles           ConfigurationLoader
 	Favorites          FavoriteConfigurationLoader
 	Mutations          FavoriteMutator
+	Lock               MutationLock
 	Output             io.Writer
 	Terminal           Terminal
 	Selector           FavoriteSelector
@@ -245,7 +246,9 @@ func favoriteAdd(ctx context.Context, dependencies FavoriteDependencies, args []
 			return interactiveOperationError(fmt.Errorf("add favorite: %w", err))
 		}
 	}
-	if err := dependencies.Mutations.Add(ctx, candidate); err != nil {
+	if err := withMutationLock(ctx, dependencies.Lock, func(lockContext context.Context) error {
+		return dependencies.Mutations.Add(lockContext, candidate)
+	}); err != nil {
 		return safeManagementError(err)
 	}
 	status := newPresentation(dependencies.Terminal).status(fmt.Sprintf(
@@ -359,7 +362,9 @@ func favoriteUpdate(ctx context.Context, dependencies FavoriteDependencies, args
 		selector = selection.selector
 		changes = favoriteChangesBetween(selection.favorite, updated)
 	}
-	if err := dependencies.Mutations.Update(ctx, selector, changes); err != nil {
+	if err := withMutationLock(ctx, dependencies.Lock, func(lockContext context.Context) error {
+		return dependencies.Mutations.Update(lockContext, selector, changes)
+	}); err != nil {
 		return safeManagementError(err)
 	}
 	status := newPresentation(dependencies.Terminal).status(fmt.Sprintf("Updated favorite %s.", selector))
@@ -405,7 +410,9 @@ func favoriteRemove(ctx context.Context, dependencies FavoriteDependencies, args
 		}
 		selector = selection.selector
 	}
-	if err := dependencies.Mutations.Remove(ctx, selector); err != nil {
+	if err := withMutationLock(ctx, dependencies.Lock, func(lockContext context.Context) error {
+		return dependencies.Mutations.Remove(lockContext, selector)
+	}); err != nil {
 		return safeManagementError(err)
 	}
 	status := newPresentation(dependencies.Terminal).status(fmt.Sprintf("Removed favorite %s.", selector))

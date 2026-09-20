@@ -9,6 +9,17 @@ import (
 // Handler runs one command family with the arguments following its route.
 type Handler func(context.Context, []string) error
 
+type MutationLock interface {
+	WithLock(context.Context, func(context.Context) error) error
+}
+
+func withMutationLock(ctx context.Context, lock MutationLock, operation func(context.Context) error) error {
+	if lock == nil {
+		return operation(ctx)
+	}
+	return lock.WithLock(ctx, operation)
+}
+
 type AutomaticHelp struct {
 	Text string
 }

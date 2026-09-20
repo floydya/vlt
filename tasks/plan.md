@@ -352,3 +352,57 @@ Planning gate: `vlt-47y.1` — Plan favorite shortcuts implementation
 ### Open Questions
 
 None. The project owner approved this plan on 2026-09-19.
+
+## Security Hardening Review Follow-up
+
+**Status:** Approved on 2026-09-20
+
+### Overview
+
+Address the three repository-wide findings from the five-axis and security review as separate Beads tasks. Keep HTTPS as the default, allow HTTP only through a persisted per-profile opt-in, reject untrusted configuration paths before they can influence Vault execution, and serialize state-changing workflows across processes.
+
+### Architecture Decisions
+
+- Store an explicit per-profile insecure-transport choice and expose it as `--allow-insecure`. HTTPS needs no opt-in. HTTP remains available for local test Vaults.
+- Validate the address and insecure choice together at the profile boundary. Show the insecure state in profile output and support enabling or clearing it through explicit and interactive update flows.
+- Apply one shared secure-file policy to profile and favorite metadata. Reject unsafe existing state instead of silently changing ownership or permissions.
+- Use one application-wide advisory lock in the private `vlt` configuration directory. Acquire it once around complete mutations and compensating rollback so cascade workflows cannot deadlock.
+- Implement each task with RED/GREEN TDD. Keep each task independently reviewable and run its focused and repository-wide verification before closure.
+
+### Dependency Graph
+
+```text
+vlt-8xr  explicit insecure HTTP opt-in
+
+vlt-quo  trusted configuration paths
+   └─ vlt-op6  cross-process mutation lock
+```
+
+`vlt-8xr` and `vlt-quo` can proceed independently. `vlt-op6` waits for `vlt-quo` because its lock file must live in a trusted private directory.
+
+### Task List
+
+1. `vlt-8xr` — Require explicit opt-in for insecure Vault HTTP
+2. `vlt-quo` — Reject unsafe configuration paths and permissions
+3. `vlt-op6` — Serialize cross-process state mutations
+
+### Verification Checkpoint
+
+- Run focused tests for each task before its full suite.
+- Run `just check`, `just build-all`, `golangci-lint run --build-tags=gms_pure_go ./...`, `go mod verify`, and `git diff --check`.
+- Run `govulncheck ./...` and the Nix flake checks before final readiness.
+- Review configuration migration, secret-safe diagnostics, HTTP opt-in visibility, and deterministic concurrency evidence.
+- Obtain approval before committing or pushing.
+
+### Risks and Mitigations
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Existing profiles become unreadable after adding the opt-in field | High | Keep the field backward-compatible and default it to secure HTTPS-only behavior. |
+| A configuration attacker enables insecure transport | High | Complete trusted-path enforcement independently and before the locking task. |
+| Holding the state lock through OIDC blocks another mutation | Medium | Lock only state-changing workflows, honor cancellation while waiting, and keep read-only and delegated commands concurrent. |
+| File ownership and locking differ across operating systems | High | Isolate platform-specific code, test supported behavior, and cross-build Linux, macOS, and Windows. |
+
+### Open Questions
+
+None. The proposed CLI contract is a persisted per-profile `--allow-insecure` opt-in that can be cleared during profile update.

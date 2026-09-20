@@ -17,6 +17,7 @@ import (
 	"vlt/internal/credential"
 	"vlt/internal/favorite"
 	"vlt/internal/profile"
+	"vlt/internal/statelock"
 	"vlt/internal/vaultexec"
 )
 
@@ -47,6 +48,7 @@ func newDispatcher(stdin io.Reader, stdout, stderr io.Writer) (*cli.Dispatcher, 
 func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.Writer) *cli.Dispatcher {
 	profiles := config.NewStore(filepath.Join(configDirectory, "vlt", "profiles.json"))
 	favorites := favorite.NewStore(filepath.Join(configDirectory, "vlt", "favorites.json"))
+	mutationLock := statelock.New(filepath.Join(configDirectory, "vlt"))
 	terminal := cli.NewTerminal(stdin, stdout, os.Environ())
 	sharedSelector := cli.NewSharedSelector(stdin, stdout, terminal)
 	selector := cli.NewSharedProfileSelector(sharedSelector)
@@ -75,12 +77,12 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 	return cli.NewDispatcher(cli.Dependencies{
 		Output: stdout,
 		Profile: cli.NewProfileHandler(cli.ProfileDependencies{
-			Profiles: profiles, Mutations: mutations, Output: stdout, Terminal: terminal,
+			Profiles: profiles, Mutations: mutations, Lock: mutationLock, Output: stdout, Terminal: terminal,
 			Selector: selector, Form: form, RemovalConfirmer: removalConfirmer, Cascade: cascade,
 		}),
-		Switch: cli.NewSwitchHandler(cli.SwitchDependencies{Profiles: profiles, Output: stdout, Terminal: terminal, Selector: selector}),
+		Switch: cli.NewSwitchHandler(cli.SwitchDependencies{Profiles: profiles, Lock: mutationLock, Output: stdout, Terminal: terminal, Selector: selector}),
 		Favorite: cli.NewFavoriteHandler(cli.FavoriteDependencies{
-			Profiles: profiles, Favorites: favorites, Mutations: favoriteMutations, Output: stdout, Terminal: terminal,
+			Profiles: profiles, Favorites: favorites, Mutations: favoriteMutations, Lock: mutationLock, Output: stdout, Terminal: terminal,
 			Selector: favoriteSelector, Vault: delegate, ManagementSelector: favoriteManagementSelector,
 			Form: favoriteForm, RemovalConfirmer: favoriteRemovalConfirmer,
 		}),

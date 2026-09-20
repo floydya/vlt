@@ -72,7 +72,8 @@ Vault profiles use HTTPS by default. To connect to a trusted local test Vault ov
 - Vault subprocesses use argument vectors rather than shell interpolation.
 - There is no plaintext or file-based credential fallback.
 - HTTP Vault addresses require an explicit per-profile `--allow-insecure` opt-in.
-- On Unix, profile and favorite metadata requires a user-owned private `vlt` directory and private regular files. Windows relies on the current user's profile-directory ACLs. Both platforms reject symbolic links and non-regular metadata files.
+- On Unix, profile and favorite metadata files require a user-owned private `vlt` directory and private regular files. Windows relies on the current user's profile-directory ACLs. Both platforms reject symbolic links and non-regular metadata files.
+- State-changing commands share one application lock. Concurrent reads and delegated Vault commands remain unlocked.
 - Delegated operations are never automatically retried.
 
 Do not use real credentials in tests, fixtures, bug reports, or commits.

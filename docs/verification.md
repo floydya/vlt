@@ -26,6 +26,8 @@ The insecure-transport opt-in increment passed focused domain, persistence, muta
 
 The secure metadata-path increment passed focused profile, favorite, and shared filesystem tests. It also passed `just check`, `just build-all`, `go mod verify`, `golangci-lint run --build-tags=gms_pure_go ./...`, and `git diff --check`. Tests cover private creation, Unix ownership and permission checks, symbolic links, non-regular files, held-directory replacement, atomic target replacement, store parity, and path redaction. Linux behavior ran locally. macOS and Windows compiled, but their runtime behavior remains unverified.
 
+The cross-process mutation-lock increment passed focused lock and deterministic concurrency tests. It also passed `just check`, `just build-all`, `go mod verify`, `golangci-lint run --build-tags=gms_pure_go ./...`, and `git diff --check`. Tests cover independent profile and favorite service instances, active selection racing with profile creation, every mutation route, unlocked read-only routes, cancellation, private lock-file creation, unsafe lock paths, and error redaction. Linux locking ran locally. macOS and Windows compiled, but their lock runtime behavior remains unverified.
+
 ## Runtime verification
 
 | Platform | Native credential store | Real OIDC and delegated read | Status |

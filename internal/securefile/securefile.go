@@ -108,6 +108,67 @@ func (d *Directory) OpenRegular(name string) (*os.File, error) {
 	return file, nil
 }
 
+func (d *Directory) OpenOrCreateRegular(name string) (*os.File, error) {
+	if err := validateName(name); err != nil {
+		return nil, err
+	}
+	for range temporaryNameAttempts {
+		before, err := d.root.Lstat(name)
+		created := errors.Is(err, fs.ErrNotExist)
+		if err != nil && !created {
+			return nil, filesystemError("inspect metadata file", err)
+		}
+		if !created {
+			if err := validateFile(before); err != nil {
+				return nil, err
+			}
+		}
+
+		flags := os.O_RDWR
+		if created {
+			flags |= os.O_CREATE | os.O_EXCL
+		}
+		file, err := d.root.OpenFile(name, flags, 0o600)
+		if created && errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return nil, filesystemError("open metadata file", err)
+		}
+		closeOnError := func(err error) (*os.File, error) {
+			_ = file.Close()
+			return nil, err
+		}
+		if created {
+			if err := file.Chmod(0o600); err != nil {
+				return closeOnError(filesystemError("set metadata file permissions", err))
+			}
+		}
+		opened, err := file.Stat()
+		if err != nil {
+			return closeOnError(filesystemError("inspect opened metadata file", err))
+		}
+		if err := validateFile(opened); err != nil {
+			return closeOnError(err)
+		}
+		if !created && !os.SameFile(before, opened) {
+			return closeOnError(errors.New("metadata file changed while opening"))
+		}
+		current, err := d.root.Lstat(name)
+		if err != nil {
+			return closeOnError(filesystemError("reinspect metadata file", err))
+		}
+		if err := validateFile(current); err != nil {
+			return closeOnError(err)
+		}
+		if !os.SameFile(opened, current) {
+			return closeOnError(errors.New("metadata file changed while opening"))
+		}
+		return file, nil
+	}
+	return nil, errors.New("open metadata file: concurrent creation did not settle")
+}
+
 func (d *Directory) ValidateTarget(name string) error {
 	if err := validateName(name); err != nil {
 		return err
