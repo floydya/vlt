@@ -33,12 +33,18 @@ func TestReleasePleaseConfiguration(t *testing.T) {
 	if err := json.Unmarshal([]byte(readRepositoryFile(t, ".release-please-manifest.json")), &manifest); err != nil {
 		t.Fatalf("manifest JSON error = %v", err)
 	}
-	if got := manifest["."]; got != "0.0.0" {
-		t.Errorf("initial version = %q, want 0.0.0", got)
+	manifestVersion, ok := manifest["."]
+	if !ok {
+		t.Fatal("root package is missing from the release manifest")
+	}
+	stableVersion := regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+	if !stableVersion.MatchString(manifestVersion) {
+		t.Errorf("manifest version = %q, want stable semantic version", manifestVersion)
 	}
 
 	var config struct {
 		ReleaseType               string         `json:"release-type"`
+		InitialVersion            string         `json:"initial-version"`
 		IncludeComponentInTag     bool           `json:"include-component-in-tag"`
 		IncludeVInTag             bool           `json:"include-v-in-tag"`
 		BumpMinorPreMajor         bool           `json:"bump-minor-pre-major"`
@@ -56,6 +62,9 @@ func TestReleasePleaseConfiguration(t *testing.T) {
 	}
 	if config.ReleaseType != "go" {
 		t.Errorf("release type = %q, want go", config.ReleaseType)
+	}
+	if config.InitialVersion != "0.1.0" {
+		t.Errorf("initial version = %q, want 0.1.0", config.InitialVersion)
 	}
 	if config.IncludeComponentInTag || !config.IncludeVInTag {
 		t.Errorf("tag settings produce component-prefixed or unprefixed tags")
