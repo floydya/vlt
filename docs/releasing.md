@@ -10,7 +10,7 @@ Release Please maintains the release pull request. Merging that pull request cre
 - `type!:` or a `BREAKING CHANGE:` footer increments the major version, including from `0.x` to `1.0.0`.
 - Maintenance-only `build`, `chore`, `ci`, `docs`, `refactor`, `style`, and `test` commits do not independently create a release.
 
-The initial manifest version is `0.0.0`. Existing feature commits make the first proposed release `v0.1.0`.
+The first release starts at `v0.1.0`. Release Please records each published version in the manifest.
 
 ## Repository setup
 
