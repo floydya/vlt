@@ -6,6 +6,18 @@ It lets developers keep metadata for multiple Vault hosts, store tokens only in 
 
 The approved initial-release requirements are in [`SPEC.md`](SPEC.md), and work is tracked with [Beads](https://github.com/steveyegge/beads).
 
+## Install with Homebrew on macOS
+
+Install the official Vault CLI and `vlt` from their dedicated taps:
+
+```console
+brew tap hashicorp/tap
+brew install hashicorp/tap/vault
+brew install floydya/tap/vlt
+```
+
+The `vlt` formula builds the tagged source release locally and installs Bash, Zsh, and Fish completions. Vault remains a separate prerequisite so `vlt` can work with Community, Enterprise, and managed Vault installations.
+
 ## Install with Nix
 
 Add `vlt` to your flake inputs:
@@ -94,4 +106,4 @@ just check        # formatting, tests, race detector, vet, and build
 just build-all    # compile Linux, macOS, and Windows targets
 ```
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the development workflow. CI, non-Nix installers, auto-update, and telemetry are intentionally outside the initial scope.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the development workflow and [`docs/releasing.md`](docs/releasing.md) for release maintenance. Automatic updates and telemetry remain outside the initial scope.

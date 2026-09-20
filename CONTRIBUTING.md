@@ -39,4 +39,6 @@ Fake-backed automated tests must not require a live Vault server or desktop keyr
 
 ## Commits
 
-Prefer small, atomic commits with messages such as `feat: ...`, `fix: ...`, `test: ...`, `docs: ...`, or `chore: ...`. Do not mix formatting-only changes, refactors, and behavior changes without a clear reason.
+Use a conventional commit with the Beads issue as its scope, such as `feat(VLT-123): ...` or `fix(VLT-123): ...`. Add `!` or a `BREAKING CHANGE:` footer for an incompatible change. Use `fix(perf): ...` for a performance fix. Maintenance-only `build`, `chore`, `ci`, `docs`, `refactor`, `style`, and `test` commits do not independently trigger a release.
+
+Keep commits small and atomic. Do not mix formatting-only changes, refactors, and behavior changes without a clear reason. See [`docs/releasing.md`](docs/releasing.md) for the automated release flow.
