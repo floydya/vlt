@@ -2,11 +2,22 @@
 
 `vlt` is a cross-platform profile manager and transparent launcher for the official [HashiCorp Vault CLI](https://developer.hashicorp.com/vault/docs/commands).
 
-It lets developers keep metadata for multiple Vault hosts, store tokens only in the operating system's native credential store, authenticate through OIDC, and delegate Vault commands without changing the parent shell.
+It lets you keep metadata for multiple Vault hosts, store tokens only in your operating system's native credential store, authenticate through OIDC, and delegate Vault commands without changing your current shell.
 
-The approved initial-release requirements are in [`SPEC.md`](SPEC.md), and work is tracked with [Beads](https://github.com/steveyegge/beads).
+## Table of contents
 
-## Install with Homebrew on macOS
+- [Installation](#installation)
+  - [Homebrew on macOS](#homebrew-on-macos)
+  - [Nix](#nix)
+- [Usage](#usage)
+- [Security model](#security-model)
+- [Development](#development)
+
+## Installation
+
+`vlt` requires the official `vault` CLI on `PATH`. It delegates Vault operations to that executable.
+
+### Homebrew on macOS
 
 Install the official Vault CLI and `vlt` from their dedicated taps:
 
@@ -16,9 +27,9 @@ brew install hashicorp/tap/vault
 brew install floydya/tap/vlt
 ```
 
-The `vlt` formula builds the tagged source release locally and installs Bash, Zsh, and Fish completions. Vault remains a separate prerequisite so `vlt` can work with Community, Enterprise, and managed Vault installations.
+The `vlt` formula builds the tagged source release locally and installs Bash, Zsh, and Fish completions.
 
-## Install with Nix
+### Nix
 
 Add `vlt` to your flake inputs:
 
@@ -58,9 +69,7 @@ You can also install the default package directly:
 nix profile install github:floydya/vlt
 ```
 
-Install the official `vault` CLI separately and keep it on `PATH`. `vlt` delegates Vault operations to that executable.
-
-## Intended usage
+## Usage
 
 ```console
 $ vlt profile add team-a \
@@ -97,7 +106,6 @@ Prerequisites:
 - Go 1.26
 - [`just`](https://just.systems/) for task shortcuts
 - the official `vault` CLI for manual integration checks only
-- `bd` for issue tracking
 
 ```console
 just fmt          # apply gofmt
@@ -106,4 +114,4 @@ just check        # formatting, tests, race detector, vet, and build
 just build-all    # compile Linux, macOS, and Windows targets
 ```
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the development workflow and [`docs/releasing.md`](docs/releasing.md) for release maintenance. Automatic updates and telemetry remain outside the initial scope.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the development workflow, [`SPEC.md`](SPEC.md) for the design and behavior, and [`docs/releasing.md`](docs/releasing.md) for release maintenance. Automatic updates and telemetry remain outside the initial scope.

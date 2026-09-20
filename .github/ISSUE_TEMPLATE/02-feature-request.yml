@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest an improvement or a new capability
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to suggest an improvement.
+
+  - type: checkboxes
+    id: existing-issue
+    attributes:
+      label: Existing request
+      options:
+        - label: I searched the existing issues and did not find a match.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the task or frustration behind the request.
+      placeholder: When I ..., I need ... because ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to happen?
+      description: Describe the result you want. A complete design is not required.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What alternatives have you tried?
+      description: Share any current workaround or another approach you considered.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?
+      description: Add examples, links, or other context that may help.
