@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/floydya/vlt/compare/v0.1.0...v0.1.1) (2026-09-20)
+
+
+### Fixes
+
+* **VLT-58E:** repair Homebrew publication retry ([#4](https://github.com/floydya/vlt/issues/4)) ([b9840d0](https://github.com/floydya/vlt/commit/b9840d063d9e8c3635c9c6c3851d07da65bdbeec))
+
 ## 0.1.0 (2026-09-20)
 
 
