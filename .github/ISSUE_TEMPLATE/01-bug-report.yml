@@ -1,0 +1,65 @@
+name: Bug report
+description: Report behavior that is broken or unexpected
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve vlt. Do not include tokens, credentials, private Vault addresses, namespaces, or other sensitive data.
+
+  - type: checkboxes
+    id: existing-issue
+    attributes:
+      label: Existing issue
+      options:
+        - label: I searched the existing issues and did not find a match.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the actual result and what you expected instead.
+      placeholder: I expected ... but ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How can we reproduce it?
+      description: Use the smallest safe example you can. Replace private values with clear placeholders.
+      placeholder: |
+        1. Configure ...
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Add the details that help us reproduce the problem.
+      value: |
+        - vlt release or commit:
+        - Vault CLI version:
+        - Operating system:
+        - Installation method:
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Relevant output
+      description: Redact tokens, credentials, private addresses, namespaces, and other sensitive values before pasting output.
+      render: shell
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?
+      description: Add any other context that may help us understand the problem.
