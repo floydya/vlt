@@ -4,15 +4,12 @@ Start with [`SPEC.md`](SPEC.md). It defines the approved behavior, security boun
 
 ## Workflow
 
-1. Run `bd prime` for repository-specific issue guidance.
-2. Find unblocked work with `bd ready`.
-3. Inspect and claim one issue with `bd show <id>` and `bd update <id> --claim`.
-4. Keep the change limited to that issue and add or update tests for behavior changes.
-5. Run the relevant focused checks, then `just check` before completion.
+1. Keep each change focused on one problem or improvement.
+2. Add or update tests for behavior changes.
+3. Run relevant focused checks while developing.
+4. Run `just check` before completion.
+5. Run `just build-all` when the change may affect platform-specific behavior.
 6. Review the diff for credentials and unrelated changes.
-7. Close completed work with `bd close <id>`.
-
-Use Beads rather than markdown task lists. Record durable project insights with `bd remember "insight"`.
 
 ## Engineering rules
 
@@ -39,6 +36,6 @@ Fake-backed automated tests must not require a live Vault server or desktop keyr
 
 ## Commits
 
-Use a conventional commit with the Beads issue as its scope, such as `feat(VLT-123): ...` or `fix(VLT-123): ...`. Add `!` or a `BREAKING CHANGE:` footer for an incompatible change. Use `fix(perf): ...` for a performance fix. Maintenance-only `build`, `chore`, `ci`, `docs`, `refactor`, `style`, and `test` commits do not independently trigger a release.
+Write commit subjects as `type(scope): concise imperative summary`, for example `feat(storage): store tokens in the native keyring`. Use a meaningful lowercase scope. Add `!` or a `BREAKING CHANGE:` footer for an incompatible change. Use `fix(perf): ...` for a performance fix. Maintenance-only `build`, `chore`, `ci`, `docs`, `refactor`, `style`, and `test` commits do not independently trigger a release.
 
 Keep commits small and atomic. Do not mix formatting-only changes, refactors, and behavior changes without a clear reason. See [`docs/releasing.md`](docs/releasing.md) for the automated release flow.
