@@ -34,6 +34,11 @@ func TestRenderFormula(t *testing.T) {
 	if strings.Contains(formula, "{{") || strings.Contains(formula, "}}") {
 		t.Errorf("Render() output contains an unresolved placeholder")
 	}
+	goDependency := strings.Index(formula, `depends_on "go" => :build`)
+	macOSDependency := strings.Index(formula, `depends_on :macos`)
+	if goDependency > macOSDependency {
+		t.Errorf("Render() places the Go build dependency after the macOS dependency")
+	}
 }
 
 func TestRenderFormulaRejectsInvalidInputs(t *testing.T) {
