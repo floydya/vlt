@@ -137,6 +137,7 @@ func TestHomebrewWorkflowHasSafeReleaseAndRetryTriggers(t *testing.T) {
 	for _, want := range []string{
 		"types: [published]",
 		"workflow_dispatch:",
+		"ref: ${{ github.event.repository.default_branch }}",
 		"secrets.HOMEBREW_TAP_TOKEN",
 		"RELEASE_TAG:",
 		"go run ./cmd/render-homebrew-formula",
@@ -149,6 +150,9 @@ func TestHomebrewWorkflowHasSafeReleaseAndRetryTriggers(t *testing.T) {
 	}
 	if strings.Contains(workflow, "run: ${{") {
 		t.Errorf("Homebrew workflow interpolates event data directly as a command")
+	}
+	if strings.Contains(workflow, "ref: ${{ env.RELEASE_TAG }}") {
+		t.Errorf("Homebrew workflow uses immutable release code for retry tooling")
 	}
 }
 
