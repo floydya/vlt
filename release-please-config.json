@@ -1,0 +1,30 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "go",
+  "versioning": "default",
+  "include-component-in-tag": false,
+  "include-v-in-tag": true,
+  "include-v-in-release-name": true,
+  "bump-minor-pre-major": false,
+  "bump-patch-for-minor-pre-major": false,
+  "always-update": true,
+  "pull-request-title-pattern": "chore(VLT-REL): release ${version}",
+  "pull-request-header": "This pull request prepares the next vlt release.",
+  "pull-request-footer": "Merging this pull request creates the tag and GitHub release.",
+  "changelog-sections": [
+    { "type": "feat", "section": "Features" },
+    { "type": "fix", "section": "Fixes" },
+    { "type": "perf", "section": "Performance" },
+    { "type": "revert", "section": "Reverts" },
+    { "type": "build", "section": "Build", "hidden": true },
+    { "type": "chore", "section": "Maintenance", "hidden": true },
+    { "type": "ci", "section": "CI", "hidden": true },
+    { "type": "docs", "section": "Documentation", "hidden": true },
+    { "type": "refactor", "section": "Refactoring", "hidden": true },
+    { "type": "style", "section": "Style", "hidden": true },
+    { "type": "test", "section": "Tests", "hidden": true }
+  ],
+  "packages": {
+    ".": {}
+  }
+}

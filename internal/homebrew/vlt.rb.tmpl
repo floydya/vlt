@@ -1,0 +1,23 @@
+class Vlt < Formula
+  desc "Profile manager and transparent launcher for HashiCorp Vault"
+  homepage "https://github.com/floydya/vlt"
+  url "https://github.com/floydya/vlt/archive/refs/tags/{{TAG}}.tar.gz"
+  sha256 "{{SHA256}}"
+  license "MIT"
+
+  depends_on :macos
+  depends_on "go" => :build
+
+  def fetch
+    system "go", "mod", "download"
+  end
+
+  def install
+    system "go", "build", *std_go_args(output: bin/"vlt"), "./cmd/vlt"
+    generate_completions_from_executable(bin/"vlt", "completion")
+  end
+
+  test do
+    assert_match "_vlt_completion", shell_output("#{bin}/vlt completion bash")
+  end
+end

@@ -1,0 +1,127 @@
+name: Publish Homebrew Formula
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable release tag to publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homebrew-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Open tap update
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      TAP_REPOSITORY: floydya/homebrew-tap
+    steps:
+      - name: Validate stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            printf 'Invalid stable release tag: %s\n' "$RELEASE_TAG" >&2
+            exit 1
+          fi
+          metadata="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,tagName)"
+          jq -e --arg tag "$RELEASE_TAG" '.tagName == $tag and (.isDraft | not) and (.isPrerelease | not)' <<<"$metadata" >/dev/null
+          printf 'VERSION=%s\n' "${RELEASE_TAG#v}" >>"$GITHUB_ENV"
+          printf 'FORMULA_BRANCH=release/vlt-%s\n' "${RELEASE_TAG#v}" >>"$GITHUB_ENV"
+
+      - name: Check out release source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Calculate source checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/vlt-${RELEASE_TAG}.tar.gz"
+          curl --fail --location --retry 3 --silent --show-error \
+            "https://github.com/floydya/vlt/archive/refs/tags/${RELEASE_TAG}.tar.gz" \
+            --output "$archive"
+          checksum="$(sha256sum "$archive" | awk '{print $1}')"
+          printf 'SOURCE_SHA256=%s\n' "$checksum" >>"$GITHUB_ENV"
+
+      - name: Check out Homebrew tap
+        uses: actions/checkout@v7
+        with:
+          repository: floydya/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+          fetch-depth: 0
+
+      - name: Prepare formula branch
+        working-directory: homebrew-tap
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads origin "$FORMULA_BRANCH" >/dev/null 2>&1; then
+            git fetch origin "$FORMULA_BRANCH"
+            git switch --force-create "$FORMULA_BRANCH" FETCH_HEAD
+          else
+            git switch --create "$FORMULA_BRANCH"
+          fi
+
+      - name: Render formula
+        run: >-
+          go run ./cmd/render-homebrew-formula
+          --tag "$RELEASE_TAG"
+          --sha256 "$SOURCE_SHA256"
+          --output homebrew-tap/Formula/vlt.rb
+
+      - name: Commit formula
+        id: commit
+        working-directory: homebrew-tap
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$(git status --porcelain -- Formula/vlt.rb)" ]]; then
+            printf 'changed=false\n' >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/vlt.rb
+          git commit -m "chore(VLT-REL): update vlt to ${VERSION}"
+          git push origin "$FORMULA_BRANCH"
+          printf 'changed=true\n' >>"$GITHUB_OUTPUT"
+
+      - name: Open formula pull request
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        working-directory: homebrew-tap
+        shell: bash
+        run: |
+          set -euo pipefail
+          pull_request="$(gh pr list --repo "$TAP_REPOSITORY" --head "$FORMULA_BRANCH" --state open --json number --jq '.[0].number')"
+          if [[ -z "$pull_request" ]]; then
+            pull_request="$(gh pr create \
+              --repo "$TAP_REPOSITORY" \
+              --head "$FORMULA_BRANCH" \
+              --base main \
+              --title "chore(VLT-REL): update vlt to ${VERSION}" \
+              --body $'- Build vlt from the published source tag.\n- Verify the formula on Apple Silicon and Intel macOS.')"
+          fi
+          gh pr merge --auto --squash "$pull_request" --repo "$TAP_REPOSITORY"
