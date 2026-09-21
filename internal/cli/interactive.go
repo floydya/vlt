@@ -57,27 +57,29 @@ type sharedProfileSelector struct {
 }
 
 type huhProfileForm struct {
-	input      io.Reader
-	output     io.Writer
-	accessible bool
+	input        io.Reader
+	output       io.Writer
+	accessible   bool
+	presentation presentation
 }
 
 type huhProfileRemovalConfirmer struct {
-	input      io.Reader
-	output     io.Writer
-	accessible bool
+	input        io.Reader
+	output       io.Writer
+	accessible   bool
+	presentation presentation
 }
 
 func NewSharedProfileSelector(selector SharedSelector) ProfileSelector {
 	return sharedProfileSelector{selector: selector}
 }
 
-func NewHuhProfileForm(input io.Reader, output io.Writer) ProfileForm {
-	return huhProfileForm{input: input, output: output}
+func NewHuhProfileForm(input io.Reader, output io.Writer, terminal ...Terminal) ProfileForm {
+	return huhProfileForm{input: input, output: output, presentation: presentationForOptionalTerminal(terminal)}
 }
 
-func NewHuhProfileRemovalConfirmer(input io.Reader, output io.Writer) ProfileRemovalConfirmer {
-	return huhProfileRemovalConfirmer{input: input, output: output}
+func NewHuhProfileRemovalConfirmer(input io.Reader, output io.Writer, terminal ...Terminal) ProfileRemovalConfirmer {
+	return huhProfileRemovalConfirmer{input: input, output: output, presentation: presentationForOptionalTerminal(terminal)}
 }
 
 func (s sharedProfileSelector) Select(ctx context.Context, candidates []profile.Profile, active string) (string, error) {
@@ -151,6 +153,9 @@ func (f huhProfileForm) Run(ctx context.Context, request ProfileFormRequest) (pr
 		WithInput(f.input).
 		WithOutput(f.output).
 		WithAccessible(f.accessible)
+	if !f.presentation.colorEnabled || f.presentation.accentColor != "" {
+		form = form.WithTheme(f.presentation.huhTheme())
+	}
 	if err := form.RunWithContext(ctx); err != nil {
 		return profile.Profile{}, fmt.Errorf("profile form: %w", err)
 	}
@@ -197,6 +202,9 @@ func (c huhProfileRemovalConfirmer) Confirm(ctx context.Context, request Profile
 		WithInput(c.input).
 		WithOutput(c.output).
 		WithAccessible(c.accessible)
+	if !c.presentation.colorEnabled || c.presentation.accentColor != "" {
+		form = form.WithTheme(c.presentation.huhTheme())
+	}
 	if err := form.RunWithContext(ctx); err != nil {
 		return false, fmt.Errorf("confirm profile removal: %w", err)
 	}

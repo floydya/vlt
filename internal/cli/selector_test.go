@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestSharedSelectorEmptyQueryPreservesSourceOrder(t *testing.T) {
@@ -213,6 +214,36 @@ func TestSharedSelectorRendersCompactInlinePlainView(t *testing.T) {
 	}
 	if lineCount := strings.Count(view.Content, "\n") + 1; lineCount > sharedSelectorMaxVisible+4 {
 		t.Errorf("selector line count = %d, want at most %d", lineCount, sharedSelectorMaxVisible+4)
+	}
+}
+
+func TestSharedSelectorUsesActiveAccentAndKeepsPlainSelectionVisible(t *testing.T) {
+	items := []SharedSelectorItem{{ID: "first", Label: "first"}, {ID: "second", Label: "second"}}
+	for _, tt := range []struct {
+		name       string
+		terminal   Terminal
+		wantAccent bool
+	}{
+		{name: "active accent", terminal: WithAccent(fixedTerminal{color: true}, "#112233"), wantAccent: true},
+		{name: "plain", terminal: WithAccent(fixedTerminal{color: false}, "#112233")},
+		{name: "no active accent", terminal: fixedTerminal{color: true}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			model, err := newSharedSelectorModel("Select", items, "second", newPresentation(tt.terminal))
+			if err != nil {
+				t.Fatalf("new selector model error = %v", err)
+			}
+			view := model.View().Content
+			if got := strings.Contains(view, "38;2;17;34;51m"); got != tt.wantAccent {
+				t.Errorf("selector active accent = %t, want %t: %q", got, tt.wantAccent, view)
+			}
+			if got := ansi.Strip(view); !strings.Contains(got, "> second") {
+				t.Errorf("selector selection is unclear: %q", got)
+			}
+			if tt.name == "plain" && strings.Contains(view, "\x1b[") {
+				t.Errorf("plain selector contains ANSI: %q", view)
+			}
+		})
 	}
 }
 

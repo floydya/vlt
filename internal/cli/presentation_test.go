@@ -250,6 +250,25 @@ func TestPresentationUsesActiveAccentWithoutChangingStatusColors(t *testing.T) {
 	}
 }
 
+func TestPresentationHuhThemeColorsFocusedBorderAndFields(t *testing.T) {
+	accented := newPresentation(WithAccent(fixedTerminal{color: true}, "#112233")).huhTheme().Theme(true)
+	colorCode := "38;2;17;34;51m"
+	for name, value := range map[string]string{
+		"border":   accented.Focused.Base.Render("Field"),
+		"title":    accented.Focused.Title.Render("Field"),
+		"prompt":   accented.Focused.TextInput.Prompt.Render("Field"),
+		"selected": accented.Focused.SelectedOption.Render("Field"),
+	} {
+		if !strings.Contains(value, colorCode) {
+			t.Errorf("focused %s = %q, want active accent", name, value)
+		}
+	}
+	plain := newPresentation(WithAccent(fixedTerminal{color: false}, "#112233")).huhTheme().Theme(true)
+	if got := plain.Focused.Base.Render("Field") + plain.Focused.SelectedOption.Render("Field"); strings.Contains(got, "\x1b[") {
+		t.Fatalf("plain focused theme contains ANSI: %q", got)
+	}
+}
+
 func TestPresentationHuhThemeUsesSemanticRolesAndHonorsPlainMode(t *testing.T) {
 	plainPresentation := newPresentation(fixedTerminal{color: false})
 	plainTheme := plainPresentation.huhTheme().Theme(true)
