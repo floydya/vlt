@@ -4,6 +4,14 @@ Verification date: 2026-09-19
 
 CLI revision verification date: 2026-09-21
 
+### Vault completion protocol probe
+
+On 2026-09-21, `bash scripts/probe-vault-completion.sh` passed with the installed Vault v2.0.3. Vault returned `kv` for `vault k`, `get` for `vault kv g`, `-mount` for `vault kv get -m`, and `json` for `vault kv get -format=j`.
+
+The probe runs `vault` with no arguments. It sets `COMP_LINE` to the partial command and `COMP_POINT` to its length. Each call has an empty temporary home, no token, and `VAULT_ADDR=not-a-url`. The probe does not install Vault completion or edit shell startup files. Vault created empty `.cache/snowflake` directories but no files under the temporary home.
+
+A separate `strace -f -e trace=connect` check of `vault kv get -m` with this environment showed no IP socket connection. The same check with `VAULT_ADDR=http://127.0.0.1:1` showed an attempted loopback connection. The implementation must isolate local completion from a real profile address, even when it requests only flags. These checks used no real Vault server or credential.
+
 ### Terminal UX and stable favorite ID revision
 
 The `feat/vlt-ux-revision` worktree passed `just check` with `GOFLAGS=-buildvcs=false`, `just build-all`, `go mod verify`, `go mod tidy -diff`, direct `golangci-lint run --build-tags=gms_pure_go ./...` with `0 issues`, and `git diff --check`. The first plain `just check` passed formatting, tests, race tests, and vet, then stopped at the build because the linked worktree could not provide Go VCS status. Disabling build stamping allowed the same build to pass. `bd preflight --check` reported a lint failure without diagnostics, while its lint command passed directly; `bd preflight --check --skip-lint` passed the other checks. The cross-build compiled Linux amd64, macOS amd64 and arm64, and Windows amd64. Native keyring, real OIDC, delegated Vault execution, and macOS or Windows runtime behavior were not rerun.
