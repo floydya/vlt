@@ -127,7 +127,13 @@ On 2026-09-21, `just check` and `just build-all` passed with Fish 4.9.3 availabl
 
 On 2026-09-21, focused profile, KV v1, KV v2, and security tests passed, followed by `just check`. In-memory Vault API checks covered active and explicit profile selection, missing tokens and keyring errors, HTTP opt-in, readable and denied leaves, and both `kv get` path forms. The checkpoint test read one existing token and made only a mount lookup, a LIST request, and a batched capability request. The token stayed out of URLs, request bodies, and candidates; no secret value endpoint, OIDC flow, token renewal, or keyring write ran.
 
-Shell path completion is not connected yet. Vault's mount lookup endpoint has no backward-compatibility guarantee, so the representative-host check remains open. No live Vault host or native keyring was used for this checkpoint.
+At this checkpoint, shell path completion was not connected yet. Vault's mount lookup endpoint has no backward-compatibility guarantee, so the representative-host check remains open. No live Vault host or native keyring was used for this checkpoint.
+
+### Vault-aware path completion checkpoint
+
+On 2026-09-21, focused completion and security tests, `just check`, `just build-all`, direct `golangci-lint` with zero issues, and Beads preflight passed. Generated Bash, Zsh, and Fish scripts passed syntax and smoke tests with the installed shells. Fish 4.9.3 came from a temporary tool path; no project dependency changed.
+
+Fake-backed handler tests covered `read`, KV v1 and KV v2 `kv get`, active and explicit profiles, denied leaves, readable folders, and timeout cleanup. They confirmed that completion makes only mount lookup, LIST, and capability requests. Tokens stayed out of URLs, request bodies, candidate text, and diagnostics. Shell tests confirmed that spaces and shell metacharacters remain quoted without execution. No live Vault host, native keyring, OIDC flow, or native macOS or Windows shell ran in this checkpoint. The representative-host latency and permission check remains open.
 
 ## Dependency review
 

@@ -460,6 +460,116 @@ func TestCompletePathCandidatesReturnsOnlyCheckedReadPaths(t *testing.T) {
 	}
 }
 
+func TestPathCompletionCheckpointRoutesBothKVVersionsWithoutSecretReads(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		line       string
+		host       string
+		token      string
+		namespace  string
+		version    string
+		listPrefix string
+		readPrefix string
+	}{
+		{name: "active KV v1", line: "vlt kv get secret/team/", host: "kv1.example.invalid", token: "hvs.synthetic-kv1-token", version: "1", listPrefix: "secret/team/", readPrefix: "secret/team/"},
+		{name: "explicit KV v2", line: "vlt --profile team-b kv get -mount=secret team/", host: "kv2.example.invalid", token: "hvs.synthetic-kv2-token", namespace: "dept/", version: "2", listPrefix: "secret/metadata/team/", readPrefix: "secret/data/team/"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			profiles := []profile.Profile{
+				{Name: "team-a", Address: "https://kv1.example.invalid", Username: "a", AuthPath: "oidc"},
+				{Name: "team-b", Address: "https://kv2.example.invalid", Username: "b", AuthPath: "oidc", Namespace: "dept/"},
+			}
+			loader := &completionProfileLoader{configuration: config.Configuration{Profiles: profiles, ActiveProfile: "team-a"}}
+			var credentialReads, requests atomic.Int32
+			credentials := completionCredentialGetFunc(func(_ context.Context, name string) (string, error) {
+				credentialReads.Add(1)
+				if name == "team-a" {
+					return "hvs.synthetic-kv1-token", nil
+				}
+				if name == "team-b" {
+					return "hvs.synthetic-kv2-token", nil
+				}
+				return "", errors.New("missing profile")
+			})
+			transport := completionTestTransport{handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				requests.Add(1)
+				body, err := io.ReadAll(request.Body)
+				if err != nil {
+					t.Errorf("read request body: %v", err)
+				}
+				if request.URL.Host != tt.host || request.Header.Get("X-Vault-Token") != tt.token || request.Header.Get("X-Vault-Namespace") != tt.namespace || strings.Contains(request.URL.String(), tt.token) || strings.Contains(string(body), tt.token) {
+					t.Error("path lookup used wrong profile data or exposed its token")
+				}
+				switch {
+				case request.Method == http.MethodGet && strings.HasPrefix(request.URL.Path, "/v1/sys/internal/ui/mounts/secret"):
+					_, _ = writer.Write([]byte(`{"path":"secret/","type":"kv","options":{"version":"` + tt.version + `"}}`))
+				case request.Method == "LIST" && request.URL.Path == "/v1/"+tt.listPrefix:
+					_, _ = writer.Write([]byte(`{"data":{"keys":["allowed","denied","folder/"]}}`))
+				case request.Method == "LIST" && request.URL.Path == "/v1/"+tt.listPrefix+"folder/":
+					_, _ = writer.Write([]byte(`{"data":{"keys":["child"]}}`))
+				case request.Method == http.MethodPost && request.URL.Path == "/v1/sys/capabilities-self":
+					var submitted struct {
+						Paths []string `json:"paths"`
+					}
+					if err := json.Unmarshal(body, &submitted); err != nil {
+						t.Errorf("decode capability request: %v", err)
+					}
+					want := []string{tt.readPrefix + "allowed", tt.readPrefix + "denied", tt.readPrefix + "folder/child"}
+					if !reflect.DeepEqual(submitted.Paths, want) {
+						t.Errorf("capability paths = %q, want %q", submitted.Paths, want)
+					}
+					checked := map[string][]string{want[0]: {"read"}, want[1]: {"deny"}, want[2]: {"read"}}
+					_ = json.NewEncoder(writer).Encode(checked)
+				default:
+					t.Errorf("unexpected request: %s %s", request.Method, request.URL.Path)
+					http.Error(writer, "unexpected request", http.StatusBadRequest)
+				}
+			})}
+			var output bytes.Buffer
+			handler := NewCompletionHandler(CompletionDependencies{Profiles: loader, Credentials: credentials, PathTransport: transport, Output: &output})
+			if err := handler(context.Background(), []string{"__paths", tt.line}); err != nil {
+				t.Fatal(err)
+			}
+			wantOutput := "secret/team/allowed\nsecret/team/folder/\n"
+			if tt.version == "2" {
+				wantOutput = "team/allowed\nteam/folder/\n"
+			}
+			if output.String() != wantOutput || credentialReads.Load() != 1 || requests.Load() != 4 {
+				t.Errorf("checkpoint output = %q, credential reads = %d, API calls = %d", output.String(), credentialReads.Load(), requests.Load())
+			}
+		})
+	}
+}
+
+func TestPathCompletionCheckpointLeavesPromptEmptyAfterTimeout(t *testing.T) {
+	selected := profile.Profile{Name: "team-a", Address: "https://vault.example.invalid", Username: "a", AuthPath: "oidc"}
+	loader := &completionProfileLoader{configuration: config.Configuration{Profiles: []profile.Profile{selected}, ActiveProfile: selected.Name}}
+	stopped := make(chan struct{})
+	transport := completionTestTransport{handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != "LIST" || request.URL.Path != "/v1/secret/" {
+			t.Errorf("unexpected timeout request: %s %s", request.Method, request.URL.Path)
+		}
+		<-request.Context().Done()
+		close(stopped)
+	})}
+	var output bytes.Buffer
+	vault := &completionVaultStub{}
+	handler := NewCompletionHandler(CompletionDependencies{
+		Profiles: loader, Credentials: &completionCredentialGetter{token: "synthetic-token"},
+		PathTransport: transport, Vault: vault, Output: &output,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := handler(ctx, []string{"__paths", "vlt read secret/"}); err != nil || output.Len() != 0 || vault.calls != 0 {
+		t.Errorf("expired path completion error = %v, output = %q, Vault calls = %d", err, output.String(), vault.calls)
+	}
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Error("expired path completion did not stop the HTTP request")
+	}
+}
+
 func TestKVPathCheckpointRoutesV1AndKeepsTokenOutOfPathsAndBodies(t *testing.T) {
 	const token = "hvs.synthetic-checkpoint-token"
 	selected := profile.Profile{Name: "team-a", Address: "http://vault.example.invalid", Username: "a", AuthPath: "oidc", Namespace: "dept/", AllowInsecure: true}
