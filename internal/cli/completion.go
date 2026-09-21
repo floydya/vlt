@@ -151,7 +151,7 @@ _vlt_completion() {
                     ;;
                 add)
                     if (( COMP_CWORD >= 3 )); then
-                        COMPREPLY=( $(compgen -W "--address --username --auth-path --namespace --allow-insecure -h --help" -- "$current") )
+                        COMPREPLY=( $(compgen -W "--address --username --auth-path --namespace --allow-insecure --color -h --help" -- "$current") )
                     fi
                     ;;
                 list)
@@ -176,7 +176,7 @@ _vlt_completion() {
                         profiles="$(_vlt_completion_profiles)"
                         COMPREPLY=( $(compgen -W "$profiles -h --help" -- "$current") )
                     elif (( COMP_CWORD > 3 )); then
-                        COMPREPLY=( $(compgen -W "--address --username --auth-path --namespace --allow-insecure -h --help" -- "$current") )
+                        COMPREPLY=( $(compgen -W "--address --username --auth-path --namespace --allow-insecure --color -h --help" -- "$current") )
                     fi
                     ;;
             esac
@@ -306,7 +306,7 @@ _vlt() {
                     ;;
                 add)
                     if (( CURRENT >= 4 )); then
-                        _values 'option' '--address' '--username' '--auth-path' '--namespace' '--allow-insecure' '-h' '--help'
+                        _values 'option' '--address' '--username' '--auth-path' '--namespace' '--allow-insecure' '--color' '-h' '--help'
                     fi
                     ;;
                 list)
@@ -328,7 +328,7 @@ _vlt() {
                     if (( CURRENT == 4 )); then
                         _vlt_completion_profiles
                     elif (( CURRENT > 4 )); then
-                        _values 'option' '--address' '--username' '--auth-path' '--namespace' '--allow-insecure' '-h' '--help'
+                        _values 'option' '--address' '--username' '--auth-path' '--namespace' '--allow-insecure' '--color' '-h' '--help'
                     fi
                     ;;
             esac
@@ -446,6 +446,7 @@ complete -c vlt -n '__vlt_using_profile_subcommand add; and __vlt_token_count_at
 complete -c vlt -n '__vlt_using_profile_subcommand add; and __vlt_token_count_at_least 3' -l auth-path -r
 complete -c vlt -n '__vlt_using_profile_subcommand add; and __vlt_token_count_at_least 3' -l namespace -r
 complete -c vlt -n '__vlt_using_profile_subcommand add; and __vlt_token_count_at_least 3' -l allow-insecure
+complete -c vlt -n '__vlt_using_profile_subcommand add; and __vlt_token_count_at_least 3' -l color -r
 complete -c vlt -n '__vlt_using_profile_subcommand add' -s h -l help
 
 complete -c vlt -n '__vlt_using_profile_subcommand list' -s h -l help
@@ -457,6 +458,7 @@ complete -c vlt -n '__vlt_using_profile_subcommand update; and __vlt_token_count
 complete -c vlt -n '__vlt_using_profile_subcommand update; and __vlt_token_count_at_least 4' -l auth-path -r
 complete -c vlt -n '__vlt_using_profile_subcommand update; and __vlt_token_count_at_least 4' -l namespace -r
 complete -c vlt -n '__vlt_using_profile_subcommand update; and __vlt_token_count_at_least 4' -l allow-insecure
+complete -c vlt -n '__vlt_using_profile_subcommand update; and __vlt_token_count_at_least 4' -l color -r
 complete -c vlt -n '__vlt_using_profile_subcommand update' -s h -l help
 complete -c vlt -n '__vlt_using_profile_subcommand remove; and __vlt_token_count_is 3' -a '(vlt completion __profiles 2>/dev/null)'
 complete -c vlt -n '__vlt_using_profile_subcommand remove; and __vlt_token_count_at_least 4' -l remove-favorites
