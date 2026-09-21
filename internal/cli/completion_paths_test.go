@@ -379,3 +379,60 @@ func TestKVPathCheckpointRoutesV1AndKeepsTokenOutOfPathsAndBodies(t *testing.T) 
 		t.Errorf("requests = %d and credential reads = %q, want three requests and one read", calls.Load(), credentials.names)
 	}
 }
+
+func TestCompleteReadPathsShowsOnlyListedReadableTargets(t *testing.T) {
+	var listCalls, capabilityCalls atomic.Int32
+	transport := completionTestTransport{handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == "LIST" && request.URL.Path == "/v1/identity/entity/id/":
+			listCalls.Add(1)
+			_, _ = writer.Write([]byte(`{"data":{"keys":["allowed","denied","folder/"]}}`))
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/sys/capabilities-self":
+			capabilityCalls.Add(1)
+			var body struct {
+				Paths []string `json:"paths"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Errorf("decode capabilities: %v", err)
+			}
+			want := []string{"identity/entity/id/allowed", "identity/entity/id/denied"}
+			if !reflect.DeepEqual(body.Paths, want) {
+				t.Errorf("read capability paths = %q, want command target paths %q", body.Paths, want)
+			}
+			_, _ = writer.Write([]byte(`{"identity/entity/id/allowed":["read"],"identity/entity/id/denied":["deny"],"identity/entity/id/ghost":["read"]}`))
+		default:
+			t.Errorf("unexpected request: %s %s", request.Method, request.URL.Path)
+			http.Error(writer, "unexpected request", http.StatusBadRequest)
+		}
+	})}
+	selected := pathCompletionContext{profile: profile.Profile{Address: "http://vault.example.invalid", AllowInsecure: true}, token: "synthetic-token"}
+	got := completeReadPaths(context.Background(), selected, "identity/entity/id/", transport)
+	if !reflect.DeepEqual(got, []string{"identity/entity/id/allowed"}) {
+		t.Errorf("read candidates = %q, want only listed readable target", got)
+	}
+	if listCalls.Load() != 1 || capabilityCalls.Load() != 1 {
+		t.Errorf("list calls = %d, capability calls = %d; want one each", listCalls.Load(), capabilityCalls.Load())
+	}
+}
+
+func TestCompleteReadPathsHidesUnsupportedOrDeniedBackends(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusNotFound} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var calls atomic.Int32
+			transport := completionTestTransport{handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				calls.Add(1)
+				if request.Method != "LIST" || request.URL.Path != "/v1/aws/creds/" {
+					t.Errorf("unexpected request: %s %s", request.Method, request.URL.Path)
+				}
+				writer.WriteHeader(status)
+			})}
+			selected := pathCompletionContext{profile: profile.Profile{Address: "http://vault.example.invalid", AllowInsecure: true}, token: "synthetic-token"}
+			if got := completeReadPaths(context.Background(), selected, "aws/creds/", transport); len(got) != 0 {
+				t.Errorf("unsupported or denied backend returned %q, want no candidates", got)
+			}
+			if calls.Load() != 1 {
+				t.Errorf("calls = %d, want LIST only", calls.Load())
+			}
+		})
+	}
+}
