@@ -91,7 +91,7 @@ $ vlt favorite update f_0123456789abcdef --note reviewed
 
 `vlt` will not reimplement Vault data operations. It will resolve a profile, manage its credential lifecycle, and execute the installed `vault` binary with the original arguments and attached streams.
 
-Bash completion suggests command names from the installed Vault CLI beside `vlt` commands. This works at the first command position and after `--profile NAME`. It does not require Vault's separate shell completion hook.
+Bash completion suggests command names from the installed Vault CLI beside `vlt` commands. It also follows Vault for nested commands, flags, and supported local values. This works with or without `--profile NAME` and does not require Vault's separate shell completion hook.
 
 Vault profiles use HTTPS by default. To connect to a trusted local test Vault over HTTP, add the profile with `--allow-insecure`. Clear the opt-in with `vlt profile update NAME --address https://... --allow-insecure=false`.
 

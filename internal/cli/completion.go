@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"vlt/internal/favorite"
 	"vlt/internal/profile"
@@ -46,6 +47,9 @@ func NewCompletionHandler(dependencies CompletionDependencies) Handler {
 		if len(args) == 2 && args[0] == "__vault_commands" {
 			return writeCompletionVaultCommands(ctx, args[1], dependencies)
 		}
+		if len(args) == 2 && args[0] == "__vault_args" {
+			return writeCompletionVaultArguments(ctx, args[1], dependencies)
+		}
 		if containsHelpFlag(args) {
 			return writeManagementHelp(dependencies.Output, "completion", completionHelpText)
 		}
@@ -80,17 +84,7 @@ func writeCompletionVaultCommands(ctx context.Context, prefix string, dependenci
 		return nil
 	}
 	line := "vault " + prefix
-	result, err := dependencies.Vault.Execute(ctx, vaultexec.Invocation{
-		Environment: vaultexec.EnvironmentOverlay{
-			Set: map[string]string{
-				"COMP_LINE":  line,
-				"COMP_POINT": strconv.Itoa(len(line)),
-				"VAULT_ADDR": "not-a-url",
-			},
-			Unset: []string{"VAULT_TOKEN", "VAULT_NAMESPACE"},
-		},
-		Mode: vaultexec.Captured,
-	})
+	result, err := requestLocalVaultCompletion(ctx, line, dependencies)
 	if err != nil {
 		return nil
 	}
@@ -117,6 +111,82 @@ func writeCompletionVaultCommands(ctx context.Context, prefix string, dependenci
 		return fmt.Errorf("display completion candidates: %w", err)
 	}
 	return nil
+}
+
+func requestLocalVaultCompletion(ctx context.Context, line string, dependencies CompletionDependencies) (vaultexec.Result, error) {
+	return dependencies.Vault.Execute(ctx, vaultexec.Invocation{
+		Environment: vaultexec.EnvironmentOverlay{
+			Set: map[string]string{
+				"COMP_LINE":  line,
+				"COMP_POINT": strconv.Itoa(len(line)),
+				"VAULT_ADDR": "not-a-url",
+			},
+			Unset: []string{"VAULT_TOKEN", "VAULT_NAMESPACE"},
+		},
+		Mode: vaultexec.Captured,
+	})
+}
+
+func writeCompletionVaultArguments(ctx context.Context, input string, dependencies CompletionDependencies) error {
+	line, ok := vaultArgumentLine(input)
+	if !ok || dependencies.Vault == nil {
+		return nil
+	}
+	result, err := requestLocalVaultCompletion(ctx, line, dependencies)
+	if err != nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var candidates []string
+	for _, candidate := range strings.Split(string(result.Stdout), "\n") {
+		if candidate == "" || seen[candidate] || strings.IndexFunc(candidate, unicode.IsControl) >= 0 {
+			continue
+		}
+		seen[candidate] = true
+		candidates = append(candidates, candidate)
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	if dependencies.Output == nil {
+		return fmt.Errorf("display completion candidates: output is not configured")
+	}
+	if _, err := io.WriteString(dependencies.Output, strings.Join(candidates, "\n")+"\n"); err != nil {
+		return fmt.Errorf("display completion candidates: %w", err)
+	}
+	return nil
+}
+
+func vaultArgumentLine(input string) (string, bool) {
+	if !strings.HasPrefix(input, "vlt ") && !strings.HasPrefix(input, "vlt\t") {
+		return "", false
+	}
+	for _, character := range input {
+		if unicode.IsControl(character) && character != '\t' {
+			return "", false
+		}
+	}
+	rest := strings.TrimLeft(input[3:], " \t")
+	if strings.HasPrefix(rest, "--profile ") || strings.HasPrefix(rest, "--profile\t") {
+		profileAndCommand := strings.TrimLeft(rest[len("--profile"):], " \t")
+		separator := strings.IndexAny(profileAndCommand, " \t")
+		if separator < 0 || profile.ValidateName(profileAndCommand[:separator]) != nil {
+			return "", false
+		}
+		rest = strings.TrimLeft(profileAndCommand[separator:], " \t")
+	}
+	command := rest
+	if separator := strings.IndexAny(command, " \t"); separator >= 0 {
+		command = command[:separator]
+	}
+	if !validVaultCommand(command) {
+		return "", false
+	}
+	switch command {
+	case "profile", "switch", "favorite", "completion":
+		return "", false
+	}
+	return "vault " + rest, true
 }
 
 func validVaultCommand(value string) bool {
@@ -230,6 +300,20 @@ _vlt_completion_root_commands() {
             fi
         done
         if (( duplicate == 0 )); then
+            COMPREPLY+=("$candidate")
+        fi
+    done <<< "$candidates"
+}
+
+_vlt_completion_vault_arguments() {
+    local current="$1" line candidates candidate
+    line="${COMP_LINE:0:COMP_POINT}"
+    if [[ -z "$line" ]]; then
+        return 0
+    fi
+    candidates="$(vlt completion __vault_args "$line" 2>/dev/null)" || return 0
+    while IFS= read -r candidate; do
+        if [[ -n "$candidate" && "$candidate" == "$current"* ]]; then
             COMPREPLY+=("$candidate")
         fi
     done <<< "$candidates"
@@ -378,6 +462,8 @@ _vlt_completion() {
                 COMPREPLY=( $(compgen -W "$profiles" -- "$current") )
             elif (( COMP_CWORD == 3 )); then
                 _vlt_completion_root_commands "$current"
+            elif (( COMP_CWORD > 3 )); then
+                _vlt_completion_vault_arguments "$current"
             fi
             return 0
             ;;
@@ -385,6 +471,7 @@ _vlt_completion() {
             return 0
             ;;
         *)
+            _vlt_completion_vault_arguments "$current"
             return 0
             ;;
     esac
