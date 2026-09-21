@@ -74,11 +74,11 @@ func TestSharedProfileSelectorBuildsDeterministicSearchRowsAndPreselectsActive(t
 	candidates := []profile.Profile{
 		{
 			Name: "team-b", Address: "https://vault.team-b.example", Username: "hidden-b",
-			AuthPath: "hidden-auth-b", Namespace: "", AllowInsecure: true,
+			AuthPath: "hidden-auth-b", Namespace: "", AllowInsecure: true, Color: "#445566",
 		},
 		{
 			Name: "team-a", Address: "https://vault.team-a.example", Username: "hidden-a",
-			AuthPath: "hidden-auth-a", Namespace: "engineering",
+			AuthPath: "hidden-auth-a", Namespace: "engineering", Color: "#112233",
 		},
 	}
 
@@ -97,6 +97,15 @@ func TestSharedProfileSelectorBuildsDeterministicSearchRowsAndPreselectsActive(t
 	}
 	if shared.items[0].ID != "team-a" || shared.items[1].ID != "team-b" {
 		t.Fatalf("shared selector IDs = %q, %q, want deterministic profile order", shared.items[0].ID, shared.items[1].ID)
+	}
+	if shared.items[0].Color != "#112233" || shared.items[1].Color != "#445566" {
+		t.Errorf("picker row colors = %q, %q, want saved colors independent of active status", shared.items[0].Color, shared.items[1].Color)
+	}
+	if got, want := shared.items[0].Label, "1    team-a  https://vault.team-a.example  engineering  no  #112233"; got != want {
+		t.Errorf("first profile row = %q, want %q", got, want)
+	}
+	if got, want := shared.items[1].Label, "2  *  team-b  https://vault.team-b.example  -  yes  #445566"; got != want {
+		t.Errorf("active profile row = %q, want %q", got, want)
 	}
 	for _, text := range []string{"1", "team-a", "https://vault.team-a.example", "engineering"} {
 		if !strings.Contains(shared.items[0].Label, text) {

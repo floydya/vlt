@@ -24,6 +24,7 @@ type SharedSelectorItem struct {
 	ID         string
 	Label      string
 	SearchText string
+	Color      string
 }
 
 type SharedSelector interface {
@@ -239,8 +240,7 @@ func (m sharedSelectorModel) View() tea.View {
 				marker = "> "
 				role = presentationSelected
 			}
-			output.WriteString(m.presentation.render(role, marker))
-			output.WriteString(m.presentation.render(role, m.visible[index].Label))
+			output.WriteString(m.presentation.renderColored(role, marker+m.visible[index].Label, m.visible[index].Color))
 			output.WriteByte('\n')
 		}
 	}
