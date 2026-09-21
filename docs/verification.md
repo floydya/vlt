@@ -135,7 +135,13 @@ On 2026-09-21, `just check` and `just build-all` passed with Fish 4.9.3 availabl
 
 On 2026-09-21, focused profile, KV v1, KV v2, and security tests passed, followed by `just check`. In-memory Vault API checks covered active and explicit profile selection, missing tokens and keyring errors, HTTP opt-in, readable and denied leaves, and both `kv get` path forms. The checkpoint test read one existing token and made only a mount lookup, a LIST request, and a batched capability request. The token stayed out of URLs, request bodies, and candidates; no secret value endpoint, OIDC flow, token renewal, or keyring write ran.
 
-Shell path completion is not connected yet. Vault's mount lookup endpoint has no backward-compatibility guarantee, so the representative-host check remains open. No live Vault host or native keyring was used for this checkpoint.
+Shell path completion was not connected at this checkpoint. Vault's mount lookup endpoint has no backward-compatibility guarantee, so the representative-host check remained open. No live Vault host or native keyring was used for this checkpoint.
+
+### Representative Vault path gate
+
+On 2026-09-21, a generated Zsh completion function from the path-completion branch used the active profile's native keyring token and two saved path prefixes against a representative Vault host. The local Vault CLI was v2.0.3; the server version was not checked. Each `read` and `kv get` Tab request returned zero candidates in 507 ms of wall time. The credential lookup took 1–2 ms. A direct LIST of the saved `read` directory returned HTTP 403 in 236 ms. The `kv get` mount lookup returned HTTP 403 in 463 ms. The bounded `read` LIST also expired at the 500 ms deadline in a separate run.
+
+The host did not expose a listed readable path, so this check could not prove that a readable `read` or `kv get` path appears within 500 ms. It also could not enumerate discoverable denied paths or folders to check their exclusion. No secret value was read or written. The probes printed only status codes, counts, and timings; they did not print profile names, paths, or tokens. Native macOS and Windows shells, real OIDC, and other Vault hosts remain unchecked. The representative-host gate failed, so server-backed path suggestions remain unshipped pending a reviewed requirement or permission change.
 
 ## Dependency review
 
