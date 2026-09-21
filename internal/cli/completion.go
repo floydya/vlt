@@ -34,9 +34,12 @@ Examples:
 `
 
 type CompletionDependencies struct {
-	Profiles  ConfigurationLoader
-	Favorites FavoriteConfigurationLoader
-	Vault     interface {
+	Profiles    ConfigurationLoader
+	Favorites   FavoriteConfigurationLoader
+	Credentials interface {
+		Get(context.Context, string) (string, error)
+	}
+	Vault interface {
 		Execute(context.Context, vaultexec.Invocation) (vaultexec.Result, error)
 	}
 	Output io.Writer
