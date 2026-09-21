@@ -5,8 +5,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -15,6 +18,53 @@ import (
 	"vlt/internal/favorite"
 	"vlt/internal/profile"
 )
+
+func TestNewDispatcherCompletesVaultCommandsWithoutInheritedVaultEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake Vault executable uses a shell")
+	}
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh is not installed")
+	}
+	binDirectory := t.TempDir()
+	vaultPath := filepath.Join(binDirectory, "vault")
+	fakeVault := "#!" + sh + "\nenv > \"$VLT_COMPLETION_ENV_FILE\"\nprintf 'kv\\n'\n"
+	if err := os.WriteFile(vaultPath, []byte(fakeVault), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	environmentFile := filepath.Join(t.TempDir(), "vault-env")
+	t.Setenv("VLT_COMPLETION_ENV_FILE", environmentFile)
+	t.Setenv("PATH", binDirectory+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("VAULT_TOKEN", "fake-inherited-token")
+	t.Setenv("vault_token", "fake-lowercase-token")
+	t.Setenv("VAULT_ADDR", "https://inherited.invalid")
+	t.Setenv("VAULT_NAMESPACE", "inherited-namespace")
+	t.Setenv("VAULT_CACERT", "/tmp/inherited-cert")
+	var output bytes.Buffer
+	dispatcher := newDispatcherAt(t.TempDir(), strings.NewReader(""), &output, io.Discard)
+
+	if err := dispatcher.Dispatch(context.Background(), []string{"completion", "__vault_commands", "k"}); err != nil {
+		t.Fatalf("Vault command completion error = %v", err)
+	}
+	if got := output.String(); got != "kv\n" {
+		t.Errorf("Vault command completion = %q, want kv", got)
+	}
+	environment, err := os.ReadFile(environmentFile)
+	if err != nil {
+		t.Fatalf("read fake Vault environment: %v", err)
+	}
+	for _, key := range []string{"VAULT_TOKEN", "vault_token", "VAULT_NAMESPACE", "VAULT_CACERT"} {
+		if strings.Contains(string(environment), key+"=") {
+			t.Errorf("inherited %s reached Vault completion", key)
+		}
+	}
+	for _, entry := range []string{"VAULT_ADDR=not-a-url", "COMP_LINE=vault k", "COMP_POINT=7"} {
+		if !strings.Contains(string(environment), entry+"\n") {
+			t.Errorf("Vault completion missing %s", entry)
+		}
+	}
+}
 
 type automaticHelpServices struct {
 	loads      int
