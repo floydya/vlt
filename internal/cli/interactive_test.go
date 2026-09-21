@@ -131,6 +131,7 @@ func TestHuhProfileFormPreservesDefaultsAndCorrectsInvalidFields(t *testing.T) {
 		[]byte("alice\n"),
 		[]byte("\n"),
 		[]byte("\n"),
+		[]byte("\n"),
 	}}
 	var output bytes.Buffer
 	form := huhProfileForm{input: input, output: &output, accessible: true}
@@ -147,7 +148,7 @@ func TestHuhProfileFormPreservesDefaultsAndCorrectsInvalidFields(t *testing.T) {
 	if got != want {
 		t.Errorf("profile form result = %#v, want %#v", got, want)
 	}
-	for _, text := range []string{"Name", "Allow insecure HTTP", "Address", "Username", "Auth path", "Namespace", "address scheme must be http or https"} {
+	for _, text := range []string{"Name", "Allow insecure HTTP", "Address", "Username", "Auth path", "Namespace", "Color", "address scheme must be http or https"} {
 		if !strings.Contains(output.String(), text) {
 			t.Errorf("profile form output = %q, want text %q", output.String(), text)
 		}
@@ -163,6 +164,7 @@ func TestHuhProfileFormKeepsUpdateNameReadOnly(t *testing.T) {
 	input := &promptLineReader{lines: [][]byte{
 		[]byte("n\n"),
 		[]byte("https://new.example.com\n"),
+		[]byte("\n"),
 		[]byte("\n"),
 		[]byte("\n"),
 		[]byte("\n"),
@@ -201,7 +203,7 @@ func TestHuhProfileFormCanEnableAndClearInsecureHTTPOptIn(t *testing.T) {
 			current: profile.Profile{
 				Name: "team-a", Address: "https://vault.example.com", Username: "alice", AuthPath: "oidc",
 			},
-			input: []string{"y\n", "http://127.0.0.1:8200\n", "\n", "\n", "\n"},
+			input: []string{"y\n", "http://127.0.0.1:8200\n", "\n", "\n", "\n", "\n"},
 			want: profile.Profile{
 				Name: "team-a", Address: "http://127.0.0.1:8200", Username: "alice", AuthPath: "oidc", AllowInsecure: true,
 			},
@@ -211,7 +213,7 @@ func TestHuhProfileFormCanEnableAndClearInsecureHTTPOptIn(t *testing.T) {
 			current: profile.Profile{
 				Name: "team-a", Address: "http://127.0.0.1:8200", Username: "alice", AuthPath: "oidc", AllowInsecure: true,
 			},
-			input: []string{"n\n", "https://vault.example.com\n", "\n", "\n", "\n"},
+			input: []string{"n\n", "https://vault.example.com\n", "\n", "\n", "\n", "\n"},
 			want: profile.Profile{
 				Name: "team-a", Address: "https://vault.example.com", Username: "alice", AuthPath: "oidc",
 			},
@@ -234,6 +236,43 @@ func TestHuhProfileFormCanEnableAndClearInsecureHTTPOptIn(t *testing.T) {
 			}
 			if !strings.Contains(ansi.Strip(output.String()), "Allow insecure HTTP") {
 				t.Fatalf("profile form output = %q, want insecure transport control", output.String())
+			}
+		})
+	}
+}
+
+func TestHuhProfileFormValidatesAndEditsColor(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		currentColor string
+		colorInput   []string
+		wantColor    string
+		wantError    bool
+	}{
+		{name: "set after invalid input", colorInput: []string{"red\n", "#a1B2c3\n"}, wantColor: "#a1B2c3", wantError: true},
+		{name: "keep current", currentColor: "#A1B2C3", colorInput: []string{"\n"}, wantColor: "#A1B2C3"},
+		{name: "clear current", currentColor: "#A1B2C3", colorInput: []string{"-\n"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			current := profile.Profile{Name: "team-a", Address: "https://vault.example.com", Username: "alice", AuthPath: "oidc", Color: tt.currentColor}
+			lines := [][]byte{[]byte("n\n"), []byte("\n"), []byte("\n"), []byte("\n"), []byte("\n")}
+			for _, line := range tt.colorInput {
+				lines = append(lines, []byte(line))
+			}
+			var output bytes.Buffer
+			form := huhProfileForm{input: &promptLineReader{lines: lines}, output: &output, accessible: true}
+			got, err := form.Run(context.Background(), ProfileFormRequest{Profile: current})
+			if err != nil {
+				t.Fatalf("run profile form: %v", err)
+			}
+			if got.Color != tt.wantColor {
+				t.Fatalf("profile color = %q, want %q", got.Color, tt.wantColor)
+			}
+			if !strings.Contains(output.String(), "Color") {
+				t.Fatalf("form output = %q, want color field", output.String())
+			}
+			if tt.wantError && !strings.Contains(output.String(), "color must be #RRGGBB") {
+				t.Fatalf("form output = %q, want inline color error", output.String())
 			}
 		})
 	}
