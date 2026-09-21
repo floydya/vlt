@@ -33,6 +33,7 @@ func TestStoreRoundTripPreservesAcceptedValues(t *testing.T) {
 		testFavorite("team-a", OperationRead, " secret/data/platform ", " daily credentials "),
 		testFavorite("Team_B2", OperationKVGet, "secret/data/reporting", ""),
 	}}
+	want.Favorites[1].RunCount = 9
 
 	if err := store.Save(context.Background(), want); err != nil {
 		t.Fatalf("Save() error = %v", err)
@@ -61,14 +62,36 @@ func TestStoreRoundTripPreservesAcceptedValues(t *testing.T) {
 	if !ok || len(entries) != 2 {
 		t.Fatalf("JSON favorites = %#v, want two favorites", document["favorites"])
 	}
-	for _, value := range entries {
+	for index, value := range entries {
 		entry, ok := value.(map[string]any)
 		if !ok {
 			t.Fatalf("JSON favorite = %#v, want object", value)
 		}
-		assertFavoriteJSONKeys(t, entry, map[string]bool{
+		wantKeys := map[string]bool{
 			"profile": true, "operation": true, "path": true, "note": true,
-		})
+		}
+		if index == 1 {
+			wantKeys["run_count"] = true
+			if entry["run_count"] != float64(9) {
+				t.Fatalf("saved run count = %#v, want 9", entry["run_count"])
+			}
+		}
+		assertFavoriteJSONKeys(t, entry, wantKeys)
+	}
+}
+
+func TestStoreLoadsLegacyFavoriteWithZeroRunCount(t *testing.T) {
+	path := testFavoritePath(t)
+	contents := []byte(`{"version":1,"favorites":[{"profile":"team-a","operation":"read","path":"secret/a","note":"old"}]}`)
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	got, err := NewStore(path).Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(got.Favorites) != 1 || got.Favorites[0].RunCount != 0 {
+		t.Fatalf("Load() = %#v, want one favorite with zero runs", got)
 	}
 }
 
@@ -114,6 +137,11 @@ func TestStoreRejectsMalformedInvalidOrDuplicateConfiguration(t *testing.T) {
 		{name: "invalid profile", contents: `{"version":1,"favorites":[{"profile":"bad name","operation":"read","path":"secret/a","note":""}]}`, wantErr: "profile"},
 		{name: "invalid operation", contents: `{"version":1,"favorites":[{"profile":"team-a","operation":"write","path":"secret/a","note":""}]}`, wantErr: "operation"},
 		{name: "blank path", contents: `{"version":1,"favorites":[{"profile":"team-a","operation":"read","path":" ","note":""}]}`, wantErr: "path"},
+		{name: "negative count", contents: `{"version":1,"favorites":[{"profile":"team-a","operation":"read","path":"secret/a","run_count":-1}]}`, wantErr: "run count"},
+		{name: "fractional count", contents: `{"version":1,"favorites":[{"profile":"team-a","operation":"read","path":"secret/a","run_count":1.5}]}`, wantErr: "decode"},
+		{name: "string count", contents: `{"version":1,"favorites":[{"profile":"team-a","operation":"read","path":"secret/a","run_count":"2"}]}`, wantErr: "decode"},
+		{name: "null count", contents: `{"version":1,"favorites":[{"profile":"team-a","operation":"read","path":"secret/a","run_count":null}]}`, wantErr: "decode"},
+		{name: "overflowing count", contents: `{"version":1,"favorites":[{"profile":"team-a","operation":"read","path":"secret/a","run_count":9223372036854775808}]}`, wantErr: "decode"},
 		{name: "duplicate tuple with different note", contents: `{"version":1,"favorites":[` + valid + `,` + duplicateWithDifferentNote + `]}`, wantErr: "duplicate"},
 	}
 
