@@ -494,11 +494,11 @@ _vlt_completion_favorites() {
     _describe 'favorite ID' favorites
 }
 
-_vlt() {
-    local command="${words[2]-}"
-    local subcommand="${words[3]-}"
-    local previous="${words[CURRENT-1]-}"
-    local -a commands
+_vlt_completion_root_commands() {
+    local prefix="${PREFIX-${words[CURRENT]-}}"
+    local candidate
+    local -a commands vault_commands
+    local -A seen
     commands=(
         'profile:manage profiles'
         'switch:select the active profile'
@@ -507,15 +507,54 @@ _vlt() {
         '--profile:use one profile for a delegated command'
         '-h:show help' '--help:show help'
     )
+    if [[ "$prefix" != -* ]]; then
+        vault_commands=("${(@f)$(vlt completion __vault_commands "$prefix" 2>/dev/null)}")
+        for candidate in "${vault_commands[@]}"; do
+            case "$candidate" in
+                ""|profile|switch|favorite|completion) continue ;;
+            esac
+            if [[ "$candidate" != "$prefix"* || -n "${seen[$candidate]-}" ]]; then
+                continue
+            fi
+            seen[$candidate]=1
+            commands+=("$candidate:Vault command")
+        done
+    fi
+    _describe 'vlt command' commands
+}
+
+_vlt_completion_vault_arguments() {
+    local candidate prefix="${PREFIX-${words[CURRENT]-}}"
+    local -a candidates values
+    if [[ -z "$LBUFFER" ]]; then
+        return 0
+    fi
+    candidates=("${(@f)$(vlt completion __vault_args "$LBUFFER" 2>/dev/null)}")
+    if [[ -z "${candidates[1]-}" ]]; then
+        return 0
+    fi
+    if [[ "$prefix" == -*=* ]]; then
+        for candidate in "${candidates[@]}"; do
+            values+=("${prefix%%=*}=$candidate")
+        done
+        candidates=("${values[@]}")
+    fi
+    compadd -- "${candidates[@]}"
+}
+
+_vlt() {
+    local command="${words[2]-}"
+    local subcommand="${words[3]-}"
+    local previous="${words[CURRENT-1]-}"
 
     if (( CURRENT == 2 )); then
-        _describe 'vlt command' commands
+        _vlt_completion_root_commands
         return 0
     fi
 
     case "$command" in
         "")
-            _describe 'vlt command' commands
+            _vlt_completion_root_commands
             ;;
         completion)
             if (( CURRENT == 3 )); then
@@ -625,6 +664,10 @@ _vlt() {
         --profile)
             if (( CURRENT == 3 )); then
                 _vlt_completion_profiles
+            elif (( CURRENT == 4 )); then
+                _vlt_completion_root_commands
+            elif (( CURRENT > 4 )); then
+                _vlt_completion_vault_arguments
             fi
             return 0
             ;;
@@ -632,6 +675,7 @@ _vlt() {
             return 0
             ;;
         *)
+            _vlt_completion_vault_arguments
             return 0
             ;;
     esac
