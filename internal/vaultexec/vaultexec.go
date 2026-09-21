@@ -123,6 +123,23 @@ func NewOSExecutor() *Executor {
 	})
 }
 
+func NewOSCompletionExecutor() *Executor {
+	return NewExecutor(Dependencies{
+		LookPath: exec.LookPath,
+		Environment: func() []string {
+			var clean []string
+			for _, entry := range os.Environ() {
+				key, _, _ := strings.Cut(entry, "=")
+				if !strings.HasPrefix(strings.ToUpper(key), "VAULT_") {
+					clean = append(clean, entry)
+				}
+			}
+			return clean
+		},
+		Runner: OSRunner{},
+	})
+}
+
 // FindVault resolves Vault through PATH and returns an actionable error when
 // it is unavailable.
 func (e *Executor) FindVault() (string, error) {

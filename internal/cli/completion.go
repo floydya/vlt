@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
+	"strconv"
 	"strings"
 
 	"vlt/internal/favorite"
 	"vlt/internal/profile"
+	"vlt/internal/vaultexec"
 )
 
 const completionHelpText = `Generate shell completion for vlt commands.
@@ -32,11 +35,17 @@ Examples:
 type CompletionDependencies struct {
 	Profiles  ConfigurationLoader
 	Favorites FavoriteConfigurationLoader
-	Output    io.Writer
+	Vault     interface {
+		Execute(context.Context, vaultexec.Invocation) (vaultexec.Result, error)
+	}
+	Output io.Writer
 }
 
 func NewCompletionHandler(dependencies CompletionDependencies) Handler {
 	return func(ctx context.Context, args []string) error {
+		if len(args) == 2 && args[0] == "__vault_commands" {
+			return writeCompletionVaultCommands(ctx, args[1], dependencies)
+		}
 		if containsHelpFlag(args) {
 			return writeManagementHelp(dependencies.Output, "completion", completionHelpText)
 		}
@@ -64,6 +73,63 @@ func NewCompletionHandler(dependencies CompletionDependencies) Handler {
 		}
 		return nil
 	}
+}
+
+func writeCompletionVaultCommands(ctx context.Context, prefix string, dependencies CompletionDependencies) error {
+	if dependencies.Vault == nil || (prefix != "" && !validVaultCommand(prefix)) {
+		return nil
+	}
+	line := "vault " + prefix
+	result, err := dependencies.Vault.Execute(ctx, vaultexec.Invocation{
+		Environment: vaultexec.EnvironmentOverlay{
+			Set: map[string]string{
+				"COMP_LINE":  line,
+				"COMP_POINT": strconv.Itoa(len(line)),
+				"VAULT_ADDR": "not-a-url",
+			},
+			Unset: []string{"VAULT_TOKEN", "VAULT_NAMESPACE"},
+		},
+		Mode: vaultexec.Captured,
+	})
+	if err != nil {
+		return nil
+	}
+	reserved := map[string]bool{"profile": true, "switch": true, "favorite": true, "completion": true}
+	candidates := make(map[string]bool)
+	for _, candidate := range strings.Split(string(result.Stdout), "\n") {
+		if validVaultCommand(candidate) && strings.HasPrefix(candidate, prefix) && !reserved[candidate] {
+			candidates[candidate] = true
+		}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	ordered := make([]string, 0, len(candidates))
+	for candidate := range candidates {
+		ordered = append(ordered, candidate)
+	}
+	sort.Strings(ordered)
+	if dependencies.Output == nil {
+		return fmt.Errorf("display completion candidates: output is not configured")
+	}
+	_, err = io.WriteString(dependencies.Output, strings.Join(ordered, "\n")+"\n")
+	if err != nil {
+		return fmt.Errorf("display completion candidates: %w", err)
+	}
+	return nil
+}
+
+func validVaultCommand(value string) bool {
+	if value == "" || value[0] < 'a' || value[0] > 'z' {
+		return false
+	}
+	for _, character := range value[1:] {
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' || character == '-' || character == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func writeCompletionFavorites(ctx context.Context, dependencies CompletionDependencies) error {
@@ -142,6 +208,33 @@ _vlt_completion_favorites() {
     vlt completion __favorites 2>/dev/null
 }
 
+_vlt_completion_root_commands() {
+    local current="$1" candidates candidate existing duplicate
+    COMPREPLY=( $(compgen -W "profile switch favorite completion --profile -h --help" -- "$current") )
+    if [[ "$current" == -* ]]; then
+        return 0
+    fi
+    candidates="$(vlt completion __vault_commands "$current" 2>/dev/null)" || return 0
+    while IFS= read -r candidate; do
+        case "$candidate" in
+            ""|profile|switch|favorite|completion) continue ;;
+        esac
+        if [[ "$candidate" != "$current"* ]]; then
+            continue
+        fi
+        duplicate=0
+        for existing in "${COMPREPLY[@]}"; do
+            if [[ "$existing" == "$candidate" ]]; then
+                duplicate=1
+                break
+            fi
+        done
+        if (( duplicate == 0 )); then
+            COMPREPLY+=("$candidate")
+        fi
+    done <<< "$candidates"
+}
+
 _vlt_completion() {
     local current previous command subcommand profiles favorites
     COMPREPLY=()
@@ -154,13 +247,13 @@ _vlt_completion() {
     subcommand="${COMP_WORDS[2]-}"
 
     if (( COMP_CWORD == 1 )); then
-        COMPREPLY=( $(compgen -W "profile switch favorite completion --profile -h --help" -- "$current") )
+        _vlt_completion_root_commands "$current"
         return 0
     fi
 
     case "$command" in
         "")
-            COMPREPLY=( $(compgen -W "profile switch favorite completion --profile -h --help" -- "$current") )
+            _vlt_completion_root_commands "$current"
             ;;
         completion)
             if (( COMP_CWORD == 2 )); then
@@ -283,6 +376,8 @@ _vlt_completion() {
             if (( COMP_CWORD == 2 )); then
                 profiles="$(_vlt_completion_profiles)"
                 COMPREPLY=( $(compgen -W "$profiles" -- "$current") )
+            elif (( COMP_CWORD == 3 )); then
+                _vlt_completion_root_commands "$current"
             fi
             return 0
             ;;

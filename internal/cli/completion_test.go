@@ -14,7 +14,145 @@ import (
 	"vlt/internal/config"
 	"vlt/internal/favorite"
 	"vlt/internal/profile"
+	"vlt/internal/vaultexec"
 )
+
+type completionVaultStub struct {
+	result     vaultexec.Result
+	err        error
+	calls      int
+	invocation vaultexec.Invocation
+}
+
+func (s *completionVaultStub) Execute(_ context.Context, invocation vaultexec.Invocation) (vaultexec.Result, error) {
+	s.calls++
+	s.invocation = invocation
+	return s.result, s.err
+}
+
+func TestCompletionHandlerFiltersVaultRootCommands(t *testing.T) {
+	vault := &completionVaultStub{result: vaultexec.Result{Stdout: []byte("read\nkv\nprofile\nkv\n--help\nbad name\nfavorite\n")}}
+	loader := &completionProfileLoader{}
+	var output bytes.Buffer
+	handler := NewCompletionHandler(CompletionDependencies{Profiles: loader, Vault: vault, Output: &output})
+
+	if err := handler(context.Background(), []string{"__vault_commands", ""}); err != nil {
+		t.Fatalf("Vault command completion error = %v", err)
+	}
+	if got, want := output.String(), "kv\nread\n"; got != want {
+		t.Errorf("Vault commands = %q, want %q", got, want)
+	}
+	if vault.calls != 1 || loader.loads != 0 {
+		t.Errorf("Vault calls = %d, profile loads = %d; want 1 and 0", vault.calls, loader.loads)
+	}
+	if len(vault.invocation.Arguments) != 0 || vault.invocation.Mode != vaultexec.Captured {
+		t.Errorf("Vault invocation has arguments or wrong stream mode: %#v", vault.invocation)
+	}
+	if got := vault.invocation.Environment.Set["COMP_LINE"]; got != "vault " {
+		t.Errorf("COMP_LINE = %q, want %q", got, "vault ")
+	}
+	if got := vault.invocation.Environment.Set["COMP_POINT"]; got != "6" {
+		t.Errorf("COMP_POINT = %q, want 6", got)
+	}
+	if got := vault.invocation.Environment.Set["VAULT_ADDR"]; got != "not-a-url" {
+		t.Errorf("VAULT_ADDR = %q, want invalid local-completion address", got)
+	}
+}
+
+func TestCompletionHandlerSilencesUnavailableVault(t *testing.T) {
+	for _, vault := range []*completionVaultStub{nil, {err: errors.New("private failure")}} {
+		var output bytes.Buffer
+		dependencies := CompletionDependencies{Output: &output}
+		if vault != nil {
+			dependencies.Vault = vault
+		}
+		handler := NewCompletionHandler(dependencies)
+		if err := handler(context.Background(), []string{"__vault_commands", "k"}); err != nil {
+			t.Errorf("Vault command completion error = %v, want none", err)
+		}
+		if output.Len() != 0 {
+			t.Errorf("Vault command completion output = %q, want empty", output.String())
+		}
+	}
+}
+
+func TestCompletionHandlerRejectsUnsafeVaultRootPrefix(t *testing.T) {
+	vault := &completionVaultStub{result: vaultexec.Result{Stdout: []byte("kv\n")}}
+	var output bytes.Buffer
+	handler := NewCompletionHandler(CompletionDependencies{Vault: vault, Output: &output})
+	for _, prefix := range []string{"-h", "kv get", "kv\nread", "$(echo unsafe)"} {
+		if err := handler(context.Background(), []string{"__vault_commands", prefix}); err != nil {
+			t.Errorf("prefix %q returned error = %v", prefix, err)
+		}
+	}
+	if vault.calls != 0 || output.Len() != 0 {
+		t.Errorf("unsafe prefix called Vault %d times or wrote %q", vault.calls, output.String())
+	}
+}
+
+func TestBashCompletionCombinesManagementAndVaultCommands(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not installed")
+	}
+	for _, tt := range []struct {
+		name     string
+		words    string
+		index    int
+		want     []string
+		vaultErr bool
+	}{
+		{name: "root", words: "vlt ''", index: 1, want: []string{"profile", "switch", "favorite", "completion", "--profile", "-h", "--help", "kv"}},
+		{name: "root prefix", words: "vlt k", index: 1, want: []string{"kv"}},
+		{name: "after profile", words: "vlt --profile team-a k", index: 3, want: []string{"kv"}},
+		{name: "Vault failure", words: "vlt ''", index: 1, want: []string{"profile", "switch", "favorite", "completion", "--profile", "-h", "--help"}, vaultErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			failure := ""
+			if tt.vaultErr {
+				failure = "printf 'private failure\\n' >&2; return 1"
+			}
+			invocation := bashCompletionScript + `
+vlt() {
+    if [[ "$1 $2" == "completion __vault_commands" ]]; then
+        ` + failure + `
+        printf 'kv\nprofile\nkv\n'
+    fi
+}
+COMP_WORDS=(` + tt.words + `)
+COMP_CWORD=` + fmt.Sprint(tt.index) + `
+_vlt_completion
+printf '%s\n' "${COMPREPLY[@]}"
+`
+			output, err := exec.Command(bash, "-c", invocation).CombinedOutput()
+			if err != nil {
+				t.Fatalf("Bash completion error = %v: %s", err, output)
+			}
+			got := strings.Fields(string(output))
+			if len(got) != len(tt.want) {
+				t.Errorf("Bash candidates = %q, want %q", got, tt.want)
+			}
+			for _, want := range tt.want {
+				if count := countCompletionCandidate(got, want); count != 1 {
+					t.Errorf("candidate %q appears %d times in %q, want once", want, count, got)
+				}
+			}
+			if tt.vaultErr && strings.Contains(string(output), "private failure") {
+				t.Errorf("Bash completion printed a Vault diagnostic: %q", output)
+			}
+		})
+	}
+}
+
+func countCompletionCandidate(candidates []string, wanted string) int {
+	count := 0
+	for _, candidate := range candidates {
+		if candidate == wanted {
+			count++
+		}
+	}
+	return count
+}
 
 func TestCompletionListsFavoriteIDsWithoutPaths(t *testing.T) {
 	store := &fakeFavoriteStore{configuration: favorite.Configuration{Favorites: []favorite.Favorite{
