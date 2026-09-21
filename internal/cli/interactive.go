@@ -117,7 +117,7 @@ func (f huhProfileForm) Run(ctx context.Context, request ProfileFormRequest) (pr
 		candidate.AuthPath = "oidc"
 	}
 
-	fields := make([]huh.Field, 0, 6)
+	fields := make([]huh.Field, 0, 7)
 	if request.NameEditable {
 		fields = append(fields,
 			huh.NewInput().Title("Name").Value(&candidate.Name).Validate(profileFormInputValidator(candidate.Name, f.accessible, profile.ValidateName)),
@@ -140,6 +140,12 @@ func (f huhProfileForm) Run(ctx context.Context, request ProfileFormRequest) (pr
 		huh.NewInput().Title("Namespace").Value(&candidate.Namespace).Validate(profileFormValidator(candidate.Namespace, f.accessible, func(candidate *profile.Profile, value string) {
 			candidate.Namespace = value
 		})),
+		huh.NewInput().Title("Color (#RRGGBB; - to clear)").Value(&candidate.Color).Validate(func(value string) error {
+			if value == "-" {
+				return nil
+			}
+			return profile.ValidateColor(value)
+		}),
 	)
 	form := huh.NewForm(huh.NewGroup(fields...).Title("Profile details")).
 		WithInput(f.input).
@@ -147,6 +153,9 @@ func (f huhProfileForm) Run(ctx context.Context, request ProfileFormRequest) (pr
 		WithAccessible(f.accessible)
 	if err := form.RunWithContext(ctx); err != nil {
 		return profile.Profile{}, fmt.Errorf("profile form: %w", err)
+	}
+	if candidate.Color == "-" {
+		candidate.Color = ""
 	}
 	if err := candidate.Validate(); err != nil {
 		return profile.Profile{}, fmt.Errorf("profile form: validate result: %w", err)

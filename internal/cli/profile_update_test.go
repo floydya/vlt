@@ -22,6 +22,7 @@ func TestProfileHandlerUpdateUsesPopulatedReadOnlyNameForm(t *testing.T) {
 	completed.Address = "https://new.example.com"
 	completed.Namespace = "platform"
 	completed.AllowInsecure = true
+	completed.Color = "#A1B2C3"
 	store := &fakeProfileStore{configuration: config.Configuration{Profiles: []profile.Profile{current}}}
 	mutator := &fakeProfileMutator{}
 	form := &fakeProfileForm{result: completed}
@@ -60,11 +61,33 @@ func TestProfileHandlerUpdateUsesPopulatedReadOnlyNameForm(t *testing.T) {
 	if got.changes.AllowInsecure == nil || *got.changes.AllowInsecure != completed.AllowInsecure {
 		t.Errorf("allow insecure change = %#v, want %t", got.changes.AllowInsecure, completed.AllowInsecure)
 	}
+	if got.changes.Color == nil || *got.changes.Color != completed.Color {
+		t.Errorf("color change = %#v, want %q", got.changes.Color, completed.Color)
+	}
 	if got.changes.Username != nil || got.changes.AuthPath != nil {
 		t.Errorf("unchanged fields = %#v, want nil", got.changes)
 	}
 	if got, want := output.String(), "Updated profile \"team-a\".\n"; got != want {
 		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+func TestProfileHandlerUpdateFormCanClearColor(t *testing.T) {
+	current := managementTestProfile("team-a")
+	current.Color = "#A1B2C3"
+	completed := current
+	completed.Color = ""
+	mutator := &fakeProfileMutator{}
+	handler := NewProfileHandler(ProfileDependencies{
+		Profiles:  &fakeProfileStore{configuration: config.Configuration{Profiles: []profile.Profile{current}}},
+		Mutations: mutator, Output: &bytes.Buffer{}, Terminal: switchTerminal{prompts: true},
+		Form: &fakeProfileForm{result: completed},
+	})
+	if err := handler(context.Background(), []string{"update", "team-a"}); err != nil {
+		t.Fatalf("profile update error = %v", err)
+	}
+	if len(mutator.updated) != 1 || mutator.updated[0].changes.Color == nil || *mutator.updated[0].changes.Color != "" {
+		t.Fatalf("form color update = %#v, want explicit clear", mutator.updated)
 	}
 }
 
