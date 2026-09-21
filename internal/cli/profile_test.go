@@ -91,10 +91,10 @@ func TestProfileHandlerDisplaysContextualHelpWithoutCallingServices(t *testing.T
 		want      []string
 	}{
 		{name: "profile", arguments: []string{"--help"}, want: []string{"Manage Vault profiles", "Usage:", "Commands:", "Examples:"}},
-		{name: "add", arguments: []string{"add", "--help"}, want: []string{"Add a Vault profile", "--address", "--username", "Examples:"}},
+		{name: "add", arguments: []string{"add", "--help"}, want: []string{"Add a Vault profile", "--address", "--username", "--color", "Examples:"}},
 		{name: "list", arguments: []string{"list", "--help"}, want: []string{"List Vault profiles", "Usage:", "Examples:"}},
 		{name: "show", arguments: []string{"show", "--help"}, want: []string{"Show a Vault profile", "Usage:", "Examples:"}},
-		{name: "update", arguments: []string{"update", "--help"}, want: []string{"Update a Vault profile", "--namespace", "Examples:"}},
+		{name: "update", arguments: []string{"update", "--help"}, want: []string{"Update a Vault profile", "--namespace", "--color", "Examples:"}},
 		{name: "remove", arguments: []string{"remove", "--help"}, want: []string{"Remove a Vault profile", "Usage:", "Examples:"}},
 	}
 
@@ -471,6 +471,13 @@ func TestProfileHandlerAddParsesRequiredAndOptionalFields(t *testing.T) {
 				AuthPath: "company-oidc", Namespace: "engineering", AllowInsecure: true,
 			},
 		},
+		{
+			name:      "accepts a profile color",
+			arguments: []string{"add", "team-c", "--address", "https://vault.example.com", "--username", "carol", "--color", "#a1B2c3"},
+			want: profile.Profile{
+				Name: "team-c", Address: "https://vault.example.com", Username: "carol", AuthPath: "oidc", Color: "#a1B2c3",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -818,7 +825,7 @@ func TestProfileHandlerUpdatePassesOnlySuppliedFields(t *testing.T) {
 	var output bytes.Buffer
 	handler := NewProfileHandler(ProfileDependencies{Mutations: mutator, Output: &output})
 
-	arguments := []string{"update", "team-a", "--address", "https://new.example.com", "--namespace=", "--allow-insecure=false"}
+	arguments := []string{"update", "team-a", "--address", "https://new.example.com", "--namespace=", "--allow-insecure=false", "--color=#A1B2C3"}
 	if err := handler(context.Background(), arguments); err != nil {
 		t.Fatalf("profile update error = %v", err)
 	}
@@ -838,11 +845,43 @@ func TestProfileHandlerUpdatePassesOnlySuppliedFields(t *testing.T) {
 	if got.changes.AllowInsecure == nil || *got.changes.AllowInsecure {
 		t.Errorf("allow insecure change = %#v, want explicit false", got.changes.AllowInsecure)
 	}
+	if got.changes.Color == nil || *got.changes.Color != "#A1B2C3" {
+		t.Errorf("color change = %#v, want supplied color", got.changes.Color)
+	}
 	if got.changes.Username != nil || got.changes.AuthPath != nil {
 		t.Errorf("omitted changes = %#v, want nil", got.changes)
 	}
 	if got, want := output.String(), "Updated profile \"team-a\".\n"; got != want {
 		t.Errorf("output = %q, want %q", got, want)
+	}
+}
+
+func TestProfileHandlerUpdateClearsColorExplicitly(t *testing.T) {
+	mutator := &fakeProfileMutator{}
+	var output bytes.Buffer
+	handler := NewProfileHandler(ProfileDependencies{Mutations: mutator, Output: &output, Form: &fakeProfileForm{}})
+	if err := handler(context.Background(), []string{"update", "team-a", "--color="}); err != nil {
+		t.Fatalf("profile update error = %v", err)
+	}
+	if len(mutator.updated) != 1 || mutator.updated[0].changes.Color == nil || *mutator.updated[0].changes.Color != "" {
+		t.Fatalf("color updates = %#v, want explicit empty color", mutator.updated)
+	}
+}
+
+func TestProfileHandlerRejectsInvalidColorBeforeMutation(t *testing.T) {
+	for _, arguments := range [][]string{
+		{"add", "team-a", "--address", "https://vault.example.com", "--username", "alice", "--color=red"},
+		{"update", "team-a", "--color=#12345G"},
+	} {
+		mutator := &fakeProfileMutator{}
+		var output bytes.Buffer
+		handler := NewProfileHandler(ProfileDependencies{Mutations: mutator, Output: &output})
+		if err := handler(context.Background(), arguments); err == nil || !strings.Contains(err.Error(), "color") {
+			t.Fatalf("handler(%q) error = %v, want color validation", arguments, err)
+		}
+		if len(mutator.added) != 0 || len(mutator.updated) != 0 || output.Len() != 0 {
+			t.Fatalf("invalid color reached mutation or output: mutator=%#v output=%q", mutator, output.String())
+		}
 	}
 }
 

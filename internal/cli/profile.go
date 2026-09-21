@@ -16,10 +16,10 @@ import (
 
 const (
 	profileUsage       = "vlt profile COMMAND [ARGUMENT...]"
-	profileAddUsage    = "vlt profile add [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure]"
+	profileAddUsage    = "vlt profile add [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure] [--color COLOR]"
 	profileListUsage   = "vlt profile list"
 	profileShowUsage   = "vlt profile show [NAME]"
-	profileUpdateUsage = "vlt profile update [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure=BOOL]"
+	profileUpdateUsage = "vlt profile update [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure=BOOL] [--color COLOR]"
 	profileRemoveUsage = "vlt profile remove [NAME] [--remove-favorites]"
 	switchUsage        = "vlt switch [NAME|NUMBER]"
 )
@@ -47,7 +47,7 @@ Examples:
 const profileAddHelpText = `Add a Vault profile and authenticate it.
 
 Usage:
-  vlt profile add [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure]
+  vlt profile add [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure] [--color COLOR]
 
 Options:
   --address URL          Vault server URL
@@ -55,6 +55,7 @@ Options:
   --auth-path PATH       OIDC mount path (default: oidc)
   --namespace NAMESPACE  Vault Enterprise namespace
   --allow-insecure       Allow this profile to use unencrypted HTTP
+  --color COLOR          Profile accent as #RRGGBB
   -h, --help             Show help
 
 Examples:
@@ -89,7 +90,7 @@ Examples:
 const profileUpdateHelpText = `Update a Vault profile and reauthenticate when required.
 
 Usage:
-  vlt profile update [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure=BOOL]
+  vlt profile update [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure=BOOL] [--color COLOR]
 
 Options:
   --address URL          Vault server URL
@@ -97,6 +98,7 @@ Options:
   --auth-path PATH       OIDC mount path
   --namespace NAMESPACE  Vault Enterprise namespace
   --allow-insecure=BOOL  Allow or reject unencrypted HTTP
+  --color COLOR          Set #RRGGBB or clear with --color=
   -h, --help             Show help
 
 Examples:
@@ -264,7 +266,7 @@ func profileAdd(ctx context.Context, dependencies ProfileDependencies, args []st
 	}
 	candidate := profile.Profile{
 		Name: name, Address: options.address, Username: options.username,
-		AuthPath: options.authPath, Namespace: options.namespace, AllowInsecure: options.allowInsecure,
+		AuthPath: options.authPath, Namespace: options.namespace, AllowInsecure: options.allowInsecure, Color: options.color,
 	}
 	missing := missingProfileAddFields(candidate)
 	if len(missing) != 0 && (dependencies.Terminal == nil || !dependencies.Terminal.PromptsEnabled()) {
@@ -473,6 +475,9 @@ func profileChangesFromOptions(options profileOptions) profile.ProfileChanges {
 	if options.set["allow-insecure"] {
 		changes.AllowInsecure = &options.allowInsecure
 	}
+	if options.set["color"] {
+		changes.Color = &options.color
+	}
 	return changes
 }
 
@@ -597,6 +602,7 @@ type profileOptions struct {
 	authPath      string
 	namespace     string
 	allowInsecure bool
+	color         string
 	set           map[string]bool
 }
 
@@ -609,11 +615,15 @@ func parseProfileOptions(command string, args []string, defaultAuthPath string) 
 	flags.StringVar(&options.authPath, "auth-path", defaultAuthPath, "")
 	flags.StringVar(&options.namespace, "namespace", "", "")
 	flags.BoolVar(&options.allowInsecure, "allow-insecure", false, "")
+	flags.StringVar(&options.color, "color", "", "")
 	if err := flags.Parse(args); err != nil {
 		return profileOptions{}, err
 	}
 	if flags.NArg() != 0 {
 		return profileOptions{}, fmt.Errorf("unexpected argument %q", flags.Arg(0))
+	}
+	if err := profile.ValidateColor(options.color); err != nil {
+		return profileOptions{}, err
 	}
 	flags.Visit(func(candidate *flag.Flag) {
 		options.set[candidate.Name] = true
