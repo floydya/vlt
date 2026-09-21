@@ -66,7 +66,7 @@ func TestSharedSelectorTypingFiltersImmediatelyAndReturnsStableIdentity(t *testi
 		{ID: "opaque-a", Label: "same display", SearchText: "team-a database"},
 		{ID: "opaque-b", Label: "same display", SearchText: "team-b reports"},
 	}
-	model, err := newSharedSelectorModel("Select a resource", items, "", newPresentation(fixedTerminal{}))
+	model, err := newSharedSelectorModel("Select a resource", "", items, "", newPresentation(fixedTerminal{}))
 	if err != nil {
 		t.Fatalf("new selector model error = %v", err)
 	}
@@ -95,7 +95,7 @@ func TestSharedSelectorNavigationStartsAtPreselectedIdentity(t *testing.T) {
 		{ID: "two", Label: "two", SearchText: "two"},
 		{ID: "three", Label: "three", SearchText: "three"},
 	}
-	model, err := newSharedSelectorModel("Select", items, "two", newPresentation(fixedTerminal{}))
+	model, err := newSharedSelectorModel("Select", "", items, "two", newPresentation(fixedTerminal{}))
 	if err != nil {
 		t.Fatalf("new selector model error = %v", err)
 	}
@@ -112,7 +112,7 @@ func TestSharedSelectorNavigationStartsAtPreselectedIdentity(t *testing.T) {
 
 func TestSharedSelectorNoMatchesAndBackspaceAreSafe(t *testing.T) {
 	items := []SharedSelectorItem{{ID: "one", Label: "one", SearchText: "one"}}
-	model, err := newSharedSelectorModel("Select", items, "", newPresentation(fixedTerminal{}))
+	model, err := newSharedSelectorModel("Select", "", items, "", newPresentation(fixedTerminal{}))
 	if err != nil {
 		t.Fatalf("new selector model error = %v", err)
 	}
@@ -134,7 +134,7 @@ func TestSharedSelectorNoMatchesAndBackspaceAreSafe(t *testing.T) {
 
 func TestSharedSelectorHandlesPasteCancellationAndInterrupt(t *testing.T) {
 	items := []SharedSelectorItem{{ID: "one", Label: "one", SearchText: "production database"}}
-	model, err := newSharedSelectorModel("Select", items, "", newPresentation(fixedTerminal{}))
+	model, err := newSharedSelectorModel("Select", "", items, "", newPresentation(fixedTerminal{}))
 	if err != nil {
 		t.Fatalf("new selector model error = %v", err)
 	}
@@ -147,7 +147,7 @@ func TestSharedSelectorHandlesPasteCancellationAndInterrupt(t *testing.T) {
 		tea.KeyPressMsg(tea.Key{Code: tea.KeyEsc}),
 		tea.InterruptMsg{},
 	} {
-		candidate, err := newSharedSelectorModel("Select", items, "", newPresentation(fixedTerminal{}))
+		candidate, err := newSharedSelectorModel("Select", "", items, "", newPresentation(fixedTerminal{}))
 		if err != nil {
 			t.Fatalf("new selector model error = %v", err)
 		}
@@ -177,7 +177,7 @@ func TestSharedSelectorRejectsInvalidItemsAndCanceledContext(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := selector.Select(tt.ctx, "Select", tt.items, "")
+			_, err := selector.Select(tt.ctx, "Select", "", tt.items, "")
 			if !errors.Is(err, tt.want) {
 				t.Errorf("Select() error = %v, want %v", err, tt.want)
 			}
@@ -194,7 +194,7 @@ func TestSharedSelectorRendersCompactInlinePlainView(t *testing.T) {
 			SearchText: "resource-" + string(rune('a'+index)),
 		}
 	}
-	model, err := newSharedSelectorModel("Select a resource", items, "", newPresentation(fixedTerminal{}))
+	model, err := newSharedSelectorModel("Select a resource", "", items, "", newPresentation(fixedTerminal{}))
 	if err != nil {
 		t.Fatalf("new selector model error = %v", err)
 	}
@@ -217,31 +217,22 @@ func TestSharedSelectorRendersCompactInlinePlainView(t *testing.T) {
 	}
 }
 
-func TestSharedSelectorUsesActiveAccentAndKeepsPlainSelectionVisible(t *testing.T) {
-	items := []SharedSelectorItem{{ID: "first", Label: "first"}, {ID: "second", Label: "second"}}
+func TestSharedSelectorShowsProfileAndFavoriteColumnHeaders(t *testing.T) {
 	for _, tt := range []struct {
-		name       string
-		terminal   Terminal
-		wantAccent bool
+		title  string
+		header string
 	}{
-		{name: "active accent", terminal: WithAccent(fixedTerminal{color: true}, "#112233"), wantAccent: true},
-		{name: "plain", terminal: WithAccent(fixedTerminal{color: false}, "#112233")},
-		{name: "no active accent", terminal: fixedTerminal{color: true}},
+		{title: "Select a profile", header: "#  ACTIVE  NAME"},
+		{title: "Select a favorite", header: "#  RUNS  OPERATION"},
 	} {
-		t.Run(tt.name, func(t *testing.T) {
-			model, err := newSharedSelectorModel("Select", items, "second", newPresentation(tt.terminal))
+		t.Run(tt.title, func(t *testing.T) {
+			model, err := newSharedSelectorModel(tt.title, tt.header, []SharedSelectorItem{{ID: "one", Label: "1  one"}}, "", newPresentation(fixedTerminal{}))
 			if err != nil {
-				t.Fatalf("new selector model error = %v", err)
+				t.Fatal(err)
 			}
 			view := model.View().Content
-			if got := strings.Contains(view, "38;2;17;34;51m"); got != tt.wantAccent {
-				t.Errorf("selector active accent = %t, want %t: %q", got, tt.wantAccent, view)
-			}
-			if got := ansi.Strip(view); !strings.Contains(got, "> second") {
-				t.Errorf("selector selection is unclear: %q", got)
-			}
-			if tt.name == "plain" && strings.Contains(view, "\x1b[") {
-				t.Errorf("plain selector contains ANSI: %q", view)
+			if !strings.Contains(view, "Search: \n  "+tt.header+"\n> 1  one") {
+				t.Errorf("selector view = %q, want header between search and rows", view)
 			}
 		})
 	}
@@ -258,11 +249,11 @@ func TestSharedSelectorColorsEachProfileRowAndKeepsSelectionVisible(t *testing.T
 		terminal Terminal
 		colored  bool
 	}{
-		{name: "color", terminal: WithAccent(fixedTerminal{color: true}, "#AABBCC"), colored: true},
-		{name: "plain", terminal: WithAccent(fixedTerminal{color: false}, "#AABBCC")},
+		{name: "color", terminal: fixedTerminal{color: true}, colored: true},
+		{name: "plain", terminal: fixedTerminal{color: false}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			model, err := newSharedSelectorModel("Select", items, "second", newPresentation(tt.terminal))
+			model, err := newSharedSelectorModel("Select", "", items, "second", newPresentation(tt.terminal))
 			if err != nil {
 				t.Fatalf("new selector model error = %v", err)
 			}
@@ -299,7 +290,7 @@ func TestSharedSelectorAdapterRequiresConfiguredStreams(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := tt.selector.Select(context.Background(), "Select", items, "")
+			_, err := tt.selector.Select(context.Background(), "Select", "", items, "")
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("Select() error = %v, want %q", err, tt.want)
 			}

@@ -19,6 +19,7 @@ type promptLineReader struct {
 
 type recordingSharedSelector struct {
 	title         string
+	header        string
 	items         []SharedSelectorItem
 	preselectedID string
 	selectedID    string
@@ -29,11 +30,13 @@ type recordingSharedSelector struct {
 func (s *recordingSharedSelector) Select(
 	_ context.Context,
 	title string,
+	header string,
 	items []SharedSelectorItem,
 	preselectedID string,
 ) (string, error) {
 	s.calls++
 	s.title = title
+	s.header = header
 	s.items = append([]SharedSelectorItem(nil), items...)
 	s.preselectedID = preselectedID
 	return s.selectedID, s.err
@@ -50,22 +53,6 @@ func (r *promptLineReader) Read(value []byte) (int, error) {
 		r.lines[0] = r.lines[0][n:]
 	}
 	return n, nil
-}
-
-func TestInteractiveFormsAndConfirmationsReceiveActiveAccent(t *testing.T) {
-	terminal := WithAccent(fixedTerminal{color: true}, "#112233")
-	var output bytes.Buffer
-	forms := []presentation{
-		NewHuhProfileForm(strings.NewReader(""), &output, terminal).(huhProfileForm).presentation,
-		NewHuhProfileRemovalConfirmer(strings.NewReader(""), &output, terminal).(huhProfileRemovalConfirmer).presentation,
-		NewHuhFavoriteRemovalConfirmer(strings.NewReader(""), &output, terminal).(huhFavoriteRemovalConfirmer).presentation,
-	}
-	for index, form := range forms {
-		got := form.huhTheme().Theme(true).Focused.SelectedOption.Render("Selected")
-		if !strings.Contains(got, "38;2;17;34;51m") {
-			t.Errorf("interactive form %d selected style = %q, want active accent", index, got)
-		}
-	}
 }
 
 func TestSharedProfileSelectorBuildsDeterministicSearchRowsAndPreselectsActive(t *testing.T) {
@@ -92,6 +79,9 @@ func TestSharedProfileSelectorBuildsDeterministicSearchRowsAndPreselectsActive(t
 	if shared.title != "Select a profile" || shared.preselectedID != "team-b" {
 		t.Errorf("shared selector request = title %q, preselected %q", shared.title, shared.preselectedID)
 	}
+	if want := "#  ACTIVE  NAME    ADDRESS                       NAMESPACE    ALLOW HTTP  COLOR"; shared.header != want {
+		t.Errorf("profile selector header = %q, want %q", shared.header, want)
+	}
 	if len(shared.items) != 2 {
 		t.Fatalf("shared selector item count = %d, want 2", len(shared.items))
 	}
@@ -101,10 +91,10 @@ func TestSharedProfileSelectorBuildsDeterministicSearchRowsAndPreselectsActive(t
 	if shared.items[0].Color != "#112233" || shared.items[1].Color != "#445566" {
 		t.Errorf("picker row colors = %q, %q, want saved colors independent of active status", shared.items[0].Color, shared.items[1].Color)
 	}
-	if got, want := shared.items[0].Label, "1    team-a  https://vault.team-a.example  engineering  no  #112233"; got != want {
+	if got, want := shared.items[0].Label, "1          team-a  https://vault.team-a.example  engineering  no          #112233"; got != want {
 		t.Errorf("first profile row = %q, want %q", got, want)
 	}
-	if got, want := shared.items[1].Label, "2  *  team-b  https://vault.team-b.example  -  yes  #445566"; got != want {
+	if got, want := shared.items[1].Label, "2  *       team-b  https://vault.team-b.example  -            yes         #445566"; got != want {
 		t.Errorf("active profile row = %q, want %q", got, want)
 	}
 	for _, text := range []string{"1", "team-a", "https://vault.team-a.example", "engineering"} {

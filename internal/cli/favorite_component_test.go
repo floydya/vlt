@@ -236,12 +236,12 @@ func TestFakeBackedFavoriteSelectionStopsBeforeVault(t *testing.T) {
 	}{
 		{
 			name:      "shared selector cancellation",
-			selector:  NewSharedFavoriteSelector(&recordingSharedSelector{err: ErrSharedSelectorCanceled}),
+			selector:  NewSharedFavoriteSelector(&recordingSharedSelector{err: ErrSharedSelectorCanceled}, nil),
 			wantError: "operation canceled",
 		},
 		{
 			name:      "unknown stable identity",
-			selector:  NewSharedFavoriteSelector(&recordingSharedSelector{selectedID: "favorite-999999"}),
+			selector:  NewSharedFavoriteSelector(&recordingSharedSelector{selectedID: "favorite-999999"}, nil),
 			wantError: "unknown selection",
 		},
 	}
