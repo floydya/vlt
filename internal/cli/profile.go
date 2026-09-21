@@ -498,6 +498,9 @@ func profileChangesBetween(original, updated profile.Profile) profile.ProfileCha
 	if original.AllowInsecure != updated.AllowInsecure {
 		changes.AllowInsecure = &updated.AllowInsecure
 	}
+	if original.Color != updated.Color {
+		changes.Color = &updated.Color
+	}
 	return changes
 }
 
