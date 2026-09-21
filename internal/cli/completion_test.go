@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -866,6 +867,75 @@ LBUFFER='vlt kv g'
 _vlt
 `
 	output, err := exec.Command(zsh, "-fc", invocation).CombinedOutput()
+	if err != nil || len(output) != 0 {
+		t.Fatalf("unavailable Vault completion = %q, error = %v; want silence", output, err)
+	}
+}
+
+func TestFishCompletionRequestsVaultCandidates(t *testing.T) {
+	fish, err := exec.LookPath("fish")
+	if err != nil {
+		t.Skip("fish is not installed")
+	}
+	for _, tt := range []struct {
+		name string
+		line string
+		want string
+	}{
+		{name: "root", line: "vlt k", want: "kv"},
+		{name: "nested command", line: "vlt kv g", want: "get"},
+		{name: "flag", line: "vlt kv get -m", want: "-mount"},
+		{name: "local value", line: "vlt kv get -format=j", want: "-format=json"},
+		{name: "profile command", line: "vlt --profile team-a k", want: "kv"},
+		{name: "profile argument", line: "vlt --profile team-a kv g", want: "get"},
+		{name: "profile local value", line: "vlt --profile team-a kv get -format=j", want: "-format=json"},
+		{name: "management", line: "vlt profile a", want: "add"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			invocation := `function vlt
+    if test "$argv[1]" != completion
+        return 1
+    end
+    switch "$argv[2]"
+        case __vault_commands
+            printf 'kv\n'
+        case __vault_args
+            switch "$argv[3]"
+                case 'vlt kv g' 'vlt --profile team-a kv g'
+                    printf 'get\n'
+                case 'vlt kv get -m'
+                    printf '%s\n' -mount
+                case 'vlt kv get -format=j' 'vlt --profile team-a kv get -format=j'
+                    printf 'json\n'
+            end
+    end
+end
+` + fishCompletionScript + "\ncomplete -C " + strconv.Quote(tt.line) + "\n"
+			command := exec.Command(fish, "-c", invocation)
+			root := t.TempDir()
+			command.Env = append(os.Environ(), "HOME="+root, "XDG_CONFIG_HOME="+root, "XDG_DATA_HOME="+root, "XDG_CACHE_HOME="+root)
+			output, err := command.CombinedOutput()
+			if err != nil || !strings.Contains(string(output), tt.want) {
+				t.Fatalf("Fish completion for %q = %q, error = %v; want %q", tt.line, output, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestFishCompletionSilencesUnavailableVault(t *testing.T) {
+	fish, err := exec.LookPath("fish")
+	if err != nil {
+		t.Skip("fish is not installed")
+	}
+	invocation := `function vlt
+    printf 'private-failure\n' >&2
+    return 1
+end
+` + fishCompletionScript + "\ncomplete -C 'vlt k'\ncomplete -C 'vlt kv g'\n"
+	command := exec.Command(fish, "-c", invocation)
+	root := t.TempDir()
+	command.Env = append(os.Environ(), "HOME="+root, "XDG_CONFIG_HOME="+root, "XDG_DATA_HOME="+root, "XDG_CACHE_HOME="+root)
+	output, err := command.CombinedOutput()
 	if err != nil || len(output) != 0 {
 		t.Fatalf("unavailable Vault completion = %q, error = %v; want silence", output, err)
 	}
