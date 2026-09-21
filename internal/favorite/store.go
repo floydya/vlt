@@ -13,7 +13,7 @@ import (
 	"vlt/internal/securefile"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 var ErrDuplicateFavorite = errors.New("duplicate favorite")
 
@@ -76,15 +76,18 @@ func (s *Store) Load(ctx context.Context) (Configuration, error) {
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return Configuration{}, errors.New("decode favorites: expected a single JSON document")
 	}
-	if stored.Version == nil || *stored.Version != schemaVersion {
+	if stored.Version == nil || (*stored.Version != 1 && *stored.Version != schemaVersion) {
 		if stored.Version == nil {
 			return Configuration{}, errors.New("favorite version is required")
 		}
 		return Configuration{}, errors.New("favorite version is unsupported")
 	}
 	configuration := Configuration{Favorites: stored.Favorites}
-	if err := validate(configuration); err != nil {
+	if err := validate(configuration, *stored.Version == schemaVersion); err != nil {
 		return Configuration{}, err
+	}
+	if *stored.Version == 1 {
+		assignMissingIDs(configuration.Favorites)
 	}
 	if err := ctx.Err(); err != nil {
 		return Configuration{}, err
@@ -96,7 +99,9 @@ func (s *Store) Save(ctx context.Context, configuration Configuration) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := validate(configuration); err != nil {
+	configuration.Favorites = append([]Favorite(nil), configuration.Favorites...)
+	assignMissingIDs(configuration.Favorites)
+	if err := validate(configuration, true); err != nil {
 		return err
 	}
 	contents, err := json.MarshalIndent(saveDocument{
@@ -161,11 +166,21 @@ func (s *Store) Save(ctx context.Context, configuration Configuration) error {
 	return nil
 }
 
-func validate(configuration Configuration) error {
+func validate(configuration Configuration, requireIDs bool) error {
 	identities := make(map[[3]string]struct{}, len(configuration.Favorites))
+	ids := make(map[string]struct{}, len(configuration.Favorites))
 	for index, candidate := range configuration.Favorites {
 		if err := candidate.Validate(); err != nil {
 			return fmt.Errorf("favorite %d: %w", index+1, err)
+		}
+		if requireIDs && candidate.ID == "" {
+			return fmt.Errorf("favorite %d: ID is required", index+1)
+		}
+		if candidate.ID != "" {
+			if _, found := ids[candidate.ID]; found {
+				return errors.New("favorite ID is duplicated")
+			}
+			ids[candidate.ID] = struct{}{}
 		}
 		identity := [3]string{candidate.Profile, candidate.Operation, candidate.Path}
 		if _, found := identities[identity]; found {

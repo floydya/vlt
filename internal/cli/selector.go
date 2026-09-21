@@ -10,6 +10,7 @@ import (
 
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 var (
@@ -23,8 +24,11 @@ const sharedSelectorMaxVisible = 8
 type SharedSelectorItem struct {
 	ID         string
 	Label      string
+	Detail     string
 	SearchText string
 	Color      string
+	Name       string
+	Active     bool
 }
 
 type SharedSelector interface {
@@ -217,11 +221,9 @@ func (m sharedSelectorModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m sharedSelectorModel) View() tea.View {
 	var output strings.Builder
-	output.WriteString(m.presentation.render(presentationHeading, m.title))
+	output.WriteString(wrapSelectorLine(m.presentation.render(presentationHeading, m.title), m.presentation.width))
 	output.WriteByte('\n')
-	output.WriteString(m.presentation.render(presentationLabel, "Search:"))
-	output.WriteByte(' ')
-	output.WriteString(m.query)
+	output.WriteString(wrapSelectorLine(m.presentation.render(presentationLabel, "Search:")+" "+m.query, m.presentation.width))
 	output.WriteByte('\n')
 
 	if len(m.visible) == 0 {
@@ -234,19 +236,57 @@ func (m sharedSelectorModel) View() tea.View {
 		}
 		end := min(len(m.visible), start+sharedSelectorMaxVisible)
 		for index := start; index < end; index++ {
+			var row strings.Builder
 			marker := "  "
 			role := presentationPlain
 			if index == m.cursor {
 				marker = "> "
 				role = presentationSelected
 			}
-			output.WriteString(m.presentation.renderColored(role, marker+m.visible[index].Label, m.visible[index].Color))
+			item := m.visible[index]
+			if item.Name == "" || item.Color == "" {
+				row.WriteString(m.presentation.render(role, marker+item.Label))
+			} else {
+				prefix, suffix, found := strings.Cut(item.Label, item.Name)
+				if !found {
+					row.WriteString(m.presentation.render(role, marker+item.Label))
+				} else {
+					row.WriteString(marker)
+					if item.Active {
+						before, after, hasStar := strings.Cut(prefix, "*")
+						if hasStar {
+							row.WriteString(before)
+							row.WriteString(m.presentation.renderColored(presentationSelected, "*", item.Color))
+							prefix = after
+						}
+					}
+					row.WriteString(prefix)
+					row.WriteString(m.presentation.renderColored(presentationSelected, item.Name, item.Color))
+					row.WriteString(suffix)
+				}
+			}
+			output.WriteString(wrapSelectorLine(row.String(), m.presentation.width))
+			output.WriteByte('\n')
+		}
+		if detail := m.visible[m.cursor].Detail; detail != "" {
+			output.WriteByte('\n')
+			if m.presentation.width > 0 {
+				detail = ansi.Hardwrap(detail, m.presentation.width, true)
+			}
+			output.WriteString(m.presentation.render(presentationPlain, detail))
 			output.WriteByte('\n')
 		}
 	}
-	output.WriteString(m.presentation.render(presentationMuted, "up/down move  enter select  esc cancel"))
+	output.WriteString(wrapSelectorLine(m.presentation.render(presentationMuted, "up/down move  enter select  esc cancel"), m.presentation.width))
 
 	return tea.NewView(output.String())
+}
+
+func wrapSelectorLine(value string, width int) string {
+	if width > 0 {
+		return ansi.Hardwrap(value, width, true)
+	}
+	return value
 }
 
 func (m *sharedSelectorModel) appendQuery(value string) {

@@ -18,6 +18,7 @@ const (
 )
 
 type Favorite struct {
+	ID        string `json:"id"`
 	Profile   string `json:"profile"`
 	Operation string `json:"operation"`
 	Path      string `json:"path"`
@@ -45,6 +46,9 @@ func (f *Favorite) UnmarshalJSON(data []byte) error {
 }
 
 func (f Favorite) Validate() error {
+	if f.ID != "" && !validID(f.ID) {
+		return errors.New("favorite ID is invalid")
+	}
 	if err := profile.ValidateName(f.Profile); err != nil {
 		return fmt.Errorf("profile: %w", err)
 	}
@@ -90,6 +94,17 @@ func (s Service) List() []Favorite {
 }
 
 func (s Service) Resolve(selector string) (Favorite, error) {
+	if strings.HasPrefix(selector, "f_") {
+		if !validID(selector) {
+			return Favorite{}, errors.New("favorite ID is invalid")
+		}
+		for _, candidate := range s.favorites {
+			if candidate.ID == selector {
+				return candidate, nil
+			}
+		}
+		return Favorite{}, errors.New("favorite ID is unknown")
+	}
 	if !isCanonicalIndex(selector) {
 		return Favorite{}, errors.New("favorite selector is invalid")
 	}

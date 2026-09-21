@@ -249,14 +249,34 @@ func (m *recordingFavoriteMutator) Add(_ context.Context, candidate favorite.Fav
 	return m.addErr
 }
 
+func (m *recordingFavoriteMutator) AddWithResult(ctx context.Context, candidate favorite.Favorite) (favorite.Favorite, error) {
+	return candidate, m.Add(ctx, candidate)
+}
+
 func (m *recordingFavoriteMutator) Update(_ context.Context, selector string, changes favorite.FavoriteChanges) error {
 	m.updated = append(m.updated, recordedFavoriteUpdate{selector: selector, changes: changes})
 	return m.updateErr
 }
 
+func (m *recordingFavoriteMutator) UpdateWithResult(ctx context.Context, selector string, changes favorite.FavoriteChanges, expected *favorite.Favorite) (favorite.Favorite, error) {
+	err := m.Update(ctx, selector, changes)
+	if expected != nil {
+		return *expected, err
+	}
+	return favorite.Favorite{}, err
+}
+
 func (m *recordingFavoriteMutator) Remove(_ context.Context, selector string) error {
 	m.removed = append(m.removed, selector)
 	return m.removeErr
+}
+
+func (m *recordingFavoriteMutator) RemoveWithResult(ctx context.Context, selector string, expected *favorite.Favorite) (favorite.Favorite, error) {
+	err := m.Remove(ctx, selector)
+	if expected != nil {
+		return *expected, err
+	}
+	return favorite.Favorite{}, err
 }
 
 func TestFavoriteHandlerReturnsCanonicalHelp(t *testing.T) {
@@ -423,9 +443,9 @@ func TestFavoriteAddRejectsInvalidSyntaxWithContext(t *testing.T) {
 
 func TestFavoriteListDisplaysStableNumberedColumns(t *testing.T) {
 	store := &fakeFavoriteStore{configuration: favorite.Configuration{Favorites: []favorite.Favorite{
-		{Profile: "team-b", Operation: favorite.OperationRead, Path: "secret/z", Note: "", RunCount: 9},
-		{Profile: "team-b", Operation: favorite.OperationRead, Path: "secret/a", Note: "reporting", RunCount: 7},
-		{Profile: "team-a", Operation: favorite.OperationKVGet, Path: "secret/a", Note: "daily", RunCount: 7},
+		{ID: "f_3333333333333333", Profile: "team-b", Operation: favorite.OperationRead, Path: "secret/z", Note: "", RunCount: 9},
+		{ID: "f_2222222222222222", Profile: "team-b", Operation: favorite.OperationRead, Path: "secret/a", Note: "reporting", RunCount: 7},
+		{ID: "f_1111111111111111", Profile: "team-a", Operation: favorite.OperationKVGet, Path: "secret/a", Note: "daily", RunCount: 7},
 	}}}
 	var output bytes.Buffer
 	handler := NewFavoriteHandler(FavoriteDependencies{Favorites: store, Output: &output, Terminal: fixedTerminal{}})
@@ -434,10 +454,10 @@ func TestFavoriteListDisplaysStableNumberedColumns(t *testing.T) {
 		t.Fatalf("favorite list error = %v", err)
 	}
 	want := "" +
-		"#  RUNS  OPERATION  PROFILE  PATH      NOTE\n" +
-		"1  9     read       team-b   secret/z  -\n" +
-		"2  7     kv-get     team-a   secret/a  daily\n" +
-		"3  7     read       team-b   secret/a  reporting\n"
+		"#  ID                  RUNS  OPERATION  PROFILE  PATH      NOTE\n" +
+		"1  f_3333333333333333  9     read       team-b   secret/z  -\n" +
+		"2  f_1111111111111111  7     kv-get     team-a   secret/a  daily\n" +
+		"3  f_2222222222222222  7     read       team-b   secret/a  reporting\n"
 	if got := output.String(); got != want {
 		t.Fatalf("favorite list output = %q, want %q", got, want)
 	}

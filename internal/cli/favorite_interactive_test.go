@@ -129,6 +129,24 @@ func TestFavoriteInteractiveAddUsesSortedProfilesAndReadDefault(t *testing.T) {
 	}
 }
 
+func TestFavoriteInteractiveAddPassesActiveProfileToForm(t *testing.T) {
+	profiles := &fakeProfileStore{configuration: config.Configuration{
+		ActiveProfile: "team-b",
+		Profiles:      []profile.Profile{{Name: "team-a"}, {Name: "team-b"}},
+	}}
+	form := &fakeFavoriteForm{result: favorite.Favorite{Profile: "team-b", Operation: favorite.OperationRead, Path: "secret/app"}}
+	handler := NewFavoriteHandler(interactiveFavoriteDependencies(
+		profiles, &fakeFavoriteStore{}, &recordingFavoriteMutator{}, &fakeFavoriteManagementSelector{}, form,
+		&fakeFavoriteRemovalConfirmer{}, &bytes.Buffer{},
+	))
+	if err := handler(context.Background(), []string{"add"}); err != nil {
+		t.Fatal(err)
+	}
+	if form.request.ActiveProfile != "team-b" {
+		t.Fatalf("form active profile = %q", form.request.ActiveProfile)
+	}
+}
+
 func TestFavoriteInteractiveAddRequiresProfilesBeforeOpeningForm(t *testing.T) {
 	profiles := &fakeProfileStore{}
 	mutations := &recordingFavoriteMutator{}
@@ -342,7 +360,7 @@ func TestFavoriteFormUsesSharedProfileAndOperationSelectorsWithDefaults(t *testi
 	if len(shared.items) != 2 || shared.items[0][0].ID != "team-a" || shared.items[0][1].ID != "team-b" {
 		t.Fatalf("profile choices = %#v, want sorted stable names", shared.items)
 	}
-	if shared.items[0][0].Color != "#112233" || !strings.Contains(shared.items[0][0].Label, "#112233") || shared.items[0][1].Color != "" || !strings.HasSuffix(shared.items[0][1].Label, "  -") {
+	if shared.items[0][0].Color != "#112233" || !strings.Contains(shared.items[0][0].Detail, "#112233") || shared.items[0][1].Color != "" || !strings.HasSuffix(shared.items[0][1].Detail, "Color: -") {
 		t.Errorf("favorite form profile rows = %#v, want saved color and plain fallback", shared.items[0])
 	}
 	if len(shared.items[1]) != 2 || shared.items[1][0].ID != favorite.OperationRead || shared.items[1][1].ID != favorite.OperationKVGet {
@@ -429,7 +447,7 @@ func TestFavoriteManagementUsesSharedSelectorRowsAndStableIdentity(t *testing.T)
 	if selected != ordered[1] {
 		t.Fatalf("selected favorite = %#v, want stable ordered favorite %#v", selected, ordered[1])
 	}
-	if len(shared.items) != 2 || shared.items[0].Label != "1  12  kv-get  team-b  secret/b  daily" || shared.items[1].Label != "2  2  read  team-a  secret/a  -" {
+	if len(shared.items) != 2 || shared.items[0].Label != "1  secret/b  (12 runs)" || shared.items[1].Label != "2  secret/a  (2 runs)" {
 		t.Fatalf("management selector rows = %#v, want count-first rows", shared.items)
 	}
 	for _, text := range []string{"secret/a", "secret/b", "team-a", "team-b", "kv-get", "daily"} {

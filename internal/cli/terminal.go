@@ -19,22 +19,7 @@ type terminalCapabilities struct {
 	inputTerminal   bool
 	displayTerminal bool
 	colorEnabled    bool
-}
-
-type accentTerminal struct {
-	Terminal
-	color string
-}
-
-func WithAccent(terminal Terminal, color string) Terminal {
-	if terminal == nil || color == "" {
-		return terminal
-	}
-	return accentTerminal{Terminal: terminal, color: color}
-}
-
-func (t accentTerminal) AccentColor() string {
-	return t.color
+	display         io.Writer
 }
 
 type terminalDetector func(uintptr) bool
@@ -60,7 +45,23 @@ func newTerminal(
 		inputTerminal:   inputTerminal,
 		displayTerminal: displayTerminal,
 		colorEnabled:    colorEnabled,
+		display:         display,
 	}
+}
+
+func (t terminalCapabilities) Width() int {
+	if !t.displayTerminal {
+		return 0
+	}
+	file, ok := t.display.(interface{ Fd() uintptr })
+	if !ok {
+		return 0
+	}
+	width, _, err := term.GetSize(file.Fd())
+	if err != nil || width <= 0 {
+		return 0
+	}
+	return width
 }
 
 func (t terminalCapabilities) InputIsTerminal() bool {

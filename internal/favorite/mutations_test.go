@@ -138,6 +138,10 @@ func TestMutationServiceAddPersistsFavorite(t *testing.T) {
 	if err := service.Add(context.Background(), added); err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
+	added.ID = favorites.configuration.Favorites[1].ID
+	if !validID(added.ID) {
+		t.Fatalf("generated favorite ID = %q", added.ID)
+	}
 	want := Configuration{Favorites: []Favorite{original.Favorites[0], added}}
 	if !reflect.DeepEqual(favorites.configuration, want) {
 		t.Fatalf("configuration after Add() = %#v, want %#v", favorites.configuration, want)

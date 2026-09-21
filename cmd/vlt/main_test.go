@@ -93,33 +93,6 @@ func TestNewDispatcherWiresProfileManagement(t *testing.T) {
 	}
 }
 
-func TestActiveProfileAccentFollowsSavedSelection(t *testing.T) {
-	store := config.NewStore(filepath.Join(t.TempDir(), "vlt", "profiles.json"))
-	colored := profile.Profile{Name: "team-a", Address: "https://vault.example.com", Username: "alice", AuthPath: "oidc", Color: "#112233"}
-	plain := profile.Profile{Name: "team-b", Address: "https://vault.example.net", Username: "bob", AuthPath: "oidc"}
-	configuration := config.Configuration{Profiles: []profile.Profile{colored, plain}, ActiveProfile: "team-a"}
-	if err := store.Save(context.Background(), configuration); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-	if got := activeProfileAccent(store); got != "#112233" {
-		t.Fatalf("active accent = %q, want #112233", got)
-	}
-	configuration.ActiveProfile = "team-b"
-	if err := store.Save(context.Background(), configuration); err != nil {
-		t.Fatalf("Save() after switch error = %v", err)
-	}
-	if got := activeProfileAccent(store); got != "" {
-		t.Fatalf("plain active accent = %q, want empty", got)
-	}
-	configuration.ActiveProfile = ""
-	if err := store.Save(context.Background(), configuration); err != nil {
-		t.Fatalf("Save() after clear error = %v", err)
-	}
-	if got := activeProfileAccent(store); got != "" {
-		t.Fatalf("missing active accent = %q, want empty", got)
-	}
-}
-
 func TestNewDispatcherWiresFavoriteManagement(t *testing.T) {
 	configDirectory := t.TempDir()
 	profiles := config.NewStore(filepath.Join(configDirectory, "vlt", "profiles.json"))
@@ -148,6 +121,10 @@ func TestNewDispatcherWiresFavoriteManagement(t *testing.T) {
 	want := []favorite.Favorite{{
 		Profile: "team-a", Operation: favorite.OperationKVGet, Path: "secret/data/app", Note: "daily",
 	}}
+	if len(configuration.Favorites) != 1 || !strings.HasPrefix(configuration.Favorites[0].ID, "f_") {
+		t.Fatalf("stored favorite ID = %#v", configuration.Favorites)
+	}
+	want[0].ID = configuration.Favorites[0].ID
 	if !reflect.DeepEqual(configuration.Favorites, want) {
 		t.Fatalf("stored favorites = %#v, want %#v", configuration.Favorites, want)
 	}
@@ -179,9 +156,13 @@ func TestNewDispatcherProfileRemoveProtectsLinkedFavorites(t *testing.T) {
 	if err := favorites.Save(context.Background(), favoriteConfiguration); err != nil {
 		t.Fatalf("save favorites: %v", err)
 	}
+	favoriteConfiguration, err := favorites.Load(context.Background())
+	if err != nil {
+		t.Fatalf("load seeded favorites: %v", err)
+	}
 	dispatcher := newDispatcherAt(configDirectory, strings.NewReader(""), io.Discard, io.Discard)
 
-	err := dispatcher.Dispatch(context.Background(), []string{"profile", "remove", "team-a"})
+	err = dispatcher.Dispatch(context.Background(), []string{"profile", "remove", "team-a"})
 	if err == nil || !strings.Contains(err.Error(), "--remove-favorites") {
 		t.Fatalf("profile remove error = %v, want cascade guidance", err)
 	}

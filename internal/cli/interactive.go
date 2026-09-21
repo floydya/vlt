@@ -101,8 +101,10 @@ func (s sharedProfileSelector) Select(ctx context.Context, candidates []profile.
 		if color == "" {
 			color = "-"
 		}
-		label := fmt.Sprintf("%d  %s  %s  %s  %s  %s  %s", index+1, marker, candidate.Name, candidate.Address, namespace, yesNo(candidate.AllowInsecure), color)
-		items = append(items, SharedSelectorItem{ID: candidate.Name, Label: label, SearchText: label, Color: candidate.Color})
+		label := fmt.Sprintf("%d  %s  %s", index+1, marker, candidate.Name)
+		detail := fmt.Sprintf("Address: %s\nNamespace: %s\nAllow HTTP: %s\nColor: %s", candidate.Address, namespace, yesNo(candidate.AllowInsecure), color)
+		search := fmt.Sprintf("%d  %s  %s  %s  %s  %s  %s", index+1, marker, candidate.Name, candidate.Address, namespace, yesNo(candidate.AllowInsecure), color)
+		items = append(items, SharedSelectorItem{ID: candidate.Name, Label: label, Detail: detail, SearchText: search, Color: candidate.Color, Name: candidate.Name, Active: marker == "*"})
 	}
 	selected, err := s.selector.Select(ctx, "Select a profile", items, active)
 	if err != nil {
@@ -123,20 +125,26 @@ func (f huhProfileForm) Run(ctx context.Context, request ProfileFormRequest) (pr
 		candidate.AuthPath = "oidc"
 	}
 
-	fields := make([]huh.Field, 0, 7)
+	fields := make([]huh.Field, 0, 2)
 	if request.NameEditable {
 		fields = append(fields,
 			huh.NewInput().Title("Name").Value(&candidate.Name).Validate(profileFormInputValidator(candidate.Name, f.accessible, profile.ValidateName)),
 		)
 	}
 	fields = append(fields,
+		huh.NewInput().Title("Address").Value(&candidate.Address).Validate(profileFormInputValidator(candidate.Address, f.accessible, profile.ValidateAddress)),
+	)
+	httpGroup := huh.NewGroup(
 		huh.NewConfirm().
 			Title("Allow insecure HTTP").
 			Description("Use only for a trusted Vault endpoint that cannot use HTTPS.").
 			Affirmative("Allow").
 			Negative("Require HTTPS").
 			Value(&candidate.AllowInsecure),
-		huh.NewInput().Title("Address").Value(&candidate.Address).Validate(profileFormInputValidator(candidate.Address, f.accessible, profile.ValidateAddress)),
+	).WithHideFunc(func() bool {
+		return !strings.EqualFold(strings.SplitN(candidate.Address, ":", 2)[0], "http") && !candidate.AllowInsecure
+	})
+	detailFields := []huh.Field{
 		huh.NewInput().Title("Username").Value(&candidate.Username).Validate(profileFormValidator(candidate.Username, f.accessible, func(candidate *profile.Profile, value string) {
 			candidate.Username = value
 		})),
@@ -152,15 +160,24 @@ func (f huhProfileForm) Run(ctx context.Context, request ProfileFormRequest) (pr
 			}
 			return profile.ValidateColor(value)
 		}),
-	)
-	form := huh.NewForm(huh.NewGroup(fields...).Title("Profile details")).
-		WithInput(f.input).
-		WithOutput(f.output).
-		WithAccessible(f.accessible)
-	if !f.presentation.colorEnabled || f.presentation.accentColor != "" {
-		form = form.WithTheme(f.presentation.huhTheme())
 	}
-	if err := form.RunWithContext(ctx); err != nil {
+	runGroups := func(groups ...*huh.Group) error {
+		form := huh.NewForm(groups...).WithInput(f.input).WithOutput(f.output).WithAccessible(f.accessible).WithTheme(f.presentation.huhTheme())
+		return form.RunWithContext(ctx)
+	}
+	if f.accessible {
+		if err := runGroups(huh.NewGroup(fields...).Title("Profile details")); err != nil {
+			return profile.Profile{}, fmt.Errorf("profile form: %w", err)
+		}
+		if strings.EqualFold(strings.SplitN(candidate.Address, ":", 2)[0], "http") || candidate.AllowInsecure {
+			if err := runGroups(httpGroup); err != nil {
+				return profile.Profile{}, fmt.Errorf("profile form: %w", err)
+			}
+		}
+		if err := runGroups(huh.NewGroup(detailFields...)); err != nil {
+			return profile.Profile{}, fmt.Errorf("profile form: %w", err)
+		}
+	} else if err := runGroups(huh.NewGroup(fields...).Title("Profile details"), httpGroup, huh.NewGroup(detailFields...)); err != nil {
 		return profile.Profile{}, fmt.Errorf("profile form: %w", err)
 	}
 	if candidate.Color == "-" {
@@ -205,10 +222,8 @@ func (c huhProfileRemovalConfirmer) Confirm(ctx context.Context, request Profile
 	form := huh.NewForm(huh.NewGroup(field)).
 		WithInput(c.input).
 		WithOutput(c.output).
-		WithAccessible(c.accessible)
-	if !c.presentation.colorEnabled || c.presentation.accentColor != "" {
-		form = form.WithTheme(c.presentation.huhTheme())
-	}
+		WithAccessible(c.accessible).
+		WithTheme(c.presentation.huhTheme())
 	if err := form.RunWithContext(ctx); err != nil {
 		return false, fmt.Errorf("confirm profile removal: %w", err)
 	}

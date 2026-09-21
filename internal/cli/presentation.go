@@ -6,6 +6,7 @@ import (
 
 	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"vlt/internal/profile"
 )
@@ -35,7 +36,7 @@ type presentationStyles struct {
 type presentation struct {
 	styles       presentationStyles
 	colorEnabled bool
-	accentColor  string
+	width        int
 }
 
 type presentationCell struct {
@@ -62,7 +63,10 @@ func newPresentation(terminal Terminal) presentation {
 		error:    lipgloss.NewStyle(),
 	}
 	colorEnabled := terminal != nil && terminal.ColorEnabled()
-	accentColor := ""
+	width := 0
+	if sized, ok := terminal.(interface{ Width() int }); ok {
+		width = sized.Width()
+	}
 	if colorEnabled {
 		styles.heading = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Cyan)
 		styles.label = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Cyan)
@@ -70,17 +74,8 @@ func newPresentation(terminal Terminal) presentation {
 		styles.muted = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 		styles.success = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Green)
 		styles.error = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Red)
-		if accented, ok := terminal.(interface{ AccentColor() string }); ok {
-			if color := accented.AccentColor(); color != "" {
-				accentColor = color
-				accent := lipgloss.Color(color)
-				styles.heading = styles.heading.Foreground(accent)
-				styles.label = styles.label.Foreground(accent)
-				styles.selected = styles.selected.Foreground(accent)
-			}
-		}
 	}
-	return presentation{styles: styles, colorEnabled: colorEnabled, accentColor: accentColor}
+	return presentation{styles: styles, colorEnabled: colorEnabled, width: width}
 }
 
 func presentationForOptionalTerminal(terminals []Terminal) presentation {
@@ -117,6 +112,29 @@ func (p presentation) renderTable(rows [][]presentationCell) string {
 		output.WriteByte('\n')
 	}
 	return output.String()
+}
+
+func (p presentation) tableFits(rows [][]presentationCell) bool {
+	if p.width <= 0 {
+		return true
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(ansi.Strip(p.renderTable(rows)), "\n"), "\n") {
+		if lipgloss.Width(line) > p.width {
+			return false
+		}
+	}
+	return true
+}
+
+func (p presentation) wrappedLine(value string) string {
+	if p.width > 0 {
+		value = ansi.Hardwrap(value, p.width, true)
+	}
+	return value + "\n"
+}
+
+func (p presentation) wrappedField(label, value string) string {
+	return p.wrappedLine("   " + p.render(presentationLabel, label+":") + " " + value)
 }
 
 func (p presentation) renderDetails(rows []presentationDetail) string {
@@ -181,10 +199,6 @@ func (p presentation) style(role presentationRole) lipgloss.Style {
 func (p presentation) huhTheme() huh.Theme {
 	return huh.ThemeFunc(func(isDark bool) *huh.Styles {
 		styles := huh.ThemeBase(isDark)
-		if p.accentColor != "" {
-			styles.Focused.Base = styles.Focused.Base.BorderForeground(lipgloss.Color(p.accentColor))
-			styles.Focused.Card = styles.Focused.Base
-		}
 		styles.Group.Title = p.styles.heading
 		styles.Group.Description = p.styles.muted
 
@@ -245,9 +259,11 @@ func profileListOutput(profiles []profile.Profile, activeName string, terminal T
 		active := candidate.Name == activeName
 		marker := ""
 		markerRole := presentationPlain
+		markerColor := ""
 		if active {
 			marker = "*"
 			markerRole = presentationSelected
+			markerColor = candidate.Color
 		}
 		namespace := candidate.Namespace
 		if namespace == "" {
@@ -259,19 +275,46 @@ func profileListOutput(profiles []profile.Profile, activeName string, terminal T
 		}
 		row := []presentationCell{
 			{value: strconv.Itoa(index + 1)},
-			{value: marker, role: markerRole},
-			{value: candidate.Name},
+			{value: marker, role: markerRole, color: markerColor},
+			{value: candidate.Name, color: candidate.Color},
 			{value: candidate.Address},
 			{value: namespace},
 			{value: yesNo(candidate.AllowInsecure)},
 			{value: color},
 		}
-		for index := range row {
-			row[index].color = candidate.Color
-		}
 		rows = append(rows, row)
 	}
-	return newPresentation(terminal).renderTable(rows)
+	p := newPresentation(terminal)
+	if p.tableFits(rows) {
+		return p.renderTable(rows)
+	}
+	var output strings.Builder
+	for index, candidate := range profile.NewService(profiles).List() {
+		marker := " "
+		markerRole := presentationPlain
+		markerColor := ""
+		if candidate.Name == activeName {
+			marker = "*"
+			markerRole = presentationSelected
+			markerColor = candidate.Color
+		}
+		output.WriteString(p.wrappedLine(strconv.Itoa(index+1) + "  " +
+			p.renderColored(markerRole, marker, markerColor) + "  " +
+			p.renderColored(presentationPlain, candidate.Name, candidate.Color)))
+		output.WriteString(p.wrappedField("Address", candidate.Address))
+		namespace := candidate.Namespace
+		if namespace == "" {
+			namespace = "-"
+		}
+		output.WriteString(p.wrappedField("Namespace", namespace))
+		output.WriteString(p.wrappedField("Allow HTTP", yesNo(candidate.AllowInsecure)))
+		color := candidate.Color
+		if color == "" {
+			color = "-"
+		}
+		output.WriteString(p.wrappedField("Color", color))
+	}
+	return output.String()
 }
 
 func profileShowOutput(candidate profile.Profile, active bool, terminal Terminal) string {
@@ -285,22 +328,21 @@ func profileShowOutput(candidate profile.Profile, active bool, terminal Terminal
 	}
 	activeValue := "no"
 	activeRole := presentationPlain
+	activeColor := ""
 	if active {
 		activeValue = "yes"
 		activeRole = presentationSelected
+		activeColor = candidate.Color
 	}
 	rows := []presentationDetail{
-		{label: "Name", value: candidate.Name},
+		{label: "Name", value: candidate.Name, color: candidate.Color},
 		{label: "Address", value: candidate.Address},
 		{label: "Username", value: candidate.Username},
 		{label: "Auth path", value: candidate.AuthPath},
 		{label: "Namespace", value: namespace},
 		{label: "Allow HTTP", value: yesNo(candidate.AllowInsecure)},
 		{label: "Color", value: color},
-		{label: "Active", value: activeValue, role: activeRole},
-	}
-	for index := range rows {
-		rows[index].color = candidate.Color
+		{label: "Active", value: activeValue, role: activeRole, color: activeColor},
 	}
 	return newPresentation(terminal).renderDetails(rows)
 }

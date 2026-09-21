@@ -17,8 +17,8 @@ const (
 	favoriteUsage       = "vlt favorite COMMAND [ARGUMENT...]"
 	favoriteAddUsage    = "vlt favorite add PATH --profile NAME --operation read|kv-get [--note NOTE]"
 	favoriteListUsage   = "vlt favorite list"
-	favoriteUpdateUsage = "vlt favorite update NUMBER [--profile NAME] [--operation read|kv-get] [--path PATH] [--note NOTE]"
-	favoriteRemoveUsage = "vlt favorite remove NUMBER"
+	favoriteUpdateUsage = "vlt favorite update ID|NUMBER [--profile NAME] [--operation read|kv-get] [--path PATH] [--note NOTE]"
+	favoriteRemoveUsage = "vlt favorite remove ID|NUMBER"
 )
 
 const favoriteHelpText = `Manage favorite Vault read targets.
@@ -70,8 +70,10 @@ Examples:
 
 const favoriteUpdateHelpText = `Update a favorite Vault read target.
 
+Use its stable ID from 'vlt favorite list', or a current list number.
+
 Usage:
-  vlt favorite update NUMBER [--profile NAME] [--operation read|kv-get] [--path PATH] [--note NOTE]
+  vlt favorite update ID|NUMBER [--profile NAME] [--operation read|kv-get] [--path PATH] [--note NOTE]
 
 Options:
   --profile NAME           Stored profile name
@@ -81,20 +83,22 @@ Options:
   -h, --help               Show help
 
 Examples:
-  vlt favorite update 1 --note reporting
+  vlt favorite update f_0123456789abcdef --note reporting
   vlt favorite update 2 --operation read --path secret/app
 `
 
 const favoriteRemoveHelpText = `Remove a favorite Vault read target.
 
+Use its stable ID from 'vlt favorite list', or a current list number.
+
 Usage:
-  vlt favorite remove NUMBER
+  vlt favorite remove ID|NUMBER
 
 Options:
   -h, --help  Show help
 
 Examples:
-  vlt favorite remove 1
+  vlt favorite remove f_0123456789abcdef
 `
 
 var favoriteCommands = []string{"add", "list", "update", "remove"}
@@ -104,9 +108,9 @@ type FavoriteConfigurationLoader interface {
 }
 
 type FavoriteMutator interface {
-	Add(context.Context, favorite.Favorite) error
-	Update(context.Context, string, favorite.FavoriteChanges) error
-	Remove(context.Context, string) error
+	AddWithResult(context.Context, favorite.Favorite) (favorite.Favorite, error)
+	UpdateWithResult(context.Context, string, favorite.FavoriteChanges, *favorite.Favorite) (favorite.Favorite, error)
+	RemoveWithResult(context.Context, string, *favorite.Favorite) (favorite.Favorite, error)
 }
 
 type FavoriteUseRecorder interface {
@@ -245,7 +249,7 @@ func favoriteAdd(ctx context.Context, dependencies FavoriteDependencies, args []
 		Profile: options.profile, Operation: options.operation, Path: path, Note: options.note,
 	}
 	if !explicit {
-		profiles, err := favoriteFormProfiles(ctx, dependencies)
+		profiles, active, err := favoriteFormProfiles(ctx, dependencies)
 		if err != nil {
 			return interactiveFavoriteError(err, favoriteAddUsage, "vlt favorite add")
 		}
@@ -253,20 +257,21 @@ func favoriteAdd(ctx context.Context, dependencies FavoriteDependencies, args []
 			return errors.New("add favorite: interactive form is not configured")
 		}
 		candidate, err = dependencies.Form.Run(ctx, FavoriteFormRequest{
-			Favorite: favorite.Favorite{Operation: favorite.OperationRead}, Profiles: profiles,
+			Favorite: favorite.Favorite{Operation: favorite.OperationRead}, Profiles: profiles, ActiveProfile: active,
 		})
 		if err != nil {
 			return interactiveOperationError(fmt.Errorf("add favorite: %w", err))
 		}
 	}
+	var added favorite.Favorite
 	if err := withMutationLock(ctx, dependencies.Lock, func(lockContext context.Context) error {
-		return dependencies.Mutations.Add(lockContext, candidate)
+		var addErr error
+		added, addErr = dependencies.Mutations.AddWithResult(lockContext, candidate)
+		return addErr
 	}); err != nil {
 		return safeManagementError(err)
 	}
-	status := newPresentation(dependencies.Terminal).status(fmt.Sprintf(
-		"Added favorite %q for profile %q.", candidate.Path, candidate.Profile,
-	))
+	status := newPresentation(dependencies.Terminal).status(favoriteMutationMessage("Added", added, candidate, ""))
 	if _, err := io.WriteString(dependencies.Output, status); err != nil {
 		return fmt.Errorf("display added favorite: %w", err)
 	}
@@ -299,6 +304,7 @@ func favoriteList(ctx context.Context, dependencies FavoriteDependencies, args [
 func favoriteListOutput(favorites []favorite.Favorite, terminal Terminal) string {
 	rows := [][]presentationCell{{
 		{value: "#", role: presentationHeading},
+		{value: "ID", role: presentationHeading},
 		{value: "RUNS", role: presentationHeading},
 		{value: "OPERATION", role: presentationHeading},
 		{value: "PROFILE", role: presentationHeading},
@@ -312,6 +318,7 @@ func favoriteListOutput(favorites []favorite.Favorite, terminal Terminal) string
 		}
 		rows = append(rows, []presentationCell{
 			{value: strconv.Itoa(index + 1)},
+			{value: candidate.ID},
 			{value: strconv.FormatInt(candidate.RunCount, 10)},
 			{value: sanitizeFavoriteDisplay(candidate.Operation)},
 			{value: sanitizeFavoriteDisplay(candidate.Profile)},
@@ -319,7 +326,24 @@ func favoriteListOutput(favorites []favorite.Favorite, terminal Terminal) string
 			{value: sanitizeFavoriteDisplay(note)},
 		})
 	}
-	return newPresentation(terminal).renderTable(rows)
+	p := newPresentation(terminal)
+	if p.tableFits(rows) {
+		return p.renderTable(rows)
+	}
+	var output strings.Builder
+	for index, candidate := range favorite.NewService(favorites).List() {
+		output.WriteString(p.wrappedLine(fmt.Sprintf("%d  %s", index+1, sanitizeFavoriteDisplay(candidate.Path))))
+		output.WriteString(p.wrappedField("ID", candidate.ID))
+		output.WriteString(p.wrappedField("Runs", strconv.FormatInt(candidate.RunCount, 10)))
+		output.WriteString(p.wrappedField("Profile", sanitizeFavoriteDisplay(candidate.Profile)))
+		output.WriteString(p.wrappedField("Operation", sanitizeFavoriteDisplay(candidate.Operation)))
+		note := candidate.Note
+		if note == "" {
+			note = "-"
+		}
+		output.WriteString(p.wrappedField("Note", sanitizeFavoriteDisplay(note)))
+	}
+	return output.String()
 }
 
 func sanitizeFavoriteDisplay(value string) string {
@@ -358,12 +382,13 @@ func favoriteUpdate(ctx context.Context, dependencies FavoriteDependencies, args
 		return errors.New("update favorite: output is not configured")
 	}
 	changes := favoriteChangesFromOptions(options)
+	var expected *favorite.Favorite
 	if len(options.set) == 0 {
 		selection, err := selectFavoriteForManagement(ctx, dependencies, selector)
 		if err != nil {
 			return interactiveFavoriteError(err, favoriteUpdateUsage, "vlt favorite update")
 		}
-		profiles, err := favoriteFormProfiles(ctx, dependencies)
+		profiles, _, err := favoriteFormProfiles(ctx, dependencies)
 		if err != nil {
 			return interactiveFavoriteError(err, favoriteUpdateUsage, "vlt favorite update")
 		}
@@ -376,13 +401,17 @@ func favoriteUpdate(ctx context.Context, dependencies FavoriteDependencies, args
 		}
 		selector = selection.selector
 		changes = favoriteChangesBetween(selection.favorite, updated)
+		expected = &selection.favorite
 	}
+	var changed favorite.Favorite
 	if err := withMutationLock(ctx, dependencies.Lock, func(lockContext context.Context) error {
-		return dependencies.Mutations.Update(lockContext, selector, changes)
+		var updateErr error
+		changed, updateErr = dependencies.Mutations.UpdateWithResult(lockContext, selector, changes, expected)
+		return updateErr
 	}); err != nil {
 		return safeManagementError(err)
 	}
-	status := newPresentation(dependencies.Terminal).status(fmt.Sprintf("Updated favorite %s.", selector))
+	status := newPresentation(dependencies.Terminal).status(favoriteMutationMessage("Updated", changed, favorite.Favorite{}, selector))
 	if _, err := io.WriteString(dependencies.Output, status); err != nil {
 		return fmt.Errorf("display updated favorite: %w", err)
 	}
@@ -406,6 +435,7 @@ func favoriteRemove(ctx context.Context, dependencies FavoriteDependencies, args
 		return errors.New("remove favorite: output is not configured")
 	}
 	selector := ""
+	var expected *favorite.Favorite
 	if len(args) == 1 {
 		selector = args[0]
 	} else {
@@ -424,17 +454,32 @@ func favoriteRemove(ctx context.Context, dependencies FavoriteDependencies, args
 			return nil
 		}
 		selector = selection.selector
+		expected = &selection.favorite
 	}
+	var removed favorite.Favorite
 	if err := withMutationLock(ctx, dependencies.Lock, func(lockContext context.Context) error {
-		return dependencies.Mutations.Remove(lockContext, selector)
+		var removeErr error
+		removed, removeErr = dependencies.Mutations.RemoveWithResult(lockContext, selector, expected)
+		return removeErr
 	}); err != nil {
 		return safeManagementError(err)
 	}
-	status := newPresentation(dependencies.Terminal).status(fmt.Sprintf("Removed favorite %s.", selector))
+	status := newPresentation(dependencies.Terminal).status(favoriteMutationMessage("Removed", removed, favorite.Favorite{}, selector))
 	if _, err := io.WriteString(dependencies.Output, status); err != nil {
 		return fmt.Errorf("display removed favorite: %w", err)
 	}
 	return nil
+}
+
+func favoriteMutationMessage(action string, result, fallback favorite.Favorite, selector string) string {
+	if result.ID != "" {
+		return fmt.Sprintf("%s favorite %q for profile %q (ID %s).", action,
+			sanitizeFavoriteDisplay(result.Path), sanitizeFavoriteDisplay(result.Profile), result.ID)
+	}
+	if action == "Added" {
+		return fmt.Sprintf("Added favorite %q for profile %q.", fallback.Path, fallback.Profile)
+	}
+	return fmt.Sprintf("%s favorite %s.", action, selector)
 }
 
 type favoriteOptions struct {

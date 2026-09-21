@@ -217,16 +217,14 @@ func TestSharedSelectorRendersCompactInlinePlainView(t *testing.T) {
 	}
 }
 
-func TestSharedSelectorUsesActiveAccentAndKeepsPlainSelectionVisible(t *testing.T) {
+func TestSharedSelectorUsesSemanticSelectionAndKeepsPlainSelectionVisible(t *testing.T) {
 	items := []SharedSelectorItem{{ID: "first", Label: "first"}, {ID: "second", Label: "second"}}
 	for _, tt := range []struct {
-		name       string
-		terminal   Terminal
-		wantAccent bool
+		name     string
+		terminal Terminal
 	}{
-		{name: "active accent", terminal: WithAccent(fixedTerminal{color: true}, "#112233"), wantAccent: true},
-		{name: "plain", terminal: WithAccent(fixedTerminal{color: false}, "#112233")},
-		{name: "no active accent", terminal: fixedTerminal{color: true}},
+		{name: "styled", terminal: fixedTerminal{color: true}},
+		{name: "plain", terminal: fixedTerminal{color: false}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			model, err := newSharedSelectorModel("Select", items, "second", newPresentation(tt.terminal))
@@ -234,8 +232,8 @@ func TestSharedSelectorUsesActiveAccentAndKeepsPlainSelectionVisible(t *testing.
 				t.Fatalf("new selector model error = %v", err)
 			}
 			view := model.View().Content
-			if got := strings.Contains(view, "38;2;17;34;51m"); got != tt.wantAccent {
-				t.Errorf("selector active accent = %t, want %t: %q", got, tt.wantAccent, view)
+			if tt.name == "styled" && !strings.Contains(view, "\x1b[") {
+				t.Errorf("styled selector lacks semantic color: %q", view)
 			}
 			if got := ansi.Strip(view); !strings.Contains(got, "> second") {
 				t.Errorf("selector selection is unclear: %q", got)
@@ -249,8 +247,8 @@ func TestSharedSelectorUsesActiveAccentAndKeepsPlainSelectionVisible(t *testing.
 
 func TestSharedSelectorColorsEachProfileRowAndKeepsSelectionVisible(t *testing.T) {
 	items := []SharedSelectorItem{
-		{ID: "first", Label: "team-a", Color: "#112233"},
-		{ID: "second", Label: "team-b", Color: "#445566"},
+		{ID: "first", Label: "team-a", Name: "team-a", Color: "#112233"},
+		{ID: "second", Label: "team-b", Name: "team-b", Color: "#445566"},
 		{ID: "third", Label: "team-c"},
 	}
 	for _, tt := range []struct {
@@ -258,8 +256,8 @@ func TestSharedSelectorColorsEachProfileRowAndKeepsSelectionVisible(t *testing.T
 		terminal Terminal
 		colored  bool
 	}{
-		{name: "color", terminal: WithAccent(fixedTerminal{color: true}, "#AABBCC"), colored: true},
-		{name: "plain", terminal: WithAccent(fixedTerminal{color: false}, "#AABBCC")},
+		{name: "color", terminal: fixedTerminal{color: true}, colored: true},
+		{name: "plain", terminal: fixedTerminal{color: false}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			model, err := newSharedSelectorModel("Select", items, "second", newPresentation(tt.terminal))
@@ -281,7 +279,7 @@ func TestSharedSelectorColorsEachProfileRowAndKeepsSelectionVisible(t *testing.T
 				t.Errorf("plain selector contains ANSI: %q", model.View().Content)
 			}
 			if got := ansi.Strip(lines[3]); got != "> team-b" {
-				t.Errorf("selected row = %q, want visible marker", got)
+				t.Errorf("selected row = %q, want visible marker; lines=%#v", got, lines)
 			}
 		})
 	}
