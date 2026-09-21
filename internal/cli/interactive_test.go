@@ -52,6 +52,22 @@ func (r *promptLineReader) Read(value []byte) (int, error) {
 	return n, nil
 }
 
+func TestInteractiveFormsAndConfirmationsReceiveActiveAccent(t *testing.T) {
+	terminal := WithAccent(fixedTerminal{color: true}, "#112233")
+	var output bytes.Buffer
+	forms := []presentation{
+		NewHuhProfileForm(strings.NewReader(""), &output, terminal).(huhProfileForm).presentation,
+		NewHuhProfileRemovalConfirmer(strings.NewReader(""), &output, terminal).(huhProfileRemovalConfirmer).presentation,
+		NewHuhFavoriteRemovalConfirmer(strings.NewReader(""), &output, terminal).(huhFavoriteRemovalConfirmer).presentation,
+	}
+	for index, form := range forms {
+		got := form.huhTheme().Theme(true).Focused.SelectedOption.Render("Selected")
+		if !strings.Contains(got, "38;2;17;34;51m") {
+			t.Errorf("interactive form %d selected style = %q, want active accent", index, got)
+		}
+	}
+}
+
 func TestSharedProfileSelectorBuildsDeterministicSearchRowsAndPreselectsActive(t *testing.T) {
 	shared := &recordingSharedSelector{selectedID: "team-a"}
 	selector := NewSharedProfileSelector(shared)
