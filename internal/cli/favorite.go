@@ -299,6 +299,7 @@ func favoriteList(ctx context.Context, dependencies FavoriteDependencies, args [
 func favoriteListOutput(favorites []favorite.Favorite, terminal Terminal) string {
 	rows := [][]presentationCell{{
 		{value: "#", role: presentationHeading},
+		{value: "RUNS", role: presentationHeading},
 		{value: "OPERATION", role: presentationHeading},
 		{value: "PROFILE", role: presentationHeading},
 		{value: "PATH", role: presentationHeading},
@@ -311,6 +312,7 @@ func favoriteListOutput(favorites []favorite.Favorite, terminal Terminal) string
 		}
 		rows = append(rows, []presentationCell{
 			{value: strconv.Itoa(index + 1)},
+			{value: strconv.FormatInt(candidate.RunCount, 10)},
 			{value: sanitizeFavoriteDisplay(candidate.Operation)},
 			{value: sanitizeFavoriteDisplay(candidate.Profile)},
 			{value: sanitizeFavoriteDisplay(candidate.Path)},
