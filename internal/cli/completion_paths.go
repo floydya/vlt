@@ -49,6 +49,10 @@ func resolvePathCompletionContext(ctx context.Context, explicitName string, depe
 }
 
 func completeKVv1Paths(ctx context.Context, selected pathCompletionContext, prefix string, transport http.RoundTripper) []string {
+	return completeReadPaths(ctx, selected, prefix, transport)
+}
+
+func completeReadPaths(ctx context.Context, selected pathCompletionContext, prefix string, transport http.RoundTripper) []string {
 	separator := strings.LastIndexByte(prefix, '/')
 	if separator < 0 {
 		return nil
