@@ -281,6 +281,67 @@ printf '%s\n' "${COMPREPLY[@]}"
 	}
 }
 
+func TestCompletionScriptsSuggestProfileColorForAddAndUpdate(t *testing.T) {
+	for _, tt := range []struct {
+		shell string
+		add   string
+		edit  string
+	}{
+		{shell: "bash", add: `--namespace --allow-insecure --color -h --help`, edit: `--namespace --allow-insecure --color -h --help`},
+		{shell: "zsh", add: `'--namespace' '--allow-insecure' '--color' '-h' '--help'`, edit: `'--namespace' '--allow-insecure' '--color' '-h' '--help'`},
+		{shell: "fish", add: `__vlt_using_profile_subcommand add; and __vlt_token_count_at_least 3' -l color -r`, edit: `__vlt_using_profile_subcommand update; and __vlt_token_count_at_least 4' -l color -r`},
+	} {
+		t.Run(tt.shell, func(t *testing.T) {
+			script, err := completionScript(tt.shell)
+			if err != nil {
+				t.Fatalf("completionScript(%q) error = %v", tt.shell, err)
+			}
+			if tt.shell == "fish" {
+				for _, clause := range []string{tt.add, tt.edit} {
+					if !strings.Contains(script, clause) {
+						t.Errorf("%s completion lacks profile color clause %q", tt.shell, clause)
+					}
+				}
+			} else if got := strings.Count(script, tt.add); got != 2 {
+				t.Errorf("%s profile add and update color clauses = %d, want 2", tt.shell, got)
+			}
+		})
+	}
+}
+
+func TestBashCompletionOffersColorOnlyForProfileCommands(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not installed")
+	}
+	for _, tt := range []struct {
+		name  string
+		words string
+		index int
+		want  string
+	}{
+		{name: "add", words: "vlt profile add --co", index: 3, want: "--color\n"},
+		{name: "update", words: "vlt profile update team-a --co", index: 4, want: "--color\n"},
+		{name: "delegated", words: "vlt status --co", index: 2, want: ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			invocation := bashCompletionScript + `
+COMP_WORDS=(` + tt.words + `)
+COMP_CWORD=` + fmt.Sprint(tt.index) + `
+_vlt_completion
+for candidate in "${COMPREPLY[@]}"; do printf '%s\n' "$candidate"; done
+`
+			output, err := exec.Command(bash, "-c", invocation).CombinedOutput()
+			if err != nil {
+				t.Fatalf("bash completion error = %v: %s", err, output)
+			}
+			if got := string(output); got != tt.want {
+				t.Fatalf("bash completion = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCompletionScriptsDescribeFavoriteCommandsAndValues(t *testing.T) {
 	tests := []struct {
 		shell string
@@ -376,6 +437,48 @@ func TestCompletionScriptsHaveValidInstalledShellSyntax(t *testing.T) {
 			}
 			if output, err := exec.Command(executable, "-n", path).CombinedOutput(); err != nil {
 				t.Fatalf("%s syntax check error = %v: %s", shell, err, output)
+			}
+		})
+	}
+}
+
+func TestZshRootCompletionInsertsOnlyCommandNames(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh is not installed")
+	}
+	script, err := completionScript("zsh")
+	if err != nil {
+		t.Fatalf("completionScript(zsh) error = %v", err)
+	}
+	for _, tt := range []struct {
+		name    string
+		current string
+		words   string
+	}{
+		{name: "first command", current: "2", words: "vlt ''"},
+		{name: "empty command fallback", current: "3", words: "vlt '' ''"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			invocation := `compdef() { :; }
+_describe() {
+    local entry
+    for entry in "${commands[@]}"; do
+        print -r -- "${entry%%:*}"
+    done
+}
+` + script + `
+words=(` + tt.words + `)
+CURRENT=` + tt.current + `
+_vlt
+`
+			output, err := exec.Command(zsh, "-fc", invocation).CombinedOutput()
+			if err != nil {
+				t.Fatalf("Zsh completion error = %v: %s", err, output)
+			}
+			want := "profile\nswitch\nfavorite\ncompletion\n--profile\n-h\n--help\n"
+			if got := string(output); got != want {
+				t.Fatalf("root completion = %q, want exact command names %q", got, want)
 			}
 		})
 	}

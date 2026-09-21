@@ -44,6 +44,7 @@ func TestStoreRoundTrip(t *testing.T) {
 				candidate := testProfile("Team_B2")
 				candidate.Address = "http://127.0.0.1:8200"
 				candidate.AllowInsecure = true
+				candidate.Color = "#a1B2c3"
 				return candidate
 			}(),
 		},
@@ -82,15 +83,22 @@ func TestStoreRoundTrip(t *testing.T) {
 	if !ok || len(profiles) != 2 {
 		t.Fatalf("JSON profiles = %#v, want two profiles", document["profiles"])
 	}
-	for _, value := range profiles {
+	for index, value := range profiles {
 		entry, ok := value.(map[string]any)
 		if !ok {
 			t.Fatalf("JSON profile = %#v, want object", value)
 		}
-		assertJSONKeys(t, entry, map[string]bool{
+		wantKeys := map[string]bool{
 			"name": true, "address": true, "username": true, "auth_path": true, "namespace": true,
 			"allow_insecure": true,
-		})
+		}
+		if index == 1 {
+			wantKeys["color"] = true
+			if entry["color"] != "#a1B2c3" {
+				t.Fatalf("saved color = %#v, want #a1B2c3", entry["color"])
+			}
+		}
+		assertJSONKeys(t, entry, wantKeys)
 	}
 	lower := strings.ToLower(string(contents))
 	for _, forbidden := range []string{"token", "keyring", "credential", "secret"} {
@@ -116,6 +124,34 @@ func TestStoreLoadsLegacyHTTPSProfileWithoutInsecureOptIn(t *testing.T) {
 	}
 	if configuration.Profiles[0].AllowInsecure {
 		t.Fatal("legacy profile AllowInsecure = true, want secure default")
+	}
+	if configuration.Profiles[0].Color != "" {
+		t.Fatalf("legacy profile color = %q, want empty", configuration.Profiles[0].Color)
+	}
+}
+
+func TestStoreRejectsInvalidColorWithoutReplacingConfiguration(t *testing.T) {
+	path := testConfigPath(t)
+	store := NewStore(path)
+	original := Configuration{Profiles: []profile.Profile{testProfile("team-a")}}
+	if err := store.Save(context.Background(), original); err != nil {
+		t.Fatalf("initial Save() error = %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	invalid := Configuration{Profiles: []profile.Profile{testProfile("team-a")}}
+	invalid.Profiles[0].Color = "#GGGGGG"
+	if err := store.Save(context.Background(), invalid); err == nil || !strings.Contains(err.Error(), "color") {
+		t.Fatalf("Save(invalid color) error = %v, want color validation", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() after invalid Save error = %v", err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatalf("configuration changed after invalid color")
 	}
 }
 
@@ -171,6 +207,7 @@ func TestStoreRejectsMalformedOrUnsafeConfiguration(t *testing.T) {
 		{name: "unknown profile field", contents: `{"version":1,"profiles":[{"name":"team-a","address":"https://vault.example.com","username":"user","auth_path":"oidc","keyring_id":"entry"}]}`, wantErr: "unknown field"},
 		{name: "invalid field type", contents: `{"version":1,"profiles":[],"active_profile":7}`, wantErr: "decode"},
 		{name: "invalid profile", contents: `{"version":1,"profiles":[{"name":"bad name","address":"https://vault.example.com","username":"user","auth_path":"oidc"}]}`, wantErr: "profile"},
+		{name: "invalid color", contents: `{"version":1,"profiles":[{"name":"team-a","address":"https://vault.example.com","username":"user","auth_path":"oidc","color":"red"}]}`, wantErr: "color"},
 		{name: "duplicate profile name", contents: `{"version":1,"profiles":[` + validProfile + `,` + validProfile + `]}`, wantErr: "duplicate"},
 	}
 

@@ -57,27 +57,29 @@ type sharedProfileSelector struct {
 }
 
 type huhProfileForm struct {
-	input      io.Reader
-	output     io.Writer
-	accessible bool
+	input        io.Reader
+	output       io.Writer
+	accessible   bool
+	presentation presentation
 }
 
 type huhProfileRemovalConfirmer struct {
-	input      io.Reader
-	output     io.Writer
-	accessible bool
+	input        io.Reader
+	output       io.Writer
+	accessible   bool
+	presentation presentation
 }
 
 func NewSharedProfileSelector(selector SharedSelector) ProfileSelector {
 	return sharedProfileSelector{selector: selector}
 }
 
-func NewHuhProfileForm(input io.Reader, output io.Writer) ProfileForm {
-	return huhProfileForm{input: input, output: output}
+func NewHuhProfileForm(input io.Reader, output io.Writer, terminal ...Terminal) ProfileForm {
+	return huhProfileForm{input: input, output: output, presentation: presentationForOptionalTerminal(terminal)}
 }
 
-func NewHuhProfileRemovalConfirmer(input io.Reader, output io.Writer) ProfileRemovalConfirmer {
-	return huhProfileRemovalConfirmer{input: input, output: output}
+func NewHuhProfileRemovalConfirmer(input io.Reader, output io.Writer, terminal ...Terminal) ProfileRemovalConfirmer {
+	return huhProfileRemovalConfirmer{input: input, output: output, presentation: presentationForOptionalTerminal(terminal)}
 }
 
 func (s sharedProfileSelector) Select(ctx context.Context, candidates []profile.Profile, active string) (string, error) {
@@ -95,8 +97,12 @@ func (s sharedProfileSelector) Select(ctx context.Context, candidates []profile.
 		if namespace == "" {
 			namespace = "-"
 		}
-		label := fmt.Sprintf("%d  %s  %s  %s  %s  %s", index+1, marker, candidate.Name, candidate.Address, namespace, yesNo(candidate.AllowInsecure))
-		items = append(items, SharedSelectorItem{ID: candidate.Name, Label: label, SearchText: label})
+		color := candidate.Color
+		if color == "" {
+			color = "-"
+		}
+		label := fmt.Sprintf("%d  %s  %s  %s  %s  %s  %s", index+1, marker, candidate.Name, candidate.Address, namespace, yesNo(candidate.AllowInsecure), color)
+		items = append(items, SharedSelectorItem{ID: candidate.Name, Label: label, SearchText: label, Color: candidate.Color})
 	}
 	selected, err := s.selector.Select(ctx, "Select a profile", items, active)
 	if err != nil {
@@ -117,7 +123,7 @@ func (f huhProfileForm) Run(ctx context.Context, request ProfileFormRequest) (pr
 		candidate.AuthPath = "oidc"
 	}
 
-	fields := make([]huh.Field, 0, 6)
+	fields := make([]huh.Field, 0, 7)
 	if request.NameEditable {
 		fields = append(fields,
 			huh.NewInput().Title("Name").Value(&candidate.Name).Validate(profileFormInputValidator(candidate.Name, f.accessible, profile.ValidateName)),
@@ -140,13 +146,25 @@ func (f huhProfileForm) Run(ctx context.Context, request ProfileFormRequest) (pr
 		huh.NewInput().Title("Namespace").Value(&candidate.Namespace).Validate(profileFormValidator(candidate.Namespace, f.accessible, func(candidate *profile.Profile, value string) {
 			candidate.Namespace = value
 		})),
+		huh.NewInput().Title("Color (#RRGGBB; - to clear)").Value(&candidate.Color).Validate(func(value string) error {
+			if value == "-" {
+				return nil
+			}
+			return profile.ValidateColor(value)
+		}),
 	)
 	form := huh.NewForm(huh.NewGroup(fields...).Title("Profile details")).
 		WithInput(f.input).
 		WithOutput(f.output).
 		WithAccessible(f.accessible)
+	if !f.presentation.colorEnabled || f.presentation.accentColor != "" {
+		form = form.WithTheme(f.presentation.huhTheme())
+	}
 	if err := form.RunWithContext(ctx); err != nil {
 		return profile.Profile{}, fmt.Errorf("profile form: %w", err)
+	}
+	if candidate.Color == "-" {
+		candidate.Color = ""
 	}
 	if err := candidate.Validate(); err != nil {
 		return profile.Profile{}, fmt.Errorf("profile form: validate result: %w", err)
@@ -188,6 +206,9 @@ func (c huhProfileRemovalConfirmer) Confirm(ctx context.Context, request Profile
 		WithInput(c.input).
 		WithOutput(c.output).
 		WithAccessible(c.accessible)
+	if !c.presentation.colorEnabled || c.presentation.accentColor != "" {
+		form = form.WithTheme(c.presentation.huhTheme())
+	}
 	if err := form.RunWithContext(ctx); err != nil {
 		return false, fmt.Errorf("confirm profile removal: %w", err)
 	}

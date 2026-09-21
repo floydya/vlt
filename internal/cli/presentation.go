@@ -33,18 +33,22 @@ type presentationStyles struct {
 }
 
 type presentation struct {
-	styles presentationStyles
+	styles       presentationStyles
+	colorEnabled bool
+	accentColor  string
 }
 
 type presentationCell struct {
 	value string
 	role  presentationRole
+	color string
 }
 
 type presentationDetail struct {
 	label string
 	value string
 	role  presentationRole
+	color string
 }
 
 func newPresentation(terminal Terminal) presentation {
@@ -57,15 +61,33 @@ func newPresentation(terminal Terminal) presentation {
 		success:  lipgloss.NewStyle(),
 		error:    lipgloss.NewStyle(),
 	}
-	if terminal != nil && terminal.ColorEnabled() {
+	colorEnabled := terminal != nil && terminal.ColorEnabled()
+	accentColor := ""
+	if colorEnabled {
 		styles.heading = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Cyan)
 		styles.label = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Cyan)
 		styles.selected = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Green)
 		styles.muted = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 		styles.success = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Green)
 		styles.error = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Red)
+		if accented, ok := terminal.(interface{ AccentColor() string }); ok {
+			if color := accented.AccentColor(); color != "" {
+				accentColor = color
+				accent := lipgloss.Color(color)
+				styles.heading = styles.heading.Foreground(accent)
+				styles.label = styles.label.Foreground(accent)
+				styles.selected = styles.selected.Foreground(accent)
+			}
+		}
 	}
-	return presentation{styles: styles}
+	return presentation{styles: styles, colorEnabled: colorEnabled, accentColor: accentColor}
+}
+
+func presentationForOptionalTerminal(terminals []Terminal) presentation {
+	if len(terminals) == 0 {
+		return newPresentation(nil)
+	}
+	return newPresentation(terminals[0])
 }
 
 func (p presentation) renderTable(rows [][]presentationCell) string {
@@ -87,7 +109,7 @@ func (p presentation) renderTable(rows [][]presentationCell) string {
 	var output strings.Builder
 	for _, row := range rows {
 		for column, cell := range row {
-			output.WriteString(p.render(cell.role, cell.value))
+			output.WriteString(p.renderColored(cell.role, cell.value, cell.color))
 			if column < len(row)-1 {
 				output.WriteString(strings.Repeat(" ", widths[column]-lipgloss.Width(cell.value)+2))
 			}
@@ -108,7 +130,7 @@ func (p presentation) renderDetails(rows []presentationDetail) string {
 		label := row.label + ":"
 		output.WriteString(p.render(presentationLabel, label))
 		output.WriteString(strings.Repeat(" ", labelWidth-lipgloss.Width(label)+1))
-		output.WriteString(p.render(row.role, row.value))
+		output.WriteString(p.renderColored(row.role, row.value, row.color))
 		output.WriteByte('\n')
 	}
 	return output.String()
@@ -128,6 +150,13 @@ func (p presentation) diagnostic(value string) string {
 
 func (p presentation) render(role presentationRole, value string) string {
 	return p.style(role).Render(value)
+}
+
+func (p presentation) renderColored(role presentationRole, value, color string) string {
+	if p.colorEnabled && color != "" {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(value)
+	}
+	return p.render(role, value)
 }
 
 func (p presentation) style(role presentationRole) lipgloss.Style {
@@ -152,6 +181,10 @@ func (p presentation) style(role presentationRole) lipgloss.Style {
 func (p presentation) huhTheme() huh.Theme {
 	return huh.ThemeFunc(func(isDark bool) *huh.Styles {
 		styles := huh.ThemeBase(isDark)
+		if p.accentColor != "" {
+			styles.Focused.Base = styles.Focused.Base.BorderForeground(lipgloss.Color(p.accentColor))
+			styles.Focused.Card = styles.Focused.Base
+		}
 		styles.Group.Title = p.styles.heading
 		styles.Group.Description = p.styles.muted
 
@@ -206,6 +239,7 @@ func profileListOutput(profiles []profile.Profile, activeName string, terminal T
 		{value: "ADDRESS", role: presentationHeading},
 		{value: "NAMESPACE", role: presentationHeading},
 		{value: "ALLOW HTTP", role: presentationHeading},
+		{value: "COLOR", role: presentationHeading},
 	}}
 	for index, candidate := range profile.NewService(profiles).List() {
 		active := candidate.Name == activeName
@@ -219,14 +253,23 @@ func profileListOutput(profiles []profile.Profile, activeName string, terminal T
 		if namespace == "" {
 			namespace = "-"
 		}
-		rows = append(rows, []presentationCell{
+		color := candidate.Color
+		if color == "" {
+			color = "-"
+		}
+		row := []presentationCell{
 			{value: strconv.Itoa(index + 1)},
 			{value: marker, role: markerRole},
 			{value: candidate.Name},
 			{value: candidate.Address},
 			{value: namespace},
 			{value: yesNo(candidate.AllowInsecure)},
-		})
+			{value: color},
+		}
+		for index := range row {
+			row[index].color = candidate.Color
+		}
+		rows = append(rows, row)
 	}
 	return newPresentation(terminal).renderTable(rows)
 }
@@ -235,6 +278,10 @@ func profileShowOutput(candidate profile.Profile, active bool, terminal Terminal
 	namespace := candidate.Namespace
 	if namespace == "" {
 		namespace = "-"
+	}
+	color := candidate.Color
+	if color == "" {
+		color = "-"
 	}
 	activeValue := "no"
 	activeRole := presentationPlain
@@ -249,7 +296,11 @@ func profileShowOutput(candidate profile.Profile, active bool, terminal Terminal
 		{label: "Auth path", value: candidate.AuthPath},
 		{label: "Namespace", value: namespace},
 		{label: "Allow HTTP", value: yesNo(candidate.AllowInsecure)},
+		{label: "Color", value: color},
 		{label: "Active", value: activeValue, role: activeRole},
+	}
+	for index := range rows {
+		rows[index].color = candidate.Color
 	}
 	return newPresentation(terminal).renderDetails(rows)
 }

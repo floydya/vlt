@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"vlt/internal/favorite"
 )
@@ -46,8 +47,9 @@ func (s sharedFavoriteSelector) Select(ctx context.Context, favorites []favorite
 			note = "-"
 		}
 		label := fmt.Sprintf(
-			"%d  %s  %s  %s  %s",
+			"%d  %s  %s  %s  %s  %s",
 			index+1,
+			strconv.FormatInt(candidate.RunCount, 10),
 			sanitizeFavoriteDisplay(candidate.Operation),
 			sanitizeFavoriteDisplay(candidate.Profile),
 			sanitizeFavoriteDisplay(candidate.Path),
