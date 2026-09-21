@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"vlt/internal/profile"
@@ -17,6 +18,35 @@ import (
 type pathCompletionContext struct {
 	profile profile.Profile
 	token   string
+}
+
+func completePathCandidates(ctx context.Context, dependencies CompletionDependencies, explicitName, command, mountFlag, prefix string, transport http.RoundTripper) []string {
+	if command != "read" && command != "kv get" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	result := make(chan []string, 1)
+	go func() {
+		selected, ok := resolvePathCompletionContext(ctx, explicitName, dependencies)
+		if !ok || ctx.Err() != nil {
+			result <- nil
+			return
+		}
+		if command == "read" {
+			result <- completeReadPaths(ctx, selected, prefix, transport)
+			return
+		}
+		result <- completeKVPaths(ctx, selected, mountFlag, prefix, transport)
+	}()
+	select {
+	case candidates := <-result:
+		if ctx.Err() == nil {
+			return candidates
+		}
+	case <-ctx.Done():
+	}
+	return nil
 }
 
 func resolvePathCompletionContext(ctx context.Context, explicitName string, dependencies CompletionDependencies) (pathCompletionContext, bool) {
@@ -42,7 +72,7 @@ func resolvePathCompletionContext(ctx context.Context, explicitName string, depe
 		return pathCompletionContext{}, false
 	}
 	token, err := dependencies.Credentials.Get(ctx, name)
-	if err != nil || strings.TrimSpace(token) == "" || strings.IndexFunc(token, unicode.IsControl) >= 0 {
+	if err != nil || ctx.Err() != nil || strings.TrimSpace(token) == "" || strings.IndexFunc(token, unicode.IsControl) >= 0 {
 		return pathCompletionContext{}, false
 	}
 	return pathCompletionContext{profile: selected, token: token}, true
@@ -222,7 +252,7 @@ func (collector *completionProofCollector) collect(listDirectory, readDirectory,
 	var keys []string
 	for _, key := range listing.Data.Keys {
 		name := strings.TrimSuffix(key, "/")
-		if !validCompletionLeaf(name) || depth == 0 && !strings.HasPrefix(key, partial) || seen[key] {
+		if !validCompletionLeaf(name) || strings.Contains(key, collector.selected.token) || depth == 0 && !strings.HasPrefix(key, partial) || seen[key] {
 			continue
 		}
 		seen[key] = true
@@ -267,6 +297,9 @@ func validCompletionPartial(value string) bool {
 }
 
 func requestVaultCompletionJSON(ctx context.Context, client *http.Client, selected pathCompletionContext, method, path string, body []byte) ([]byte, bool) {
+	if ctx.Err() != nil {
+		return nil, false
+	}
 	address, err := url.Parse(selected.profile.Address)
 	if err != nil {
 		return nil, false
@@ -294,7 +327,7 @@ func requestVaultCompletionJSON(ctx context.Context, client *http.Client, select
 	}
 	const maxBody = 1 << 20
 	result, err := io.ReadAll(io.LimitReader(response.Body, maxBody+1))
-	if err != nil || len(result) > maxBody {
+	if err != nil || ctx.Err() != nil || len(result) > maxBody {
 		return nil, false
 	}
 	return result, true

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"vlt/internal/config"
 	"vlt/internal/profile"
@@ -23,6 +25,12 @@ type completionCredentialGetter struct {
 }
 
 type completionTestTransport struct{ handler http.Handler }
+
+type completionCredentialGetFunc func(context.Context, string) (string, error)
+
+func (get completionCredentialGetFunc) Get(ctx context.Context, name string) (string, error) {
+	return get(ctx, name)
+}
 
 func (transport completionTestTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	recorder := httptest.NewRecorder()
@@ -331,6 +339,124 @@ func TestCompleteKVPathsFailsClosedWithoutConfirmedKVMount(t *testing.T) {
 				t.Errorf("request count = %d, want mount lookup only", requests.Load())
 			}
 		})
+	}
+}
+
+func TestCompletePathCandidatesBoundsBlockedCredentialLookup(t *testing.T) {
+	selected := profile.Profile{Name: "team-a", Address: "https://vault.example.invalid", Username: "a", AuthPath: "oidc"}
+	loader := &completionProfileLoader{configuration: config.Configuration{Profiles: []profile.Profile{selected}, ActiveProfile: selected.Name}}
+	release := make(chan struct{})
+	defer close(release)
+	var requests atomic.Int32
+	transport := completionTestTransport{handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) })}
+	credentials := completionCredentialGetFunc(func(ctx context.Context, _ string) (string, error) {
+		deadline, ok := ctx.Deadline()
+		remaining := time.Until(deadline)
+		if !ok || remaining < 400*time.Millisecond || remaining > 550*time.Millisecond {
+			t.Error("credential lookup did not share the 500 ms completion deadline")
+		}
+		<-release
+		return "synthetic-token", nil
+	})
+	start := time.Now()
+	got := completePathCandidates(context.Background(), CompletionDependencies{Profiles: loader, Credentials: credentials}, "", "read", "", "secret/a", transport)
+	if len(got) != 0 || time.Since(start) > 800*time.Millisecond {
+		t.Errorf("blocked credential lookup returned %q after %s", got, time.Since(start))
+	}
+	if requests.Load() != 0 {
+		t.Error("expired credential lookup started a Vault request")
+	}
+}
+
+func TestCompletePathCandidatesCancelsCapabilityCheckWithoutPartialPaths(t *testing.T) {
+	selected := profile.Profile{Name: "team-a", Address: "https://vault.example.invalid", Username: "a", AuthPath: "oidc"}
+	loader := &completionProfileLoader{configuration: config.Configuration{Profiles: []profile.Profile{selected}, ActiveProfile: selected.Name}}
+	canceled := make(chan struct{})
+	transport := completionTestTransport{handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v1/secret/":
+			_, _ = writer.Write([]byte(`{"data":{"keys":["first","second"]}}`))
+		case "/v1/sys/capabilities-self":
+			<-request.Context().Done()
+			close(canceled)
+		default:
+			t.Errorf("unexpected request %s", request.URL.Path)
+		}
+	})}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	got := completePathCandidates(ctx, CompletionDependencies{Profiles: loader, Credentials: &completionCredentialGetter{token: "synthetic-token"}}, "", "read", "", "secret/", transport)
+	if len(got) != 0 {
+		t.Errorf("canceled permission check returned %q", got)
+	}
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Error("canceled permission check kept work running")
+	}
+}
+
+func TestCompletePathCandidatesKeepsFailuresAndTokensOutOfOutput(t *testing.T) {
+	const token = "hvs.synthetic-private-token"
+	selected := profile.Profile{Name: "team-a", Address: "https://vault.example.invalid", Username: "a", AuthPath: "oidc"}
+	loader := &completionProfileLoader{configuration: config.Configuration{Profiles: []profile.Profile{selected}, ActiveProfile: selected.Name}}
+	for _, tt := range []struct {
+		name        string
+		credentials completionCredentialGetFunc
+		listStatus  int
+		listBody    string
+	}{
+		{name: "missing token", credentials: func(context.Context, string) (string, error) { return "", nil }},
+		{name: "keyring error", credentials: func(context.Context, string) (string, error) {
+			return "", errors.New("private keyring failure " + token)
+		}},
+		{name: "malformed listing", credentials: func(context.Context, string) (string, error) { return token, nil }, listBody: `{`},
+		{name: "server error", credentials: func(context.Context, string) (string, error) { return token, nil }, listStatus: http.StatusInternalServerError, listBody: "private server failure " + token},
+		{name: "token in listed name", credentials: func(context.Context, string) (string, error) { return token, nil }, listBody: `{"data":{"keys":["hvs.synthetic-private-token"]}}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var output bytes.Buffer
+			vault := &completionVaultStub{}
+			transport := completionTestTransport{handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				switch request.URL.Path {
+				case "/v1/secret/":
+					if tt.listStatus != 0 {
+						writer.WriteHeader(tt.listStatus)
+					}
+					_, _ = writer.Write([]byte(tt.listBody))
+				case "/v1/sys/capabilities-self":
+					_, _ = writer.Write([]byte(`{"secret/hvs.synthetic-private-token":["read"]}`))
+				default:
+					t.Errorf("unexpected request %s", request.URL.Path)
+				}
+			})}
+			got := completePathCandidates(context.Background(), CompletionDependencies{Profiles: loader, Credentials: tt.credentials, Vault: vault, Output: &output}, "", "read", "", "secret/", transport)
+			if len(got) != 0 || output.Len() != 0 || vault.calls != 0 {
+				t.Errorf("failed lookup returned %q, wrote %q, or called Vault %d times", got, output.String(), vault.calls)
+			}
+		})
+	}
+}
+
+func TestCompletePathCandidatesReturnsOnlyCheckedReadPaths(t *testing.T) {
+	selected := profile.Profile{Name: "team-a", Address: "https://vault.example.invalid", Username: "a", AuthPath: "oidc"}
+	loader := &completionProfileLoader{configuration: config.Configuration{Profiles: []profile.Profile{selected}, ActiveProfile: selected.Name}}
+	transport := completionTestTransport{handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v1/secret/":
+			_, _ = writer.Write([]byte(`{"data":{"keys":["readable","hidden"]}}`))
+		case "/v1/sys/capabilities-self":
+			_, _ = writer.Write([]byte(`{"secret/readable":["read"],"secret/hidden":["deny"]}`))
+		default:
+			t.Errorf("unexpected request %s", request.URL.Path)
+		}
+	})}
+	dependencies := CompletionDependencies{Profiles: loader, Credentials: &completionCredentialGetter{token: "synthetic-token"}}
+	if got := completePathCandidates(context.Background(), dependencies, "", "read", "", "secret/", transport); !reflect.DeepEqual(got, []string{"secret/readable"}) {
+		t.Errorf("checked path candidates = %q, want only readable path", got)
+	}
+	if got := completePathCandidates(context.Background(), dependencies, "", "write", "", "secret/", transport); len(got) != 0 {
+		t.Errorf("unsupported command returned path candidates %q", got)
 	}
 }
 
