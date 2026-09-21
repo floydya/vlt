@@ -91,6 +91,8 @@ $ vlt favorite update f_0123456789abcdef --note reviewed
 
 `vlt` will not reimplement Vault data operations. It will resolve a profile, manage its credential lifecycle, and execute the installed `vault` binary with the original arguments and attached streams.
 
+Bash completion suggests command names from the installed Vault CLI beside `vlt` commands. This works at the first command position and after `--profile NAME`. It does not require Vault's separate shell completion hook.
+
 Vault profiles use HTTPS by default. To connect to a trusted local test Vault over HTTP, add the profile with `--allow-insecure`. Clear the opt-in with `vlt profile update NAME --address https://... --allow-insecure=false`.
 
 Set a profile color with `--color '#3366CC'` on `profile add` or `profile update`. It colors that profile's name and active marker. Favorite rows linked to the profile use its color. Shared headings, labels, forms, and status text keep their usual colors. Clear it with `vlt profile update NAME --color=`. A color-only update keeps the stored token. `NO_COLOR` and redirected output remain plain.
