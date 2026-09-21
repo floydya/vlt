@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 
 	"vlt/internal/profile"
@@ -148,6 +149,29 @@ func (s *MutationService) Remove(ctx context.Context, selector string) error {
 	updated.Favorites = append(updated.Favorites[:selectedIndex], updated.Favorites[selectedIndex+1:]...)
 	if err := s.favorites.Save(ctx, updated); err != nil {
 		return s.persistenceError(ctx, "remove favorite: persist favorite removal", err, original)
+	}
+	return nil
+}
+
+func (s *MutationService) RecordUse(ctx context.Context, selected Favorite) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s == nil || s.favorites == nil {
+		return errors.New("record favorite use: favorite store is not configured")
+	}
+	original, err := s.favorites.Load(ctx)
+	if err != nil {
+		return fmt.Errorf("record favorite use: load favorites: %w", err)
+	}
+	index := favoriteIndex(original.Favorites, selected)
+	if index < 0 || original.Favorites[index].RunCount == math.MaxInt64 {
+		return nil
+	}
+	updated := cloneFavoriteConfiguration(original)
+	updated.Favorites[index].RunCount++
+	if err := s.favorites.Save(ctx, updated); err != nil {
+		return s.persistenceError(ctx, "record favorite use: persist count", err, original)
 	}
 	return nil
 }
