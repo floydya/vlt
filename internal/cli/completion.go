@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,11 +43,15 @@ type CompletionDependencies struct {
 	Vault interface {
 		Execute(context.Context, vaultexec.Invocation) (vaultexec.Result, error)
 	}
-	Output io.Writer
+	PathTransport http.RoundTripper
+	Output        io.Writer
 }
 
 func NewCompletionHandler(dependencies CompletionDependencies) Handler {
 	return func(ctx context.Context, args []string) error {
+		if len(args) == 2 && args[0] == "__paths" {
+			return writeCompletionPaths(ctx, args[1], dependencies)
+		}
 		if len(args) == 2 && args[0] == "__vault_commands" {
 			return writeCompletionVaultCommands(ctx, args[1], dependencies)
 		}
@@ -80,6 +85,24 @@ func NewCompletionHandler(dependencies CompletionDependencies) Handler {
 		}
 		return nil
 	}
+}
+
+func writeCompletionPaths(ctx context.Context, line string, dependencies CompletionDependencies) error {
+	request, ok := pathCompletionRequest(line)
+	if !ok {
+		return nil
+	}
+	candidates := completePathCandidates(ctx, dependencies, request.profile, request.command, request.mount, request.prefix, dependencies.PathTransport)
+	if len(candidates) == 0 {
+		return nil
+	}
+	if dependencies.Output == nil {
+		return fmt.Errorf("display completion candidates: output is not configured")
+	}
+	if _, err := io.WriteString(dependencies.Output, strings.Join(candidates, "\n")+"\n"); err != nil {
+		return fmt.Errorf("display completion candidates: %w", err)
+	}
+	return nil
 }
 
 func writeCompletionVaultCommands(ctx context.Context, prefix string, dependencies CompletionDependencies) error {
@@ -141,8 +164,9 @@ func writeCompletionVaultArguments(ctx context.Context, input string, dependenci
 	}
 	seen := make(map[string]bool)
 	var candidates []string
+	_, pathPosition := pathCompletionRequest(input)
 	for _, candidate := range strings.Split(string(result.Stdout), "\n") {
-		if candidate == "" || seen[candidate] || strings.IndexFunc(candidate, unicode.IsControl) >= 0 {
+		if candidate == "" || seen[candidate] || strings.IndexFunc(candidate, unicode.IsControl) >= 0 || pathPosition && !strings.HasPrefix(candidate, "-") {
 			continue
 		}
 		seen[candidate] = true
@@ -314,10 +338,30 @@ _vlt_completion_vault_arguments() {
     if [[ -z "$line" ]]; then
         return 0
     fi
-    candidates="$(vlt completion __vault_args "$line" 2>/dev/null)" || return 0
+    if candidates="$(vlt completion __vault_args "$line" 2>/dev/null)"; then
+        while IFS= read -r candidate; do
+            if [[ -n "$candidate" && "$candidate" == "$current"* ]]; then
+                COMPREPLY+=("$candidate")
+            fi
+        done <<< "$candidates"
+    fi
+    _vlt_completion_path_arguments "$line"
+}
+
+_vlt_completion_path_arguments() {
+    local line="$1" command_index=1 candidates candidate quoted
+    if [[ "${COMP_WORDS[1]-}" == --profile ]]; then
+        command_index=3
+    fi
+    case "${COMP_WORDS[command_index]-}:${COMP_WORDS[command_index+1]-}" in
+        read:*|kv:get) ;;
+        *) return 0 ;;
+    esac
+    candidates="$(vlt completion __paths "$line" 2>/dev/null)" || return 0
     while IFS= read -r candidate; do
-        if [[ -n "$candidate" && "$candidate" == "$current"* ]]; then
-            COMPREPLY+=("$candidate")
+        if [[ -n "$candidate" ]]; then
+            printf -v quoted '%q' "$candidate"
+            COMPREPLY+=("$quoted")
         fi
     done <<< "$candidates"
 }
@@ -533,16 +577,32 @@ _vlt_completion_vault_arguments() {
         return 0
     fi
     candidates=("${(@f)$(vlt completion __vault_args "$LBUFFER" 2>/dev/null)}")
-    if [[ -z "${candidates[1]-}" ]]; then
-        return 0
+    if [[ -n "${candidates[1]-}" ]]; then
+        if [[ "$prefix" == -*=* ]]; then
+            for candidate in "${candidates[@]}"; do
+                values+=("${prefix%%=*}=$candidate")
+            done
+            candidates=("${values[@]}")
+        fi
+        compadd -- "${candidates[@]}"
     fi
-    if [[ "$prefix" == -*=* ]]; then
-        for candidate in "${candidates[@]}"; do
-            values+=("${prefix%%=*}=$candidate")
-        done
-        candidates=("${values[@]}")
+    _vlt_completion_path_arguments
+}
+
+_vlt_completion_path_arguments() {
+    local command_index=2
+    local -a candidates
+    if [[ "${words[2]-}" == --profile ]]; then
+        command_index=4
     fi
-    compadd -- "${candidates[@]}"
+    case "${words[command_index]-}:${words[command_index+1]-}" in
+        read:*|kv:get) ;;
+        *) return 0 ;;
+    esac
+    candidates=("${(@f)$(vlt completion __paths "$LBUFFER" 2>/dev/null)}")
+    if [[ -n "${candidates[1]-}" ]]; then
+        compadd -- "${candidates[@]}"
+    fi
 }
 
 _vlt() {
@@ -725,6 +785,30 @@ function __vlt_vault_arguments
     end
 end
 
+function __vlt_using_path_command
+    set -l tokens (commandline -opc)
+    set -l index 2
+    if test (count $tokens) -ge 4; and test "$tokens[2]" = --profile
+        set index 4
+    end
+    if test (count $tokens) -lt $index
+        return 1
+    end
+    if test "$tokens[$index]" = read
+        return 0
+    end
+    if test "$tokens[$index]" = kv; and test (count $tokens) -gt $index
+        set -l next (math $index + 1)
+        test "$tokens[$next]" = get
+        return $status
+    end
+    return 1
+end
+
+function __vlt_path_arguments
+    vlt completion __paths (commandline -cp) 2>/dev/null
+end
+
 function __vlt_using_command
     set -l tokens (commandline -opc)
     test (count $tokens) -ge 2; and test "$tokens[2]" = "$argv[1]"
@@ -754,6 +838,7 @@ complete -c vlt -f
 complete -c vlt -n '__vlt_needs_command' -a 'profile switch favorite completion'
 complete -c vlt -n '__vlt_needs_command; or __vlt_profile_needs_command' -a '(vlt completion __vault_commands (commandline -ct) 2>/dev/null)'
 complete -c vlt -n '__vlt_using_vault_command' -a '(__vlt_vault_arguments)'
+complete -c vlt -n '__vlt_using_path_command' -a '(__vlt_path_arguments)'
 complete -c vlt -n '__vlt_needs_command' -s h -l help
 complete -c vlt -n '__vlt_needs_command' -l profile -r -a '(vlt completion __profiles 2>/dev/null)'
 

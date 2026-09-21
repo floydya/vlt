@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -60,6 +62,210 @@ func TestCompletionHandlerFiltersVaultRootCommands(t *testing.T) {
 	}
 }
 
+func TestPathCompletionRequestSelectsOnlyPathArguments(t *testing.T) {
+	for _, tt := range []struct {
+		line    string
+		profile string
+		command string
+		mount   string
+		prefix  string
+		want    bool
+	}{
+		{line: "vlt read secret/team/", command: "read", prefix: "secret/team/", want: true},
+		{line: "vlt --profile team-a read secret/", profile: "team-a", command: "read", prefix: "secret/", want: true},
+		{line: "vlt kv get secret/team/", command: "kv get", prefix: "secret/team/", want: true},
+		{line: "vlt --profile team-a kv get -mount=secret team/", profile: "team-a", command: "kv get", mount: "secret", prefix: "team/", want: true},
+		{line: "vlt kv get -mount secret team/", command: "kv get", mount: "secret", prefix: "team/", want: true},
+		{line: `vlt read "secret/team sp`, command: "read", prefix: "secret/team sp", want: true},
+		{line: "vlt read -format=json secret/", command: "read", prefix: "secret/", want: true},
+		{line: "vlt read -field value secret/", command: "read", prefix: "secret/", want: true},
+		{line: "vlt read -format ", want: false},
+		{line: "vlt kv get -mount ", want: false},
+		{line: "vlt read secret/again another/", want: false},
+		{line: "vlt read -h", want: false},
+		{line: "vlt write secret/", want: false},
+		{line: "vlt favorite add secret/", want: false},
+		{line: "vlt --profile team-a read", want: false},
+		{line: "vlt --profile bad\nname read secret/", want: false},
+	} {
+		t.Run(tt.line, func(t *testing.T) {
+			got, ok := pathCompletionRequest(tt.line)
+			if ok != tt.want || ok && (got.profile != tt.profile || got.command != tt.command || got.mount != tt.mount || got.prefix != tt.prefix) {
+				t.Errorf("pathCompletionRequest(%q) = %#v, %t", tt.line, got, ok)
+			}
+		})
+	}
+}
+
+func TestCompletionHandlerWritesOnlyCheckedPathsForSelectedProfile(t *testing.T) {
+	selected := profile.Profile{Name: "team-a", Address: "https://vault.example.invalid", Username: "a", AuthPath: "oidc"}
+	loader := &completionProfileLoader{configuration: config.Configuration{Profiles: []profile.Profile{selected}, ActiveProfile: selected.Name}}
+	credentials := &completionCredentialGetter{token: "synthetic-token"}
+	transport := completionTestTransport{handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v1/secret/":
+			_, _ = writer.Write([]byte(`{"data":{"keys":["safe name","denied"]}}`))
+		case "/v1/sys/capabilities-self":
+			_, _ = writer.Write([]byte(`{"secret/safe name":["read"],"secret/denied":["deny"]}`))
+		default:
+			t.Errorf("unexpected path request %s", request.URL.Path)
+		}
+	})}
+	var output bytes.Buffer
+	vault := &completionVaultStub{}
+	handler := NewCompletionHandler(CompletionDependencies{Profiles: loader, Credentials: credentials, Vault: vault, PathTransport: transport, Output: &output})
+	if err := handler(context.Background(), []string{"__paths", "vlt --profile team-a read secret/"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := output.String(); got != "secret/safe name\n" {
+		t.Errorf("path output = %q, want one checked path", got)
+	}
+	if !reflect.DeepEqual(credentials.names, []string{"team-a"}) || vault.calls != 0 {
+		t.Errorf("credential reads = %q, Vault calls = %d", credentials.names, vault.calls)
+	}
+}
+
+func TestCompletionHandlerKeepsLocalFlagsButDropsUnverifiedPathArguments(t *testing.T) {
+	for _, tt := range []struct {
+		line string
+		want string
+	}{
+		{line: "vlt read secret/", want: "-format\n"},
+		{line: "vlt kv get secret/", want: "-format\n"},
+		{line: "vlt write secret/", want: "secret/unverified\n-format\n"},
+	} {
+		t.Run(tt.line, func(t *testing.T) {
+			vault := &completionVaultStub{result: vaultexec.Result{Stdout: []byte("secret/unverified\n-format\n")}}
+			var output bytes.Buffer
+			handler := NewCompletionHandler(CompletionDependencies{Vault: vault, Output: &output})
+			if err := handler(context.Background(), []string{"__vault_args", tt.line}); err != nil {
+				t.Fatal(err)
+			}
+			if got := output.String(); got != tt.want {
+				t.Errorf("local candidates = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCompletionScriptsRequestPathsWithoutShellEvaluation(t *testing.T) {
+	for _, tt := range []struct {
+		shell string
+		want  []string
+	}{
+		{shell: "bash", want: []string{"completion __paths", "printf -v", "'%q'"}},
+		{shell: "zsh", want: []string{"completion __paths", "compadd --"}},
+		{shell: "fish", want: []string{"completion __paths", "__vlt_path_arguments"}},
+	} {
+		t.Run(tt.shell, func(t *testing.T) {
+			script, err := completionScript(tt.shell)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(script, want) {
+					t.Errorf("%s completion lacks %q", tt.shell, want)
+				}
+			}
+		})
+	}
+}
+
+func TestBashCompletionQuotesCheckedPaths(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not installed")
+	}
+	for _, tt := range []struct {
+		line  string
+		words string
+		index int
+		want  bool
+	}{
+		{line: "vlt read secret/", words: "vlt read secret/", index: 2, want: true},
+		{line: "vlt --profile team-a read secret/", words: "vlt --profile team-a read secret/", index: 4, want: true},
+		{line: "vlt write secret/", words: "vlt write secret/", index: 2},
+	} {
+		t.Run(tt.line, func(t *testing.T) {
+			invocation := bashCompletionScript + `
+vlt() {
+    if [[ "$2" == __paths ]]; then
+        printf '%s\n' 'secret/safe name' 'secret/$(printf RUN)'
+    fi
+}
+COMP_LINE=` + strconv.Quote(tt.line) + `
+COMP_POINT=${#COMP_LINE}
+COMP_WORDS=(` + tt.words + `)
+COMP_CWORD=` + strconv.Itoa(tt.index) + `
+_vlt_completion
+printf '%s\n' "${COMPREPLY[@]}"
+`
+			output, err := exec.Command(bash, "-c", invocation).CombinedOutput()
+			if err != nil {
+				t.Fatalf("Bash path completion error = %v: %s", err, output)
+			}
+			got := string(output)
+			if tt.want {
+				if !strings.Contains(got, `secret/safe\ name`) || !strings.Contains(got, `secret/\$\(printf\ RUN\)`) {
+					t.Errorf("Bash did not quote checked paths: %q", got)
+				}
+			} else if strings.Contains(got, "secret/") {
+				t.Errorf("Bash requested paths for another command: %q", got)
+			}
+		})
+	}
+}
+
+func TestZshCompletionPassesCheckedPathsAsLiteralArguments(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh is not installed")
+	}
+	invocation := `compdef() { :; }
+compadd() { print -r -- "$@" }
+vlt() {
+    if [[ "$2" == __paths ]]; then
+        print -r -- 'secret/safe name' 'secret/$(printf RUN)'
+    fi
+}
+` + zshCompletionScript + `
+words=(vlt --profile team-a read secret/)
+CURRENT=5
+PREFIX=secret/
+LBUFFER='vlt --profile team-a read secret/'
+_vlt
+`
+	output, err := exec.Command(zsh, "-fc", invocation).CombinedOutput()
+	if err != nil {
+		t.Fatalf("Zsh path completion error = %v: %s", err, output)
+	}
+	if got := string(output); !strings.Contains(got, "secret/safe name") || !strings.Contains(got, "secret/$(printf RUN)") || strings.Contains(got, "secret/RUN") {
+		t.Errorf("Zsh changed or evaluated checked paths: %q", got)
+	}
+}
+
+func TestFishCompletionQuotesCheckedPaths(t *testing.T) {
+	fish, err := exec.LookPath("fish")
+	if err != nil {
+		t.Skip("fish is not installed")
+	}
+	invocation := `function vlt
+    if test "$argv[2]" = __paths
+        printf '%s\n' 'secret/safe name' 'secret/$(printf RUN)'
+    end
+end
+` + fishCompletionScript + `
+complete -C --escape 'vlt read secret/'
+`
+	output, err := exec.Command(fish, "-c", invocation).CombinedOutput()
+	if err != nil {
+		t.Fatalf("Fish path completion error = %v: %s", err, output)
+	}
+	if got := string(output); !strings.Contains(got, `secret/safe\ name`) || !strings.Contains(got, `secret/\$\(printf\ RUN\)`) {
+		t.Errorf("Fish did not quote checked paths: %q", got)
+	}
+}
+
 func TestCompletionHandlerSilencesUnavailableVault(t *testing.T) {
 	for _, vault := range []*completionVaultStub{nil, {err: errors.New("private failure")}} {
 		var output bytes.Buffer
@@ -97,12 +303,13 @@ func TestCompletionHandlerRequestsVaultArgumentCandidates(t *testing.T) {
 		line       string
 		vaultLine  string
 		candidates string
+		want       string
 	}{
-		{name: "nested command", line: "vlt kv g", vaultLine: "vault kv g", candidates: "get\n"},
-		{name: "profile override", line: "vlt --profile team-a kv g", vaultLine: "vault kv g", candidates: "get\n"},
-		{name: "flag", line: "vlt kv get -m", vaultLine: "vault kv get -m", candidates: "-mfa\n-mount\n"},
-		{name: "local flag value", line: "vlt kv get -format=j", vaultLine: "vault kv get -format=j", candidates: "json\n"},
-		{name: "quoted argument", line: `vlt kv get -field="a b" j`, vaultLine: `vault kv get -field="a b" j`, candidates: "json\n"},
+		{name: "nested command", line: "vlt kv g", vaultLine: "vault kv g", candidates: "get\n", want: "get\n"},
+		{name: "profile override", line: "vlt --profile team-a kv g", vaultLine: "vault kv g", candidates: "get\n", want: "get\n"},
+		{name: "flag", line: "vlt kv get -m", vaultLine: "vault kv get -m", candidates: "-mfa\n-mount\n", want: "-mfa\n-mount\n"},
+		{name: "local flag value", line: "vlt kv get -format=j", vaultLine: "vault kv get -format=j", candidates: "json\n", want: "json\n"},
+		{name: "quoted path filters unverified local text", line: `vlt kv get -field="a b" j`, vaultLine: `vault kv get -field="a b" j`, candidates: "json\n"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			vault := &completionVaultStub{result: vaultexec.Result{Stdout: []byte(tt.candidates)}}
@@ -112,8 +319,8 @@ func TestCompletionHandlerRequestsVaultArgumentCandidates(t *testing.T) {
 			if err := handler(context.Background(), []string{"__vault_args", tt.line}); err != nil {
 				t.Fatalf("Vault argument completion error = %v", err)
 			}
-			if got := output.String(); got != tt.candidates {
-				t.Errorf("Vault arguments = %q, want %q", got, tt.candidates)
+			if got := output.String(); got != tt.want {
+				t.Errorf("Vault arguments = %q, want %q", got, tt.want)
 			}
 			if vault.calls != 1 || len(vault.invocation.Arguments) != 0 || vault.invocation.Mode != vaultexec.Captured {
 				t.Errorf("Vault invocation = %#v, calls = %d", vault.invocation, vault.calls)
