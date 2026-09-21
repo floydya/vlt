@@ -109,10 +109,15 @@ type FavoriteMutator interface {
 	Remove(context.Context, string) error
 }
 
+type FavoriteUseRecorder interface {
+	RecordUse(context.Context, favorite.Favorite) error
+}
+
 type FavoriteDependencies struct {
 	Profiles           ConfigurationLoader
 	Favorites          FavoriteConfigurationLoader
 	Mutations          FavoriteMutator
+	Recorder           FavoriteUseRecorder
 	Lock               MutationLock
 	Output             io.Writer
 	Terminal           Terminal
@@ -198,7 +203,15 @@ func favoriteExecute(ctx context.Context, dependencies FavoriteDependencies) err
 	default:
 		return errors.New("execute favorite: stored operation is unsupported")
 	}
-	return dependencies.Vault(ctx, arguments)
+	if err := dependencies.Vault(ctx, arguments); err != nil {
+		return err
+	}
+	if dependencies.Recorder != nil {
+		_ = withMutationLock(ctx, dependencies.Lock, func(lockContext context.Context) error {
+			return dependencies.Recorder.RecordUse(lockContext, resolved)
+		})
+	}
+	return nil
 }
 
 func favoriteAdd(ctx context.Context, dependencies FavoriteDependencies, args []string) error {
@@ -286,6 +299,7 @@ func favoriteList(ctx context.Context, dependencies FavoriteDependencies, args [
 func favoriteListOutput(favorites []favorite.Favorite, terminal Terminal) string {
 	rows := [][]presentationCell{{
 		{value: "#", role: presentationHeading},
+		{value: "RUNS", role: presentationHeading},
 		{value: "OPERATION", role: presentationHeading},
 		{value: "PROFILE", role: presentationHeading},
 		{value: "PATH", role: presentationHeading},
@@ -298,6 +312,7 @@ func favoriteListOutput(favorites []favorite.Favorite, terminal Terminal) string
 		}
 		rows = append(rows, []presentationCell{
 			{value: strconv.Itoa(index + 1)},
+			{value: strconv.FormatInt(candidate.RunCount, 10)},
 			{value: sanitizeFavoriteDisplay(candidate.Operation)},
 			{value: sanitizeFavoriteDisplay(candidate.Profile)},
 			{value: sanitizeFavoriteDisplay(candidate.Path)},

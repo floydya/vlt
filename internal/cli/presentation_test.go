@@ -131,10 +131,10 @@ func TestFavoriteListPresentationPlainAndStyledAreExact(t *testing.T) {
 		{Profile: "team-b", Operation: favorite.OperationRead, Path: "secret/a", Note: "line\nbreak\x1b[31m"},
 		{Profile: "team-a", Operation: favorite.OperationKVGet, Path: "secret/a", Note: "daily"},
 	}
-	want := "#  OPERATION  PROFILE  PATH      NOTE\n" +
-		"1  kv-get     team-a   secret/a  daily\n" +
-		"2  read       team-b   secret/a  line break [31m\n" +
-		"3  read       team-b   secret/z  -\n"
+	want := "#  RUNS  OPERATION  PROFILE  PATH      NOTE\n" +
+		"1  0     kv-get     team-a   secret/a  daily\n" +
+		"2  0     read       team-b   secret/a  line break [31m\n" +
+		"3  0     read       team-b   secret/z  -\n"
 
 	plain := favoriteListOutput(favorites, fixedTerminal{color: false})
 	if plain != want {
