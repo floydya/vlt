@@ -321,10 +321,12 @@ func TestMutationServiceUpdateChangesOnlySuppliedFieldsAndReauthenticates(t *tes
 	service := NewMutationService(configurations, credentials, authenticator)
 	address := "https://vault-new.example.com"
 	namespace := "new-namespace"
+	color := "#A1B2C3"
 
 	err := service.Update(context.Background(), "team-a", ProfileChanges{
 		Address:   &address,
 		Namespace: &namespace,
+		Color:     &color,
 	})
 	if err != nil {
 		t.Fatalf("Update() error = %v", err)
@@ -333,6 +335,7 @@ func TestMutationServiceUpdateChangesOnlySuppliedFieldsAndReauthenticates(t *tes
 	wantProfile := originalProfile
 	wantProfile.Address = address
 	wantProfile.Namespace = namespace
+	wantProfile.Color = color
 	want := Configuration{Profiles: []Profile{wantProfile}, ActiveProfile: "team-a"}
 	if !reflect.DeepEqual(configurations.configuration, want) {
 		t.Fatalf("configuration after Update() = %#v, want %#v", configurations.configuration, want)
@@ -342,6 +345,75 @@ func TestMutationServiceUpdateChangesOnlySuppliedFieldsAndReauthenticates(t *tes
 	}
 	if !reflect.DeepEqual(authenticator.calls, []Profile{wantProfile}) {
 		t.Fatalf("Login() profiles = %#v, want updated profile", authenticator.calls)
+	}
+}
+
+func TestMutationServiceUpdateColorWithoutCredentialAccess(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		originalColor string
+		updatedColor  string
+		wantSaves     int
+	}{
+		{name: "set", updatedColor: "#A1B2C3", wantSaves: 1},
+		{name: "clear", originalColor: "#A1B2C3", updatedColor: "", wantSaves: 1},
+		{name: "unchanged", originalColor: "#A1B2C3", updatedColor: "#A1B2C3"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			original := mutationTestProfile("team-a")
+			original.Color = tt.originalColor
+			configurations := &mutationConfigStore{configuration: Configuration{Profiles: []Profile{original}}}
+			credentials := newMutationCredentialStore()
+			credentials.credentials["team-a"] = "original-token"
+			authenticator := &mutationAuthenticator{credentials: credentials, token: "replacement-token"}
+			service := NewMutationService(configurations, credentials, authenticator)
+			if err := service.Update(context.Background(), "team-a", ProfileChanges{Color: &tt.updatedColor}); err != nil {
+				t.Fatalf("Update() error = %v", err)
+			}
+			if got := configurations.configuration.Profiles[0].Color; got != tt.updatedColor {
+				t.Fatalf("saved color = %q, want %q", got, tt.updatedColor)
+			}
+			if configurations.saveCalls != tt.wantSaves || credentials.getCalls != 0 || credentials.setCalls != 0 || credentials.deleteCalls != 0 || len(authenticator.calls) != 0 {
+				t.Fatalf("unexpected calls: save=%d get=%d set=%d delete=%d login=%d", configurations.saveCalls, credentials.getCalls, credentials.setCalls, credentials.deleteCalls, len(authenticator.calls))
+			}
+			if credentials.credentials["team-a"] != "original-token" {
+				t.Fatal("color-only update changed credential")
+			}
+		})
+	}
+}
+
+func TestMutationServiceUpdateColorFailurePreservesProfileAndCredential(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		color        string
+		saveAfterErr bool
+	}{
+		{name: "invalid color", color: "red"},
+		{name: "save before replacement", color: "#A1B2C3"},
+		{name: "save after replacement", color: "#A1B2C3", saveAfterErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			original := Configuration{Profiles: []Profile{mutationTestProfile("team-a")}}
+			configurations := &mutationConfigStore{configuration: original}
+			if tt.color != "red" {
+				configurations.saveErrAt = 1
+				configurations.saveAfterErr = tt.saveAfterErr
+			}
+			credentials := newMutationCredentialStore()
+			credentials.credentials["team-a"] = "original-token"
+			authenticator := &mutationAuthenticator{credentials: credentials, token: "replacement-token"}
+			service := NewMutationService(configurations, credentials, authenticator)
+			if err := service.Update(context.Background(), "team-a", ProfileChanges{Color: &tt.color}); err == nil {
+				t.Fatal("Update() error = nil, want failure")
+			}
+			if !reflect.DeepEqual(configurations.configuration, original) || credentials.credentials["team-a"] != "original-token" {
+				t.Fatalf("failed color update changed state: profiles=%#v credential=%q", configurations.configuration, credentials.credentials["team-a"])
+			}
+			if credentials.getCalls != 0 || credentials.setCalls != 0 || credentials.deleteCalls != 0 || len(authenticator.calls) != 0 {
+				t.Fatal("failed color update touched credentials or authentication")
+			}
+		})
 	}
 }
 

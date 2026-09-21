@@ -41,6 +41,7 @@ type ProfileChanges struct {
 	AuthPath      *string
 	Namespace     *string
 	AllowInsecure *bool
+	Color         *string
 }
 
 type credentialSnapshot struct {
@@ -127,6 +128,20 @@ func (s *MutationService) Update(ctx context.Context, name string, changes Profi
 		return fmt.Errorf("update profile %q: invalid profile: %w", name, err)
 	}
 	if updatedProfile == original.Profiles[index] {
+		return nil
+	}
+	authProfile := updatedProfile
+	authProfile.Color = original.Profiles[index].Color
+	if authProfile == original.Profiles[index] {
+		updated := cloneConfiguration(original)
+		updated.Profiles[index] = updatedProfile
+		if err := s.configurations.Save(ctx, updated); err != nil {
+			restoreErr := restoreConfiguration(context.WithoutCancel(ctx), s.configurations, original)
+			if restoreErr != nil {
+				return errors.Join(fmt.Errorf("update profile %q: persist updated profile: %w", name, err), fmt.Errorf("restore profile configuration: %w", restoreErr))
+			}
+			return fmt.Errorf("update profile %q: persist updated profile: %w", name, err)
+		}
 		return nil
 	}
 
@@ -269,6 +284,9 @@ func applyProfileChanges(original Profile, changes ProfileChanges) Profile {
 	}
 	if changes.AllowInsecure != nil {
 		updated.AllowInsecure = *changes.AllowInsecure
+	}
+	if changes.Color != nil {
+		updated.Color = *changes.Color
 	}
 	return updated
 }
