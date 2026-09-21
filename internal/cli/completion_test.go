@@ -206,6 +206,40 @@ printf '%s\n' "${COMPREPLY[@]}"
 	}
 }
 
+func TestBashCompletionSurvivesErrexitWhenOnlyVaultMatches(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not installed")
+	}
+	for _, tt := range []struct {
+		name  string
+		words string
+		index int
+	}{
+		{name: "root", words: "vlt k", index: 1},
+		{name: "profile override", words: "vlt --profile team-a k", index: 3},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			invocation := `set -e
+` + bashCompletionScript + `
+vlt() {
+    if [[ "$1 $2" == "completion __vault_commands" ]]; then
+        printf 'kv\n'
+    fi
+}
+COMP_WORDS=(` + tt.words + `)
+COMP_CWORD=` + fmt.Sprint(tt.index) + `
+_vlt_completion
+printf '%s\n' "${COMPREPLY[@]}"
+`
+			output, err := exec.Command(bash, "-c", invocation).CombinedOutput()
+			if err != nil || string(output) != "kv\n" {
+				t.Fatalf("Bash completion under errexit = %q, error = %v; want kv", output, err)
+			}
+		})
+	}
+}
+
 func TestBashCompletionCombinesManagementAndVaultCommands(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {

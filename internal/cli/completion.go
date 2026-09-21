@@ -280,7 +280,7 @@ _vlt_completion_favorites() {
 
 _vlt_completion_root_commands() {
     local current="$1" candidates candidate existing duplicate
-    COMPREPLY=( $(compgen -W "profile switch favorite completion --profile -h --help" -- "$current") )
+    COMPREPLY=( $(compgen -W "profile switch favorite completion --profile -h --help" -- "$current" || :) )
     if [[ "$current" == -* ]]; then
         return 0
     fi

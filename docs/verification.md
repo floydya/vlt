@@ -111,6 +111,12 @@ Fake-backed delegated `read PATH` and `kv get PATH` checks confirmed the one-com
 | 29. Persist favorite counts and show count-first list and picker order | `TestMutationServiceRecordUseReloadsAndIncrementsCurrentFavorite`, `TestFavoriteExecutionRecordsUseAfterSuccessfulVaultRun`, `TestFavoriteExecutionSkipsUseAfterVaultFailure`, `TestConcurrentFavoriteExecutionsRecordEverySuccessfulRun`, `TestFavoriteListDisplaysStableNumberedColumns`, and `TestSharedFavoriteSelectorShowsCountFirstRowsAndSearchesCounts` |
 | 30. Keep Vault output and status unchanged when a count save fails | `TestMutationServiceRecordUseRestoresStateAfterSaveFailure`, `TestFavoriteExecutionIgnoresCountSaveFailureAndPreservesStreams`, and `TestFavoriteExecutionOutputContainsOnlyDelegatedVaultBytes` |
 
+### Bash Vault completion checkpoint
+
+On 2026-09-21, focused completion tests, `bash -n` on the generated script, and `just check` passed. An isolated Bash smoke check with Vault v2.0.3 completed root `kv`, nested `get`, flag `-mount`, and `json` after `--profile team-a kv get -format=j`. It used no token or live Vault server.
+
+The root and argument tests first failed before their handlers were added. `TestBashCompletionSurvivesErrexitWhenOnlyVaultMatches` then failed with exit status 1 and passed after the root helper handled `compgen` returning no management match. This checkpoint did not run a live server, native credential store, or Zsh and Fish completion.
+
 ## Dependency review
 
 The approved direct integrations are `github.com/zalando/go-keyring v0.2.6`, `charm.land/huh/v2 v2.0.3`, `charm.land/lipgloss/v2 v2.0.6`, `charm.land/bubbles/v2 v2.0.0`, and `charm.land/bubbletea/v2 v2.0.2`. The terminal boundary also imports the pinned `colorprofile`, `x/ansi`, and `x/term` support modules. The in-process selector uses Bubble Tea for the inline event loop and the Bubbles fuzzy matcher. It does not invoke or require `fzf`. `go mod verify` passed.
