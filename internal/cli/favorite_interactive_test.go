@@ -412,8 +412,8 @@ func TestFavoriteFormCancellationStopsBeforeFreeTextInput(t *testing.T) {
 
 func TestFavoriteManagementUsesSharedSelectorRowsAndStableIdentity(t *testing.T) {
 	candidates := []favorite.Favorite{
-		{Profile: "team-b", Operation: favorite.OperationKVGet, Path: "secret/b", Note: "daily"},
-		{Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/a"},
+		{Profile: "team-b", Operation: favorite.OperationKVGet, Path: "secret/b", Note: "daily", RunCount: 12},
+		{Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/a", RunCount: 2},
 	}
 	shared := &recordingSharedSelector{selectedID: "favorite-000002"}
 	selector := NewSharedFavoriteManagementSelector(shared)
@@ -425,6 +425,9 @@ func TestFavoriteManagementUsesSharedSelectorRowsAndStableIdentity(t *testing.T)
 	ordered := favorite.NewService(candidates).List()
 	if selected != ordered[1] {
 		t.Fatalf("selected favorite = %#v, want stable ordered favorite %#v", selected, ordered[1])
+	}
+	if len(shared.items) != 2 || shared.items[0].Label != "1  12  kv-get  team-b  secret/b  daily" || shared.items[1].Label != "2  2  read  team-a  secret/a  -" {
+		t.Fatalf("management selector rows = %#v, want count-first rows", shared.items)
 	}
 	for _, text := range []string{"secret/a", "secret/b", "team-a", "team-b", "kv-get", "daily"} {
 		found := false
