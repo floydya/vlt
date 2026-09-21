@@ -2,6 +2,7 @@ package favorite
 
 import (
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -28,6 +29,8 @@ func TestFavoriteValidate(t *testing.T) {
 		{name: "unknown operation", mutate: func(candidate *Favorite) { candidate.Operation = "write" }, wantErr: "operation"},
 		{name: "empty path", mutate: func(candidate *Favorite) { candidate.Path = "" }, wantErr: "path"},
 		{name: "whitespace path", mutate: func(candidate *Favorite) { candidate.Path = " \t\n" }, wantErr: "path"},
+		{name: "positive run count", mutate: func(candidate *Favorite) { candidate.RunCount = 7 }},
+		{name: "negative run count", mutate: func(candidate *Favorite) { candidate.RunCount = -1 }, wantErr: "run count"},
 	}
 
 	for _, tt := range tests {
@@ -109,6 +112,31 @@ func TestServiceListIgnoresNotesForOrdering(t *testing.T) {
 
 	if !reflect.DeepEqual(got, []Favorite{first, second}) {
 		t.Fatalf("List() = %#v, want profile order independent of note", got)
+	}
+}
+
+func TestServiceListSortsByRunCountBeforeIdentity(t *testing.T) {
+	input := []Favorite{
+		{Profile: "zulu", Operation: OperationRead, Path: "secret/z", RunCount: 2},
+		{Profile: "alpha", Operation: OperationRead, Path: "secret/a", RunCount: 1},
+		{Profile: "zulu", Operation: OperationRead, Path: "secret/a", RunCount: 2},
+		{Profile: "alpha", Operation: OperationRead, Path: "secret/a", RunCount: 2},
+		{Profile: "alpha", Operation: OperationKVGet, Path: "secret/a", RunCount: 2},
+	}
+	want := []Favorite{input[4], input[3], input[2], input[0], input[1]}
+	original := append([]Favorite(nil), input...)
+	service := NewService(input)
+	if got := service.List(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("List() = %#v, want %#v", got, want)
+	}
+	if !reflect.DeepEqual(input, original) {
+		t.Fatalf("List() changed input: got %#v, want %#v", input, original)
+	}
+	for index, expected := range want {
+		got, err := service.Resolve(strconv.Itoa(index + 1))
+		if err != nil || got != expected {
+			t.Fatalf("Resolve(%d) = %#v, %v; want %#v", index+1, got, err, expected)
+		}
 	}
 }
 
