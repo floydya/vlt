@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.2.0](https://github.com/floydya/vlt/compare/v0.1.1...v0.2.0) (2026-09-21)
+
+
+### Features
+
+* **VLT-411:** accept profile color flags ([#12](https://github.com/floydya/vlt/issues/12)) ([71207d2](https://github.com/floydya/vlt/commit/71207d2d0017810d13ded53681d4b01cffc7fff5))
+* **VLT-411:** color interactive focus ([#20](https://github.com/floydya/vlt/issues/20)) ([24570a6](https://github.com/floydya/vlt/commit/24570a6b0eda05e926f4e65d0e31d4277f6c8a96))
+* **VLT-411:** color profile picker rows ([#21](https://github.com/floydya/vlt/issues/21)) ([4a6dd03](https://github.com/floydya/vlt/commit/4a6dd03bcb3595f2cf4ccdd179a2d0ee4480c217))
+* **VLT-411:** complete profile color flags ([#19](https://github.com/floydya/vlt/issues/19)) ([76ed970](https://github.com/floydya/vlt/commit/76ed970d9d8111293b0c4182d990a90f221c88f1))
+* **VLT-411:** edit profile colors in forms ([#13](https://github.com/floydya/vlt/issues/13)) ([b00493d](https://github.com/floydya/vlt/commit/b00493db425b9deee41c1465fa906d1514f9d97c))
+* **VLT-411:** persist favorite run counts ([#7](https://github.com/floydya/vlt/issues/7)) ([02fab1e](https://github.com/floydya/vlt/commit/02fab1e7caf71306dde63903f6a8da34dc9c1e4a))
+* **VLT-411:** persist validated profile colors ([#10](https://github.com/floydya/vlt/issues/10)) ([659a093](https://github.com/floydya/vlt/commit/659a093cb6a6291e8f29ea92b67df2584360c9dd))
+* **VLT-411:** record successful favorite runs ([#9](https://github.com/floydya/vlt/issues/9)) ([e1e9827](https://github.com/floydya/vlt/commit/e1e9827a23d112d5e2af6ce3d1a3411c7a825e54))
+* **VLT-411:** reset count when favorite command changes ([#8](https://github.com/floydya/vlt/issues/8)) ([5a14fda](https://github.com/floydya/vlt/commit/5a14fda34cad998e133ae08f365bff869c09226b))
+* **VLT-411:** show counts in favorite pickers ([#18](https://github.com/floydya/vlt/issues/18)) ([1df7105](https://github.com/floydya/vlt/commit/1df71056733d94c7fbbb77f7035e897ebf8e5e75))
+* **VLT-411:** show favorite run counts ([#17](https://github.com/floydya/vlt/issues/17)) ([8fe5ffa](https://github.com/floydya/vlt/commit/8fe5ffaa07d108bf23e4623e84982bce3989c6eb))
+* **VLT-411:** show profile colors in output ([#14](https://github.com/floydya/vlt/issues/14)) ([1102900](https://github.com/floydya/vlt/commit/1102900cd3370b7f8667b5b9c6f84d1aedf6a9e5))
+* **VLT-411:** update profile color without login ([#11](https://github.com/floydya/vlt/issues/11)) ([197651c](https://github.com/floydya/vlt/commit/197651c4e2248645ee830eae361252a575f9446e))
+* **VLT-411:** use active profile accent ([#15](https://github.com/floydya/vlt/issues/15)) ([a27155a](https://github.com/floydya/vlt/commit/a27155aac9b76842847ad4f385a290fbc6da4f4a))
+
+
+### Fixes
+
+* **VLT-411:** remove Zsh command suffix ([#16](https://github.com/floydya/vlt/issues/16)) ([ce6808e](https://github.com/floydya/vlt/commit/ce6808e946e9e1ad1b4ca780423ecf9aefc93d81))
+
 ## [0.1.1](https://github.com/floydya/vlt/compare/v0.1.0...v0.1.1) (2026-09-20)
 
 
