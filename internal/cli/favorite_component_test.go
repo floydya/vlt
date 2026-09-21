@@ -259,6 +259,11 @@ func TestFakeBackedFavoriteSelectionStopsBeforeVault(t *testing.T) {
 			if err := harness.favorites.Save(context.Background(), originalFavorites); err != nil {
 				t.Fatalf("seed favorite: %v", err)
 			}
+			var loadErr error
+			originalFavorites, loadErr = harness.favorites.Load(context.Background())
+			if loadErr != nil {
+				t.Fatalf("load seeded favorite: %v", loadErr)
+			}
 			harness.wire(favoriteComponentAdapters{
 				terminal: switchTerminal{prompts: true}, executionSelector: tt.selector,
 			})
@@ -313,6 +318,11 @@ func TestFakeBackedFavoriteCascadeApprovalAndRollback(t *testing.T) {
 			}}
 			if err := harness.favorites.Save(context.Background(), originalFavorites); err != nil {
 				t.Fatalf("seed favorites: %v", err)
+			}
+			var loadErr error
+			originalFavorites, loadErr = harness.favorites.Load(context.Background())
+			if loadErr != nil {
+				t.Fatalf("load seeded favorites: %v", loadErr)
 			}
 			harness.credentials.deleteErr = tt.deleteError
 			profileConfirmer := &fakeProfileRemovalConfirmer{result: true}

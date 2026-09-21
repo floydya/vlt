@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 
+	"vlt/internal/favorite"
 	"vlt/internal/profile"
 )
 
@@ -29,8 +30,9 @@ Examples:
 `
 
 type CompletionDependencies struct {
-	Profiles ConfigurationLoader
-	Output   io.Writer
+	Profiles  ConfigurationLoader
+	Favorites FavoriteConfigurationLoader
+	Output    io.Writer
 }
 
 func NewCompletionHandler(dependencies CompletionDependencies) Handler {
@@ -40,6 +42,9 @@ func NewCompletionHandler(dependencies CompletionDependencies) Handler {
 		}
 		if len(args) == 1 && args[0] == "__profiles" {
 			return writeCompletionProfiles(ctx, dependencies)
+		}
+		if len(args) == 1 && args[0] == "__favorites" {
+			return writeCompletionFavorites(ctx, dependencies)
 		}
 		if len(args) == 0 {
 			return AutomaticHelp{Text: completionHelpText}
@@ -59,6 +64,32 @@ func NewCompletionHandler(dependencies CompletionDependencies) Handler {
 		}
 		return nil
 	}
+}
+
+func writeCompletionFavorites(ctx context.Context, dependencies CompletionDependencies) error {
+	if dependencies.Favorites == nil {
+		return nil
+	}
+	configuration, err := dependencies.Favorites.Load(ctx)
+	if err != nil {
+		return nil
+	}
+	var output strings.Builder
+	for _, candidate := range favorite.NewService(configuration.Favorites).List() {
+		if candidate.ID != "" {
+			fmt.Fprintln(&output, candidate.ID)
+		}
+	}
+	if output.Len() == 0 {
+		return nil
+	}
+	if dependencies.Output == nil {
+		return fmt.Errorf("display completion candidates: output is not configured")
+	}
+	if _, err := io.WriteString(dependencies.Output, output.String()); err != nil {
+		return fmt.Errorf("display completion candidates: %w", err)
+	}
+	return nil
 }
 
 func writeCompletionProfiles(ctx context.Context, dependencies CompletionDependencies) error {
@@ -107,8 +138,12 @@ const bashCompletionScript = `_vlt_completion_profiles() {
     vlt completion __profiles 2>/dev/null
 }
 
+_vlt_completion_favorites() {
+    vlt completion __favorites 2>/dev/null
+}
+
 _vlt_completion() {
-    local current previous command subcommand profiles
+    local current previous command subcommand profiles favorites
     COMPREPLY=()
     current="${COMP_WORDS[COMP_CWORD]}"
     previous=""
@@ -142,19 +177,19 @@ _vlt_completion() {
             ;;
         profile)
             if (( COMP_CWORD == 2 )); then
-                COMPREPLY=( $(compgen -W "add list show update remove -h --help" -- "$current") )
+                COMPREPLY=( $(compgen -W "add list current show update remove -h --help" -- "$current") )
                 return 0
             fi
             case "$subcommand" in
                 "")
-                    COMPREPLY=( $(compgen -W "add list show update remove -h --help" -- "$current") )
+                    COMPREPLY=( $(compgen -W "add list current show update remove -h --help" -- "$current") )
                     ;;
                 add)
                     if (( COMP_CWORD >= 3 )); then
                         COMPREPLY=( $(compgen -W "--address --username --auth-path --namespace --allow-insecure --color -h --help" -- "$current") )
                     fi
                     ;;
-                list)
+                list|current)
                     COMPREPLY=( $(compgen -W "-h --help" -- "$current") )
                     ;;
                 show)
@@ -210,6 +245,11 @@ _vlt_completion() {
                     esac
                     ;;
                 update)
+                    if (( COMP_CWORD == 3 )); then
+                        favorites="$(_vlt_completion_favorites)"
+                        COMPREPLY=( $(compgen -W "$favorites -h --help" -- "$current") )
+                        return 0
+                    fi
                     case "$previous" in
                         --profile)
                             profiles="$(_vlt_completion_profiles)"
@@ -227,7 +267,13 @@ _vlt_completion() {
                             ;;
                     esac
                     ;;
-                list|remove)
+                remove)
+                    if (( COMP_CWORD == 3 )); then
+                        favorites="$(_vlt_completion_favorites)"
+                        COMPREPLY=( $(compgen -W "$favorites -h --help" -- "$current") )
+                    fi
+                    ;;
+                list)
                     COMPREPLY=( $(compgen -W "-h --help" -- "$current") )
                     ;;
             esac
@@ -258,6 +304,12 @@ _vlt_completion_profiles() {
     local -a profiles
     profiles=("${(@f)$(vlt completion __profiles 2>/dev/null)}")
     _describe 'profile' profiles
+}
+
+_vlt_completion_favorites() {
+    local -a favorites
+    favorites=("${(@f)$(vlt completion __favorites 2>/dev/null)}")
+    _describe 'favorite ID' favorites
 }
 
 _vlt() {
@@ -297,19 +349,19 @@ _vlt() {
             ;;
         profile)
             if (( CURRENT == 3 )); then
-                _values 'profile command' 'add' 'list' 'show' 'update' 'remove' '-h' '--help'
+                _values 'profile command' 'add' 'list' 'current' 'show' 'update' 'remove' '-h' '--help'
                 return 0
             fi
             case "$subcommand" in
                 "")
-                    _values 'profile command' 'add' 'list' 'show' 'update' 'remove' '-h' '--help'
+                    _values 'profile command' 'add' 'list' 'current' 'show' 'update' 'remove' '-h' '--help'
                     ;;
                 add)
                     if (( CURRENT >= 4 )); then
                         _values 'option' '--address' '--username' '--auth-path' '--namespace' '--allow-insecure' '--color' '-h' '--help'
                     fi
                     ;;
-                list)
+                list|current)
                     _values 'option' '-h' '--help'
                     ;;
                 show)
@@ -359,6 +411,10 @@ _vlt() {
                     esac
                     ;;
                 update)
+                    if (( CURRENT == 4 )); then
+                        _vlt_completion_favorites
+                        return 0
+                    fi
                     case "$previous" in
                         --profile)
                             _vlt_completion_profiles
@@ -373,7 +429,12 @@ _vlt() {
                             ;;
                     esac
                     ;;
-                list|remove)
+                remove)
+                    if (( CURRENT == 4 )); then
+                        _vlt_completion_favorites
+                    fi
+                    ;;
+                list)
                     _values 'option' '-h' '--help'
                     ;;
             esac
@@ -438,7 +499,7 @@ complete -c vlt -n '__vlt_using_command completion' -s h -l help
 complete -c vlt -n '__vlt_using_command switch; and __vlt_token_count_is 2' -a '(vlt completion __profiles 2>/dev/null)'
 complete -c vlt -n '__vlt_using_command switch' -s h -l help
 
-complete -c vlt -n '__vlt_using_command profile; and __vlt_token_count_is 2' -a 'add list show update remove'
+complete -c vlt -n '__vlt_using_command profile; and __vlt_token_count_is 2' -a 'add list current show update remove'
 complete -c vlt -n '__vlt_using_command profile' -s h -l help
 
 complete -c vlt -n '__vlt_using_profile_subcommand add; and __vlt_token_count_at_least 3' -l address -r
@@ -450,6 +511,7 @@ complete -c vlt -n '__vlt_using_profile_subcommand add; and __vlt_token_count_at
 complete -c vlt -n '__vlt_using_profile_subcommand add' -s h -l help
 
 complete -c vlt -n '__vlt_using_profile_subcommand list' -s h -l help
+complete -c vlt -n '__vlt_using_profile_subcommand current' -s h -l help
 complete -c vlt -n '__vlt_using_profile_subcommand show; and __vlt_token_count_is 3' -a '(vlt completion __profiles 2>/dev/null)'
 complete -c vlt -n '__vlt_using_profile_subcommand show' -s h -l help
 complete -c vlt -n '__vlt_using_profile_subcommand update; and __vlt_token_count_is 3' -a '(vlt completion __profiles 2>/dev/null)'
@@ -474,11 +536,13 @@ complete -c vlt -n '__vlt_using_favorite_subcommand add' -s h -l help
 
 complete -c vlt -n '__vlt_using_favorite_subcommand list' -s h -l help
 
+complete -c vlt -n '__vlt_using_favorite_subcommand update; and __vlt_token_count_is 3' -a '(vlt completion __favorites 2>/dev/null)'
 complete -c vlt -n '__vlt_using_favorite_subcommand update; and __vlt_token_count_at_least 3' -l profile -r -a '(vlt completion __profiles 2>/dev/null)'
 complete -c vlt -n '__vlt_using_favorite_subcommand update; and __vlt_token_count_at_least 3' -l operation -r -a 'read kv-get'
 complete -c vlt -n '__vlt_using_favorite_subcommand update; and __vlt_token_count_at_least 3' -l path -r
 complete -c vlt -n '__vlt_using_favorite_subcommand update; and __vlt_token_count_at_least 3' -l note -r
 complete -c vlt -n '__vlt_using_favorite_subcommand update' -s h -l help
 
+complete -c vlt -n '__vlt_using_favorite_subcommand remove; and __vlt_token_count_is 3' -a '(vlt completion __favorites 2>/dev/null)'
 complete -c vlt -n '__vlt_using_favorite_subcommand remove' -s h -l help
 `

@@ -36,121 +36,168 @@ func NewMutationService(favorites ConfigurationStore, profiles ProfileStore) *Mu
 }
 
 func (s *MutationService) Add(ctx context.Context, candidate Favorite) error {
+	_, err := s.AddWithResult(ctx, candidate)
+	return err
+}
+
+func (s *MutationService) AddWithResult(ctx context.Context, candidate Favorite) (Favorite, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return Favorite{}, err
 	}
 	if err := candidate.Validate(); err != nil {
-		return fmt.Errorf("add favorite: invalid favorite: %w", err)
+		return Favorite{}, fmt.Errorf("add favorite: invalid favorite: %w", err)
 	}
 	if err := s.validateDependencies(); err != nil {
-		return fmt.Errorf("add favorite: %w", err)
+		return Favorite{}, fmt.Errorf("add favorite: %w", err)
 	}
 	profiles, err := s.profiles.Load(ctx)
 	if err != nil {
-		return fmt.Errorf("add favorite: load profiles: %w", err)
+		return Favorite{}, fmt.Errorf("add favorite: load profiles: %w", err)
 	}
 	if !profileExists(profiles, candidate.Profile) {
-		return fmt.Errorf("add favorite: profile does not exist")
+		return Favorite{}, fmt.Errorf("add favorite: profile does not exist")
 	}
 	original, err := s.favorites.Load(ctx)
 	if err != nil {
-		return fmt.Errorf("add favorite: load favorites: %w", err)
+		return Favorite{}, fmt.Errorf("add favorite: load favorites: %w", err)
 	}
 	for _, existing := range original.Favorites {
 		if existing.SameIdentity(candidate) {
-			return errors.New("add favorite: favorite already exists; use favorite update")
+			return Favorite{}, errors.New("add favorite: favorite already exists; use favorite update")
+		}
+	}
+	if candidate.ID == "" {
+		used := make(map[string]struct{}, len(original.Favorites))
+		for _, existing := range original.Favorites {
+			used[existing.ID] = struct{}{}
+		}
+		for {
+			candidate.ID, err = newRandomID()
+			if err != nil {
+				return Favorite{}, fmt.Errorf("add favorite: %w", err)
+			}
+			if _, found := used[candidate.ID]; !found {
+				break
+			}
+		}
+	} else {
+		for _, existing := range original.Favorites {
+			if existing.ID == candidate.ID {
+				return Favorite{}, errors.New("add favorite: favorite ID already exists")
+			}
 		}
 	}
 
 	updated := cloneFavoriteConfiguration(original)
 	updated.Favorites = append(updated.Favorites, candidate)
 	if err := s.favorites.Save(ctx, updated); err != nil {
-		return s.persistenceError(ctx, "add favorite: persist favorite", err, original)
+		return Favorite{}, s.persistenceError(ctx, "add favorite: persist favorite", err, original)
 	}
-	return nil
+	return candidate, nil
 }
 
 func (s *MutationService) Update(ctx context.Context, selector string, changes FavoriteChanges) error {
+	_, err := s.UpdateWithResult(ctx, selector, changes, nil)
+	return err
+}
+
+func (s *MutationService) UpdateWithResult(ctx context.Context, selector string, changes FavoriteChanges, expected *Favorite) (Favorite, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return Favorite{}, err
 	}
 	if err := s.validateDependencies(); err != nil {
-		return fmt.Errorf("update favorite: %w", err)
+		return Favorite{}, fmt.Errorf("update favorite: %w", err)
 	}
 	original, err := s.favorites.Load(ctx)
 	if err != nil {
-		return fmt.Errorf("update favorite: load favorites: %w", err)
+		return Favorite{}, fmt.Errorf("update favorite: load favorites: %w", err)
 	}
 	selected, err := NewService(original.Favorites).Resolve(selector)
 	if err != nil {
-		return fmt.Errorf("update favorite: %w", err)
+		return Favorite{}, fmt.Errorf("update favorite: %w", err)
 	}
 	selectedIndex := favoriteIndex(original.Favorites, selected)
 	if selectedIndex < 0 {
-		return errors.New("update favorite: selected favorite is unavailable")
+		return Favorite{}, errors.New("update favorite: selected favorite is unavailable")
+	}
+	if expected != nil && !sameReviewedFavorite(selected, *expected) {
+		return Favorite{}, errors.New("update favorite: favorite changed; select it again")
 	}
 
 	updatedFavorite := applyFavoriteChanges(selected, changes)
 	if err := updatedFavorite.Validate(); err != nil {
-		return fmt.Errorf("update favorite: invalid favorite: %w", err)
+		return Favorite{}, fmt.Errorf("update favorite: invalid favorite: %w", err)
 	}
 	profiles, err := s.profiles.Load(ctx)
 	if err != nil {
-		return fmt.Errorf("update favorite: load profiles: %w", err)
+		return Favorite{}, fmt.Errorf("update favorite: load profiles: %w", err)
 	}
 	if !profileExists(profiles, updatedFavorite.Profile) {
-		return errors.New("update favorite: profile does not exist")
+		return Favorite{}, errors.New("update favorite: profile does not exist")
 	}
 	for index, existing := range original.Favorites {
 		if index != selectedIndex && existing.SameIdentity(updatedFavorite) {
-			return errors.New("update favorite: favorite already exists")
+			return Favorite{}, errors.New("update favorite: favorite already exists")
 		}
 	}
 	if updatedFavorite == selected {
-		return nil
+		return selected, nil
 	}
 
 	updated := cloneFavoriteConfiguration(original)
 	updated.Favorites[selectedIndex] = updatedFavorite
 	if err := s.favorites.Save(ctx, updated); err != nil {
-		return s.persistenceError(ctx, "update favorite: persist favorite update", err, original)
+		return Favorite{}, s.persistenceError(ctx, "update favorite: persist favorite update", err, original)
 	}
-	return nil
+	return updatedFavorite, nil
 }
 
 func (s *MutationService) Remove(ctx context.Context, selector string) error {
+	_, err := s.RemoveWithResult(ctx, selector, nil)
+	return err
+}
+
+func (s *MutationService) RemoveWithResult(ctx context.Context, selector string, expected *Favorite) (Favorite, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return Favorite{}, err
 	}
 	if err := s.validateDependencies(); err != nil {
-		return fmt.Errorf("remove favorite: %w", err)
+		return Favorite{}, fmt.Errorf("remove favorite: %w", err)
 	}
 	original, err := s.favorites.Load(ctx)
 	if err != nil {
-		return fmt.Errorf("remove favorite: load favorites: %w", err)
+		return Favorite{}, fmt.Errorf("remove favorite: load favorites: %w", err)
 	}
 	selected, err := NewService(original.Favorites).Resolve(selector)
 	if err != nil {
-		return fmt.Errorf("remove favorite: %w", err)
+		return Favorite{}, fmt.Errorf("remove favorite: %w", err)
 	}
 	selectedIndex := favoriteIndex(original.Favorites, selected)
 	if selectedIndex < 0 {
-		return errors.New("remove favorite: selected favorite is unavailable")
+		return Favorite{}, errors.New("remove favorite: selected favorite is unavailable")
+	}
+	if expected != nil && !sameReviewedFavorite(selected, *expected) {
+		return Favorite{}, errors.New("remove favorite: favorite changed; select it again")
 	}
 	profiles, err := s.profiles.Load(ctx)
 	if err != nil {
-		return fmt.Errorf("remove favorite: load profiles: %w", err)
+		return Favorite{}, fmt.Errorf("remove favorite: load profiles: %w", err)
 	}
 	if !profileExists(profiles, selected.Profile) {
-		return errors.New("remove favorite: profile does not exist")
+		return Favorite{}, errors.New("remove favorite: profile does not exist")
 	}
 
 	updated := cloneFavoriteConfiguration(original)
 	updated.Favorites = append(updated.Favorites[:selectedIndex], updated.Favorites[selectedIndex+1:]...)
 	if err := s.favorites.Save(ctx, updated); err != nil {
-		return s.persistenceError(ctx, "remove favorite: persist favorite removal", err, original)
+		return Favorite{}, s.persistenceError(ctx, "remove favorite: persist favorite removal", err, original)
 	}
-	return nil
+	return selected, nil
+}
+
+func sameReviewedFavorite(current, reviewed Favorite) bool {
+	return current.ID == reviewed.ID && current.Profile == reviewed.Profile &&
+		current.Operation == reviewed.Operation && current.Path == reviewed.Path && current.Note == reviewed.Note
 }
 
 func (s *MutationService) RecordUse(ctx context.Context, selected Favorite) error {

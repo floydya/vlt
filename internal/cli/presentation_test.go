@@ -15,12 +15,14 @@ import (
 
 type fixedTerminal struct {
 	color bool
+	width int
 }
 
 func (fixedTerminal) InputIsTerminal() bool   { return false }
 func (fixedTerminal) DisplayIsTerminal() bool { return false }
 func (fixedTerminal) PromptsEnabled() bool    { return false }
 func (t fixedTerminal) ColorEnabled() bool    { return t.color }
+func (t fixedTerminal) Width() int            { return t.width }
 
 func TestProfilePresentationStylesOnlyEligibleTerminals(t *testing.T) {
 	store := &fakeProfileStore{configuration: config.Configuration{
@@ -81,8 +83,8 @@ func TestProfileListPresentationPlainAndStyledAreExact(t *testing.T) {
 	}
 	lines := strings.Split(styled, "\n")
 	colorCode := "\x1b[38;2;17;34;51m"
-	if strings.Contains(lines[0], colorCode) || strings.Count(lines[1], colorCode) != 7 || strings.Contains(lines[2], colorCode) {
-		t.Fatalf("profile list color placement = %q, want seven colored data values only", styled)
+	if strings.Contains(lines[0], colorCode) || strings.Count(lines[1], colorCode) != 2 || strings.Contains(lines[2], colorCode) {
+		t.Fatalf("profile list color placement = %q, want name and active marker colored", styled)
 	}
 }
 
@@ -115,11 +117,11 @@ func TestProfileShowPresentationPlainAndStyledAreExact(t *testing.T) {
 		t.Fatalf("unstyled profile show = %q, want plain output %q", got, plain)
 	}
 	colorCode := "\x1b[38;2;17;34;51m"
-	if count := strings.Count(styled, colorCode); count != 8 {
-		t.Fatalf("profile show colored values = %d, want eight: %q", count, styled)
+	if count := strings.Count(styled, colorCode); count != 2 {
+		t.Fatalf("profile show colored values = %d, want name and active status: %q", count, styled)
 	}
 	for _, line := range strings.Split(strings.TrimSuffix(styled, "\n"), "\n") {
-		if strings.Index(line, colorCode) < strings.Index(line, ":") {
+		if strings.Contains(line, colorCode) && strings.Index(line, colorCode) < strings.Index(line, ":") {
 			t.Fatalf("profile show colored a label: %q", line)
 		}
 	}
@@ -127,14 +129,14 @@ func TestProfileShowPresentationPlainAndStyledAreExact(t *testing.T) {
 
 func TestFavoriteListPresentationPlainAndStyledAreExact(t *testing.T) {
 	favorites := []favorite.Favorite{
-		{Profile: "team-b", Operation: favorite.OperationRead, Path: "secret/z"},
-		{Profile: "team-b", Operation: favorite.OperationRead, Path: "secret/a", Note: "line\nbreak\x1b[31m"},
-		{Profile: "team-a", Operation: favorite.OperationKVGet, Path: "secret/a", Note: "daily"},
+		{ID: "f_3333333333333333", Profile: "team-b", Operation: favorite.OperationRead, Path: "secret/z"},
+		{ID: "f_2222222222222222", Profile: "team-b", Operation: favorite.OperationRead, Path: "secret/a", Note: "line\nbreak\x1b[31m"},
+		{ID: "f_1111111111111111", Profile: "team-a", Operation: favorite.OperationKVGet, Path: "secret/a", Note: "daily"},
 	}
-	want := "#  RUNS  OPERATION  PROFILE  PATH      NOTE\n" +
-		"1  0     kv-get     team-a   secret/a  daily\n" +
-		"2  0     read       team-b   secret/a  line break [31m\n" +
-		"3  0     read       team-b   secret/z  -\n"
+	want := "#  ID                  RUNS  OPERATION  PROFILE  PATH      NOTE\n" +
+		"1  f_1111111111111111  0     kv-get     team-a   secret/a  daily\n" +
+		"2  f_2222222222222222  0     read       team-b   secret/a  line break [31m\n" +
+		"3  f_3333333333333333  0     read       team-b   secret/z  -\n"
 
 	plain := favoriteListOutput(favorites, nil, fixedTerminal{color: false})
 	if plain != want {
@@ -265,6 +267,21 @@ func TestPresentationStyledPrimitivesStripExactlyToPlain(t *testing.T) {
 	}
 	if got := ansi.Strip(styledOutput); got != plainOutput {
 		t.Fatalf("unstyled presentation = %q, want plain output %q", got, plainOutput)
+	}
+}
+
+func TestPresentationUsesSemanticColorsForSharedRoles(t *testing.T) {
+	styled := newPresentation(fixedTerminal{color: true})
+	for _, role := range []presentationRole{presentationHeading, presentationLabel, presentationSelected} {
+		if got := styled.render(role, "Value"); !strings.Contains(got, "\x1b[") {
+			t.Fatalf("styled role %d = %q, want ANSI styling", role, got)
+		}
+	}
+	if got := styled.render(presentationSuccess, "Value"); got == styled.render(presentationError, "Value") {
+		t.Fatalf("success and error styles are equal: %q", got)
+	}
+	if got := newPresentation(fixedTerminal{color: false}).render(presentationSelected, "Value"); strings.Contains(got, "\x1b[") {
+		t.Fatalf("plain presentation contains ANSI: %q", got)
 	}
 }
 

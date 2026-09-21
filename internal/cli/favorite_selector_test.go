@@ -40,7 +40,7 @@ func TestSharedFavoriteSelectorUsesDeterministicSearchableRowsAndOpaqueSelection
 			t.Errorf("item %d ID = %q, want %q", index, item.ID, wantID)
 		}
 		for _, text := range []string{ordered[index].Path, ordered[index].Profile, ordered[index].Operation} {
-			if !strings.Contains(item.Label, text) || !strings.Contains(item.SearchText, text) {
+			if !strings.Contains(item.Label+item.Detail, text) || !strings.Contains(item.SearchText, text) {
 				t.Errorf("item %d = %#v, want searchable %q", index, item, text)
 			}
 		}
@@ -53,8 +53,8 @@ func TestSharedFavoriteSelectorUsesDeterministicSearchableRowsAndOpaqueSelection
 		want  favorite.Favorite
 	}{
 		{query: "DBCRD", want: ordered[1]},
-		{query: "KVTMA", want: ordered[0]},
-		{query: "RPRT", want: ordered[2]},
+		{query: "kv-get team-a", want: ordered[0]},
+		{query: "reporting", want: ordered[2]},
 	} {
 		matches := filterSharedSelectorItems(tt.query, shared.items)
 		if len(matches) != 1 {
@@ -80,19 +80,16 @@ func TestSharedFavoriteSelectorShowsCountFirstRowsAndSearchesCounts(t *testing.T
 		t.Fatalf("Select() error = %v", err)
 	}
 	wantRows := []string{
-		"1  127   read       team-b   secret/z  -",
-		"2  8     kv-get     team-a   secret/a  -",
-		"3  8     read       team-b   secret/a  -",
-	}
-	if want := "#  RUNS  OPERATION  PROFILE  PATH      NOTE"; shared.header != want {
-		t.Errorf("favorite selector header = %q, want %q", shared.header, want)
+		"1  secret/z  (127 runs)",
+		"2  secret/a  (8 runs)",
+		"3  secret/a  (8 runs)",
 	}
 	if len(shared.items) != len(wantRows) {
 		t.Fatalf("selector rows = %#v, want %d rows", shared.items, len(wantRows))
 	}
 	for index, want := range wantRows {
-		if shared.items[index].Label != want || shared.items[index].SearchText != want {
-			t.Errorf("row %d = %#v, want label and search text %q", index, shared.items[index], want)
+		if shared.items[index].Label != want || !strings.Contains(shared.items[index].Detail, "Profile: "+favorite.NewService(favorites).List()[index].Profile) {
+			t.Errorf("row %d = %#v, want compact label %q and selected detail", index, shared.items[index], want)
 		}
 	}
 	if selected != favorites[2] {
@@ -138,6 +135,9 @@ func TestSharedFavoriteSelectorColorsEachRowFromItsOwnProfile(t *testing.T) {
 				if strings.Contains(lines[2], "38;2;255;136;0m") || !strings.Contains(lines[3], "38;2;255;136;0m") || !strings.Contains(lines[4], "38;2;0;136;68m") || strings.Contains(lines[5], "\x1b[") {
 					t.Errorf("favorite selector colors = %#v, want only matching row colors", lines)
 				}
+				if count := strings.Count(lines[3], "38;2;255;136;0m"); count != 1 {
+					t.Errorf("first favorite color count = %d, want one color on its full row: %q", count, lines[3])
+				}
 			} else if strings.Contains(model.View().Content, "\x1b[") {
 				t.Errorf("plain selector contains ANSI: %q", model.View().Content)
 			}
@@ -160,8 +160,8 @@ func TestSharedFavoriteSelectorShowsDashForEmptyNote(t *testing.T) {
 	if selected != candidate {
 		t.Fatalf("Select() = %#v, want unchanged favorite %#v", selected, candidate)
 	}
-	if !strings.Contains(shared.items[0].Label, "-") {
-		t.Errorf("empty-note label = %q, want dash", shared.items[0].Label)
+	if !strings.Contains(shared.items[0].Detail, "Note: -") {
+		t.Errorf("empty-note detail = %q, want dash", shared.items[0].Detail)
 	}
 }
 

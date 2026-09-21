@@ -217,31 +217,48 @@ func TestSharedSelectorRendersCompactInlinePlainView(t *testing.T) {
 	}
 }
 
-func TestSharedSelectorShowsProfileAndFavoriteColumnHeaders(t *testing.T) {
+func TestSharedSelectorUsesSemanticSelectionAndKeepsPlainSelectionVisible(t *testing.T) {
+	items := []SharedSelectorItem{{ID: "first", Label: "first"}, {ID: "second", Label: "second"}}
 	for _, tt := range []struct {
-		title  string
-		header string
+		name     string
+		terminal Terminal
 	}{
-		{title: "Select a profile", header: "#  ACTIVE  NAME"},
-		{title: "Select a favorite", header: "#  RUNS  OPERATION"},
+		{name: "styled", terminal: fixedTerminal{color: true}},
+		{name: "plain", terminal: fixedTerminal{color: false}},
 	} {
-		t.Run(tt.title, func(t *testing.T) {
-			model, err := newSharedSelectorModel(tt.title, tt.header, []SharedSelectorItem{{ID: "one", Label: "1  one"}}, "", newPresentation(fixedTerminal{}))
+		t.Run(tt.name, func(t *testing.T) {
+			model, err := newSharedSelectorModel("Select", "", items, "second", newPresentation(tt.terminal))
 			if err != nil {
 				t.Fatal(err)
 			}
 			view := model.View().Content
-			if !strings.Contains(view, "Search: \n  "+tt.header+"\n> 1  one") {
-				t.Errorf("selector view = %q, want header between search and rows", view)
+			if tt.name == "styled" && !strings.Contains(view, "\x1b[") {
+				t.Errorf("styled selector lacks semantic color: %q", view)
+			}
+			if got := ansi.Strip(view); !strings.Contains(got, "> second") {
+				t.Errorf("selector selection is unclear: %q", got)
+			}
+			if tt.name == "plain" && strings.Contains(view, "\x1b[") {
+				t.Errorf("plain selector contains ANSI: %q", view)
 			}
 		})
 	}
 }
 
+func TestSharedSelectorShowsCompactHeaderBelowSearch(t *testing.T) {
+	model, err := newSharedSelectorModel("Select a profile", "#  ACTIVE  NAME", []SharedSelectorItem{{ID: "one", Label: "1    one"}}, "", newPresentation(fixedTerminal{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := model.View().Content; !strings.Contains(got, "Search: \n  #  ACTIVE  NAME\n> 1    one") {
+		t.Errorf("selector view = %q, want header between search and rows", got)
+	}
+}
+
 func TestSharedSelectorColorsEachProfileRowAndKeepsSelectionVisible(t *testing.T) {
 	items := []SharedSelectorItem{
-		{ID: "first", Label: "team-a", Color: "#112233"},
-		{ID: "second", Label: "team-b", Color: "#445566"},
+		{ID: "first", Label: "team-a", Name: "team-a", Color: "#112233"},
+		{ID: "second", Label: "team-b", Name: "team-b", Color: "#445566"},
 		{ID: "third", Label: "team-c"},
 	}
 	for _, tt := range []struct {
@@ -272,7 +289,7 @@ func TestSharedSelectorColorsEachProfileRowAndKeepsSelectionVisible(t *testing.T
 				t.Errorf("plain selector contains ANSI: %q", model.View().Content)
 			}
 			if got := ansi.Strip(lines[3]); got != "> team-b" {
-				t.Errorf("selected row = %q, want visible marker", got)
+				t.Errorf("selected row = %q, want visible marker; lines=%#v", got, lines)
 			}
 		})
 	}

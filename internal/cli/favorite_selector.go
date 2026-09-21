@@ -43,29 +43,24 @@ func (s sharedFavoriteSelector) Select(ctx context.Context, favorites []favorite
 		return favorite.Favorite{}, fmt.Errorf("select favorite: %w", err)
 	}
 
-	rows := make([][]string, 0, len(ordered))
+	items := make([]SharedSelectorItem, 0, len(ordered))
 	identities := make(map[string]favorite.Favorite, len(ordered))
 	for index, candidate := range ordered {
-		identifier := fmt.Sprintf("favorite-%06d", index+1)
+		identifier := candidate.ID
+		if identifier == "" {
+			identifier = fmt.Sprintf("favorite-%06d", index+1)
+		}
 		note := candidate.Note
 		if note == "" {
 			note = "-"
 		}
-		rows = append(rows, []string{
-			fmt.Sprint(index + 1), strconv.FormatInt(candidate.RunCount, 10),
-			sanitizeFavoriteDisplay(candidate.Operation), sanitizeFavoriteDisplay(candidate.Profile),
-			sanitizeFavoriteDisplay(candidate.Path), sanitizeFavoriteDisplay(note),
-		})
+		label := fmt.Sprintf("%d  %s  (%s runs)", index+1, sanitizeFavoriteDisplay(candidate.Path), strconv.FormatInt(candidate.RunCount, 10))
+		detail := fmt.Sprintf("ID: %s\nProfile: %s\nOperation: %s\nNote: %s", identifier, sanitizeFavoriteDisplay(candidate.Profile), sanitizeFavoriteDisplay(candidate.Operation), sanitizeFavoriteDisplay(note))
+		search := fmt.Sprintf("%d  %d  %s  %s  %s  %s  %s", index+1, candidate.RunCount, candidate.Operation, candidate.Profile, candidate.Path, note, identifier)
+		items = append(items, SharedSelectorItem{ID: identifier, Label: label, Detail: detail, SearchText: search, Color: colors[candidate.Profile]})
 		identities[identifier] = candidate
 	}
-	header, labels := selectorTableRows([]string{"#", "RUNS", "OPERATION", "PROFILE", "PATH", "NOTE"}, rows)
-	items := make([]SharedSelectorItem, 0, len(ordered))
-	for index, candidate := range ordered {
-		identifier := fmt.Sprintf("favorite-%06d", index+1)
-		items = append(items, SharedSelectorItem{ID: identifier, Label: labels[index], SearchText: labels[index], Color: colors[candidate.Profile]})
-	}
-
-	selectedID, err := s.selector.Select(ctx, "Select a favorite", header, items, "")
+	selectedID, err := s.selector.Select(ctx, "Select a favorite", "#  PATH  RUNS", items, "")
 	if err != nil {
 		if errors.Is(err, ErrSharedSelectorCanceled) {
 			return favorite.Favorite{}, ErrFavoriteSelectionCanceled
