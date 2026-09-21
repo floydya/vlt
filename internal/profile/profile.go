@@ -62,6 +62,13 @@ func ValidateAddress(address string) error {
 	return nil
 }
 
+func ValidateColor(color string) error {
+	if color != "" && !colorPattern.MatchString(color) {
+		return fmt.Errorf("color must be #RRGGBB")
+	}
+	return nil
+}
+
 // Validate verifies profile metadata without modifying accepted values.
 func (p Profile) Validate() error {
 	if err := ValidateName(p.Name); err != nil {
@@ -92,8 +99,8 @@ func (p Profile) Validate() error {
 	if containsControl(p.Namespace) {
 		return fmt.Errorf("namespace must not contain control characters")
 	}
-	if p.Color != "" && !colorPattern.MatchString(p.Color) {
-		return fmt.Errorf("color must be #RRGGBB")
+	if err := ValidateColor(p.Color); err != nil {
+		return err
 	}
 	return nil
 }
