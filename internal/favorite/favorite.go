@@ -1,6 +1,8 @@
 package favorite
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -20,6 +22,26 @@ type Favorite struct {
 	Operation string `json:"operation"`
 	Path      string `json:"path"`
 	Note      string `json:"note"`
+	RunCount  int64  `json:"run_count,omitempty"`
+}
+
+func (f *Favorite) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if count, found := fields["run_count"]; found && bytes.Equal(bytes.TrimSpace(count), []byte("null")) {
+		return errors.New("json: invalid run count")
+	}
+	type favoriteJSON Favorite
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var decoded favoriteJSON
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*f = Favorite(decoded)
+	return nil
 }
 
 func (f Favorite) Validate() error {
@@ -31,6 +53,9 @@ func (f Favorite) Validate() error {
 	}
 	if strings.TrimSpace(f.Path) == "" {
 		return errors.New("path must not be empty or whitespace-only")
+	}
+	if f.RunCount < 0 {
+		return errors.New("run count must not be negative")
 	}
 	return nil
 }
@@ -50,6 +75,9 @@ func NewService(favorites []Favorite) Service {
 func (s Service) List() []Favorite {
 	favorites := append([]Favorite(nil), s.favorites...)
 	sort.Slice(favorites, func(left, right int) bool {
+		if favorites[left].RunCount != favorites[right].RunCount {
+			return favorites[left].RunCount > favorites[right].RunCount
+		}
 		if favorites[left].Path != favorites[right].Path {
 			return favorites[left].Path < favorites[right].Path
 		}
