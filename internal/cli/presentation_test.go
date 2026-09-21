@@ -59,11 +59,11 @@ func TestProfilePresentationStylesOnlyEligibleTerminals(t *testing.T) {
 func TestProfileListPresentationPlainAndStyledAreExact(t *testing.T) {
 	profiles := []profile.Profile{
 		{Name: "team-b", Address: "https://vault-b.example", Namespace: ""},
-		{Name: "team-a", Address: "https://vault-a.example", Namespace: "engineering"},
+		{Name: "team-a", Address: "https://vault-a.example", Namespace: "engineering", Color: "#112233"},
 	}
-	want := "#  ACTIVE  NAME    ADDRESS                  NAMESPACE    ALLOW HTTP\n" +
-		"1  *       team-a  https://vault-a.example  engineering  no\n" +
-		"2          team-b  https://vault-b.example  -            no\n"
+	want := "#  ACTIVE  NAME    ADDRESS                  NAMESPACE    ALLOW HTTP  COLOR\n" +
+		"1  *       team-a  https://vault-a.example  engineering  no          #112233\n" +
+		"2          team-b  https://vault-b.example  -            no          -\n"
 
 	plain := profileListOutput(profiles, "team-a", fixedTerminal{color: false})
 	if plain != want {
@@ -79,12 +79,17 @@ func TestProfileListPresentationPlainAndStyledAreExact(t *testing.T) {
 	if got := ansi.Strip(styled); got != plain {
 		t.Fatalf("unstyled profile list = %q, want plain output %q", got, plain)
 	}
+	lines := strings.Split(styled, "\n")
+	colorCode := "\x1b[38;2;17;34;51m"
+	if strings.Contains(lines[0], colorCode) || strings.Count(lines[1], colorCode) != 7 || strings.Contains(lines[2], colorCode) {
+		t.Fatalf("profile list color placement = %q, want seven colored data values only", styled)
+	}
 }
 
 func TestProfileShowPresentationPlainAndStyledAreExact(t *testing.T) {
 	candidate := profile.Profile{
 		Name: "team-a", Address: "https://vault-a.example", Username: "alice",
-		AuthPath: "company-oidc", Namespace: "",
+		AuthPath: "company-oidc", Namespace: "", Color: "#112233",
 	}
 	want := "Name:       team-a\n" +
 		"Address:    https://vault-a.example\n" +
@@ -92,6 +97,7 @@ func TestProfileShowPresentationPlainAndStyledAreExact(t *testing.T) {
 		"Auth path:  company-oidc\n" +
 		"Namespace:  -\n" +
 		"Allow HTTP: no\n" +
+		"Color:      #112233\n" +
 		"Active:     yes\n"
 
 	plain := profileShowOutput(candidate, true, fixedTerminal{color: false})
@@ -108,6 +114,15 @@ func TestProfileShowPresentationPlainAndStyledAreExact(t *testing.T) {
 	if got := ansi.Strip(styled); got != plain {
 		t.Fatalf("unstyled profile show = %q, want plain output %q", got, plain)
 	}
+	colorCode := "\x1b[38;2;17;34;51m"
+	if count := strings.Count(styled, colorCode); count != 8 {
+		t.Fatalf("profile show colored values = %d, want eight: %q", count, styled)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(styled, "\n"), "\n") {
+		if strings.Index(line, colorCode) < strings.Index(line, ":") {
+			t.Fatalf("profile show colored a label: %q", line)
+		}
+	}
 }
 
 func TestFavoriteListPresentationPlainAndStyledAreExact(t *testing.T) {
@@ -116,10 +131,10 @@ func TestFavoriteListPresentationPlainAndStyledAreExact(t *testing.T) {
 		{Profile: "team-b", Operation: favorite.OperationRead, Path: "secret/a", Note: "line\nbreak\x1b[31m"},
 		{Profile: "team-a", Operation: favorite.OperationKVGet, Path: "secret/a", Note: "daily"},
 	}
-	want := "#  OPERATION  PROFILE  PATH      NOTE\n" +
-		"1  kv-get     team-a   secret/a  daily\n" +
-		"2  read       team-b   secret/a  line break [31m\n" +
-		"3  read       team-b   secret/z  -\n"
+	want := "#  RUNS  OPERATION  PROFILE  PATH      NOTE\n" +
+		"1  0     kv-get     team-a   secret/a  daily\n" +
+		"2  0     read       team-b   secret/a  line break [31m\n" +
+		"3  0     read       team-b   secret/z  -\n"
 
 	plain := favoriteListOutput(favorites, fixedTerminal{color: false})
 	if plain != want {
@@ -210,6 +225,47 @@ func TestPresentationStyledPrimitivesStripExactlyToPlain(t *testing.T) {
 	}
 	if got := ansi.Strip(styledOutput); got != plainOutput {
 		t.Fatalf("unstyled presentation = %q, want plain output %q", got, plainOutput)
+	}
+}
+
+func TestPresentationUsesActiveAccentWithoutChangingStatusColors(t *testing.T) {
+	base := newPresentation(fixedTerminal{color: true})
+	accented := newPresentation(WithAccent(fixedTerminal{color: true}, "#112233"))
+	colorCode := "38;2;17;34;51m"
+	for _, role := range []presentationRole{presentationHeading, presentationLabel, presentationSelected} {
+		if got := accented.render(role, "Value"); !strings.Contains(got, colorCode) {
+			t.Fatalf("accented role %d = %q, want active color", role, got)
+		}
+	}
+	for _, role := range []presentationRole{presentationSuccess, presentationError} {
+		if got, want := accented.render(role, "Value"), base.render(role, "Value"); got != want {
+			t.Fatalf("status role %d = %q, want %q", role, got, want)
+		}
+	}
+	if got := newPresentation(WithAccent(fixedTerminal{color: false}, "#112233")).render(presentationSelected, "Value"); strings.Contains(got, "\x1b[") {
+		t.Fatalf("plain presentation used accent: %q", got)
+	}
+	if got, want := newPresentation(WithAccent(fixedTerminal{color: true}, "")).render(presentationSelected, "Value"), base.render(presentationSelected, "Value"); got != want {
+		t.Fatalf("empty accent = %q, want default %q", got, want)
+	}
+}
+
+func TestPresentationHuhThemeColorsFocusedBorderAndFields(t *testing.T) {
+	accented := newPresentation(WithAccent(fixedTerminal{color: true}, "#112233")).huhTheme().Theme(true)
+	colorCode := "38;2;17;34;51m"
+	for name, value := range map[string]string{
+		"border":   accented.Focused.Base.Render("Field"),
+		"title":    accented.Focused.Title.Render("Field"),
+		"prompt":   accented.Focused.TextInput.Prompt.Render("Field"),
+		"selected": accented.Focused.SelectedOption.Render("Field"),
+	} {
+		if !strings.Contains(value, colorCode) {
+			t.Errorf("focused %s = %q, want active accent", name, value)
+		}
+	}
+	plain := newPresentation(WithAccent(fixedTerminal{color: false}, "#112233")).huhTheme().Theme(true)
+	if got := plain.Focused.Base.Render("Field") + plain.Focused.SelectedOption.Render("Field"); strings.Contains(got, "\x1b[") {
+		t.Fatalf("plain focused theme contains ANSI: %q", got)
 	}
 }
 

@@ -49,9 +49,10 @@ type huhFavoriteForm struct {
 }
 
 type huhFavoriteRemovalConfirmer struct {
-	input      io.Reader
-	output     io.Writer
-	accessible bool
+	input        io.Reader
+	output       io.Writer
+	accessible   bool
+	presentation presentation
 }
 
 func NewSharedFavoriteManagementSelector(selector SharedSelector) FavoriteManagementSelector {
@@ -64,8 +65,8 @@ func NewHuhFavoriteForm(input io.Reader, output io.Writer, selector SharedSelect
 	}
 }
 
-func NewHuhFavoriteRemovalConfirmer(input io.Reader, output io.Writer) FavoriteRemovalConfirmer {
-	return huhFavoriteRemovalConfirmer{input: input, output: output}
+func NewHuhFavoriteRemovalConfirmer(input io.Reader, output io.Writer, terminal ...Terminal) FavoriteRemovalConfirmer {
+	return huhFavoriteRemovalConfirmer{input: input, output: output, presentation: presentationForOptionalTerminal(terminal)}
 }
 
 func (s sharedFavoriteManagementSelector) Select(ctx context.Context, candidates []favorite.Favorite) (favorite.Favorite, error) {
@@ -99,15 +100,20 @@ func (f huhFavoriteForm) Run(ctx context.Context, request FavoriteFormRequest) (
 		if namespace == "" {
 			namespace = "-"
 		}
+		color := candidateProfile.Color
+		if color == "" {
+			color = "-"
+		}
 		label := fmt.Sprintf(
-			"%d  %s  %s  %s",
+			"%d  %s  %s  %s  %s",
 			index+1,
 			candidateProfile.Name,
 			candidateProfile.Address,
 			namespace,
+			color,
 		)
 		profileItems = append(profileItems, SharedSelectorItem{
-			ID: candidateProfile.Name, Label: label, SearchText: label,
+			ID: candidateProfile.Name, Label: label, SearchText: label, Color: candidateProfile.Color,
 		})
 	}
 	selectedProfile, err := f.selector.Select(ctx, "Select a profile", profileItems, candidate.Profile)
@@ -165,6 +171,9 @@ func (c huhFavoriteRemovalConfirmer) Confirm(ctx context.Context, request Favori
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().Title(title).Affirmative("Remove").Negative("Keep").Value(&confirmed),
 	)).WithInput(c.input).WithOutput(c.output).WithAccessible(c.accessible)
+	if !c.presentation.colorEnabled || c.presentation.accentColor != "" {
+		form = form.WithTheme(c.presentation.huhTheme())
+	}
 	if err := form.RunWithContext(ctx); err != nil {
 		return false, fmt.Errorf("confirm favorite removal: %w", err)
 	}

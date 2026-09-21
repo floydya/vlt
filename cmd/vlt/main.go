@@ -50,14 +50,17 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 	favorites := favorite.NewStore(filepath.Join(configDirectory, "vlt", "favorites.json"))
 	mutationLock := statelock.New(filepath.Join(configDirectory, "vlt"))
 	terminal := cli.NewTerminal(stdin, stdout, os.Environ())
+	if terminal.PromptsEnabled() && terminal.ColorEnabled() {
+		terminal = cli.WithAccent(terminal, activeProfileAccent(profiles))
+	}
 	sharedSelector := cli.NewSharedSelector(stdin, stdout, terminal)
 	selector := cli.NewSharedProfileSelector(sharedSelector)
 	favoriteSelector := cli.NewSharedFavoriteSelector(sharedSelector)
-	form := cli.NewHuhProfileForm(stdin, stdout)
-	removalConfirmer := cli.NewHuhProfileRemovalConfirmer(stdin, stdout)
+	form := cli.NewHuhProfileForm(stdin, stdout, terminal)
+	removalConfirmer := cli.NewHuhProfileRemovalConfirmer(stdin, stdout, terminal)
 	favoriteManagementSelector := cli.NewSharedFavoriteManagementSelector(sharedSelector)
 	favoriteForm := cli.NewHuhFavoriteForm(stdin, stdout, sharedSelector, terminal)
-	favoriteRemovalConfirmer := cli.NewHuhFavoriteRemovalConfirmer(stdin, stdout)
+	favoriteRemovalConfirmer := cli.NewHuhFavoriteRemovalConfirmer(stdin, stdout, terminal)
 	vault := vaultexec.NewOSExecutor()
 	credentials := credential.NewNativeStore()
 	authenticator := credential.NewAuthenticator(vault, credentials)
@@ -82,13 +85,26 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 		}),
 		Switch: cli.NewSwitchHandler(cli.SwitchDependencies{Profiles: profiles, Lock: mutationLock, Output: stdout, Terminal: terminal, Selector: selector}),
 		Favorite: cli.NewFavoriteHandler(cli.FavoriteDependencies{
-			Profiles: profiles, Favorites: favorites, Mutations: favoriteMutations, Lock: mutationLock, Output: stdout, Terminal: terminal,
+			Profiles: profiles, Favorites: favorites, Mutations: favoriteMutations, Recorder: favoriteMutations, Lock: mutationLock, Output: stdout, Terminal: terminal,
 			Selector: favoriteSelector, Vault: delegate, ManagementSelector: favoriteManagementSelector,
 			Form: favoriteForm, RemovalConfirmer: favoriteRemovalConfirmer,
 		}),
 		Completion: cli.NewCompletionHandler(cli.CompletionDependencies{Profiles: profiles, Output: stdout}),
 		Vault:      delegate,
 	})
+}
+
+func activeProfileAccent(store *config.Store) string {
+	configuration, err := store.Load(context.Background())
+	if err != nil || configuration.ActiveProfile == "" {
+		return ""
+	}
+	for _, candidate := range configuration.Profiles {
+		if candidate.Name == configuration.ActiveProfile {
+			return candidate.Color
+		}
+	}
+	return ""
 }
 
 func dispatch(ctx context.Context, dispatcher *cli.Dispatcher, args []string, stderr io.Writer) int {

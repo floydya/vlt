@@ -52,17 +52,33 @@ func (r *promptLineReader) Read(value []byte) (int, error) {
 	return n, nil
 }
 
+func TestInteractiveFormsAndConfirmationsReceiveActiveAccent(t *testing.T) {
+	terminal := WithAccent(fixedTerminal{color: true}, "#112233")
+	var output bytes.Buffer
+	forms := []presentation{
+		NewHuhProfileForm(strings.NewReader(""), &output, terminal).(huhProfileForm).presentation,
+		NewHuhProfileRemovalConfirmer(strings.NewReader(""), &output, terminal).(huhProfileRemovalConfirmer).presentation,
+		NewHuhFavoriteRemovalConfirmer(strings.NewReader(""), &output, terminal).(huhFavoriteRemovalConfirmer).presentation,
+	}
+	for index, form := range forms {
+		got := form.huhTheme().Theme(true).Focused.SelectedOption.Render("Selected")
+		if !strings.Contains(got, "38;2;17;34;51m") {
+			t.Errorf("interactive form %d selected style = %q, want active accent", index, got)
+		}
+	}
+}
+
 func TestSharedProfileSelectorBuildsDeterministicSearchRowsAndPreselectsActive(t *testing.T) {
 	shared := &recordingSharedSelector{selectedID: "team-a"}
 	selector := NewSharedProfileSelector(shared)
 	candidates := []profile.Profile{
 		{
 			Name: "team-b", Address: "https://vault.team-b.example", Username: "hidden-b",
-			AuthPath: "hidden-auth-b", Namespace: "", AllowInsecure: true,
+			AuthPath: "hidden-auth-b", Namespace: "", AllowInsecure: true, Color: "#445566",
 		},
 		{
 			Name: "team-a", Address: "https://vault.team-a.example", Username: "hidden-a",
-			AuthPath: "hidden-auth-a", Namespace: "engineering",
+			AuthPath: "hidden-auth-a", Namespace: "engineering", Color: "#112233",
 		},
 	}
 
@@ -81,6 +97,15 @@ func TestSharedProfileSelectorBuildsDeterministicSearchRowsAndPreselectsActive(t
 	}
 	if shared.items[0].ID != "team-a" || shared.items[1].ID != "team-b" {
 		t.Fatalf("shared selector IDs = %q, %q, want deterministic profile order", shared.items[0].ID, shared.items[1].ID)
+	}
+	if shared.items[0].Color != "#112233" || shared.items[1].Color != "#445566" {
+		t.Errorf("picker row colors = %q, %q, want saved colors independent of active status", shared.items[0].Color, shared.items[1].Color)
+	}
+	if got, want := shared.items[0].Label, "1    team-a  https://vault.team-a.example  engineering  no  #112233"; got != want {
+		t.Errorf("first profile row = %q, want %q", got, want)
+	}
+	if got, want := shared.items[1].Label, "2  *  team-b  https://vault.team-b.example  -  yes  #445566"; got != want {
+		t.Errorf("active profile row = %q, want %q", got, want)
 	}
 	for _, text := range []string{"1", "team-a", "https://vault.team-a.example", "engineering"} {
 		if !strings.Contains(shared.items[0].Label, text) {
@@ -131,6 +156,7 @@ func TestHuhProfileFormPreservesDefaultsAndCorrectsInvalidFields(t *testing.T) {
 		[]byte("alice\n"),
 		[]byte("\n"),
 		[]byte("\n"),
+		[]byte("\n"),
 	}}
 	var output bytes.Buffer
 	form := huhProfileForm{input: input, output: &output, accessible: true}
@@ -147,7 +173,7 @@ func TestHuhProfileFormPreservesDefaultsAndCorrectsInvalidFields(t *testing.T) {
 	if got != want {
 		t.Errorf("profile form result = %#v, want %#v", got, want)
 	}
-	for _, text := range []string{"Name", "Allow insecure HTTP", "Address", "Username", "Auth path", "Namespace", "address scheme must be http or https"} {
+	for _, text := range []string{"Name", "Allow insecure HTTP", "Address", "Username", "Auth path", "Namespace", "Color", "address scheme must be http or https"} {
 		if !strings.Contains(output.String(), text) {
 			t.Errorf("profile form output = %q, want text %q", output.String(), text)
 		}
@@ -163,6 +189,7 @@ func TestHuhProfileFormKeepsUpdateNameReadOnly(t *testing.T) {
 	input := &promptLineReader{lines: [][]byte{
 		[]byte("n\n"),
 		[]byte("https://new.example.com\n"),
+		[]byte("\n"),
 		[]byte("\n"),
 		[]byte("\n"),
 		[]byte("\n"),
@@ -201,7 +228,7 @@ func TestHuhProfileFormCanEnableAndClearInsecureHTTPOptIn(t *testing.T) {
 			current: profile.Profile{
 				Name: "team-a", Address: "https://vault.example.com", Username: "alice", AuthPath: "oidc",
 			},
-			input: []string{"y\n", "http://127.0.0.1:8200\n", "\n", "\n", "\n"},
+			input: []string{"y\n", "http://127.0.0.1:8200\n", "\n", "\n", "\n", "\n"},
 			want: profile.Profile{
 				Name: "team-a", Address: "http://127.0.0.1:8200", Username: "alice", AuthPath: "oidc", AllowInsecure: true,
 			},
@@ -211,7 +238,7 @@ func TestHuhProfileFormCanEnableAndClearInsecureHTTPOptIn(t *testing.T) {
 			current: profile.Profile{
 				Name: "team-a", Address: "http://127.0.0.1:8200", Username: "alice", AuthPath: "oidc", AllowInsecure: true,
 			},
-			input: []string{"n\n", "https://vault.example.com\n", "\n", "\n", "\n"},
+			input: []string{"n\n", "https://vault.example.com\n", "\n", "\n", "\n", "\n"},
 			want: profile.Profile{
 				Name: "team-a", Address: "https://vault.example.com", Username: "alice", AuthPath: "oidc",
 			},
@@ -234,6 +261,43 @@ func TestHuhProfileFormCanEnableAndClearInsecureHTTPOptIn(t *testing.T) {
 			}
 			if !strings.Contains(ansi.Strip(output.String()), "Allow insecure HTTP") {
 				t.Fatalf("profile form output = %q, want insecure transport control", output.String())
+			}
+		})
+	}
+}
+
+func TestHuhProfileFormValidatesAndEditsColor(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		currentColor string
+		colorInput   []string
+		wantColor    string
+		wantError    bool
+	}{
+		{name: "set after invalid input", colorInput: []string{"red\n", "#a1B2c3\n"}, wantColor: "#a1B2c3", wantError: true},
+		{name: "keep current", currentColor: "#A1B2C3", colorInput: []string{"\n"}, wantColor: "#A1B2C3"},
+		{name: "clear current", currentColor: "#A1B2C3", colorInput: []string{"-\n"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			current := profile.Profile{Name: "team-a", Address: "https://vault.example.com", Username: "alice", AuthPath: "oidc", Color: tt.currentColor}
+			lines := [][]byte{[]byte("n\n"), []byte("\n"), []byte("\n"), []byte("\n"), []byte("\n")}
+			for _, line := range tt.colorInput {
+				lines = append(lines, []byte(line))
+			}
+			var output bytes.Buffer
+			form := huhProfileForm{input: &promptLineReader{lines: lines}, output: &output, accessible: true}
+			got, err := form.Run(context.Background(), ProfileFormRequest{Profile: current})
+			if err != nil {
+				t.Fatalf("run profile form: %v", err)
+			}
+			if got.Color != tt.wantColor {
+				t.Fatalf("profile color = %q, want %q", got.Color, tt.wantColor)
+			}
+			if !strings.Contains(output.String(), "Color") {
+				t.Fatalf("form output = %q, want color field", output.String())
+			}
+			if tt.wantError && !strings.Contains(output.String(), "color must be #RRGGBB") {
+				t.Fatalf("form output = %q, want inline color error", output.String())
 			}
 		})
 	}

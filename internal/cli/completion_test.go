@@ -442,6 +442,48 @@ func TestCompletionScriptsHaveValidInstalledShellSyntax(t *testing.T) {
 	}
 }
 
+func TestZshRootCompletionInsertsOnlyCommandNames(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh is not installed")
+	}
+	script, err := completionScript("zsh")
+	if err != nil {
+		t.Fatalf("completionScript(zsh) error = %v", err)
+	}
+	for _, tt := range []struct {
+		name    string
+		current string
+		words   string
+	}{
+		{name: "first command", current: "2", words: "vlt ''"},
+		{name: "empty command fallback", current: "3", words: "vlt '' ''"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			invocation := `compdef() { :; }
+_describe() {
+    local entry
+    for entry in "${commands[@]}"; do
+        print -r -- "${entry%%:*}"
+    done
+}
+` + script + `
+words=(` + tt.words + `)
+CURRENT=` + tt.current + `
+_vlt
+`
+			output, err := exec.Command(zsh, "-fc", invocation).CombinedOutput()
+			if err != nil {
+				t.Fatalf("Zsh completion error = %v: %s", err, output)
+			}
+			want := "profile\nswitch\nfavorite\ncompletion\n--profile\n-h\n--help\n"
+			if got := string(output); got != want {
+				t.Fatalf("root completion = %q, want exact command names %q", got, want)
+			}
+		})
+	}
+}
+
 func TestCompletionScriptRejectsUnsupportedShell(t *testing.T) {
 	for _, shell := range []string{"", "powershell", "bash; touch unexpected"} {
 		t.Run(shell, func(t *testing.T) {

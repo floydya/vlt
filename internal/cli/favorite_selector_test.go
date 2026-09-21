@@ -66,6 +66,38 @@ func TestSharedFavoriteSelectorUsesDeterministicSearchableRowsAndOpaqueSelection
 	}
 }
 
+func TestSharedFavoriteSelectorShowsCountFirstRowsAndSearchesCounts(t *testing.T) {
+	favorites := []favorite.Favorite{
+		{Profile: "team-b", Operation: favorite.OperationRead, Path: "secret/z", RunCount: 127},
+		{Profile: "team-b", Operation: favorite.OperationRead, Path: "secret/a", RunCount: 8},
+		{Profile: "team-a", Operation: favorite.OperationKVGet, Path: "secret/a", RunCount: 8},
+	}
+	shared := &recordingSharedSelector{selectedID: "favorite-000002"}
+	selected, err := NewSharedFavoriteSelector(shared).Select(context.Background(), favorites)
+	if err != nil {
+		t.Fatalf("Select() error = %v", err)
+	}
+	wantRows := []string{
+		"1  127  read  team-b  secret/z  -",
+		"2  8  kv-get  team-a  secret/a  -",
+		"3  8  read  team-b  secret/a  -",
+	}
+	if len(shared.items) != len(wantRows) {
+		t.Fatalf("selector rows = %#v, want %d rows", shared.items, len(wantRows))
+	}
+	for index, want := range wantRows {
+		if shared.items[index].Label != want || shared.items[index].SearchText != want {
+			t.Errorf("row %d = %#v, want label and search text %q", index, shared.items[index], want)
+		}
+	}
+	if selected != favorites[2] {
+		t.Fatalf("Select() = %#v, want second count-first favorite %#v", selected, favorites[2])
+	}
+	if matches := filterSharedSelectorItems("127", shared.items); len(matches) != 1 || matches[0].ID != "favorite-000001" {
+		t.Fatalf("count search = %#v, want first favorite", matches)
+	}
+}
+
 func TestSharedFavoriteSelectorShowsDashForEmptyNote(t *testing.T) {
 	shared := &recordingSharedSelector{selectedID: "favorite-000001"}
 	selector := NewSharedFavoriteSelector(shared)
