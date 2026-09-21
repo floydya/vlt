@@ -59,11 +59,11 @@ func TestProfilePresentationStylesOnlyEligibleTerminals(t *testing.T) {
 func TestProfileListPresentationPlainAndStyledAreExact(t *testing.T) {
 	profiles := []profile.Profile{
 		{Name: "team-b", Address: "https://vault-b.example", Namespace: ""},
-		{Name: "team-a", Address: "https://vault-a.example", Namespace: "engineering"},
+		{Name: "team-a", Address: "https://vault-a.example", Namespace: "engineering", Color: "#112233"},
 	}
-	want := "#  ACTIVE  NAME    ADDRESS                  NAMESPACE    ALLOW HTTP\n" +
-		"1  *       team-a  https://vault-a.example  engineering  no\n" +
-		"2          team-b  https://vault-b.example  -            no\n"
+	want := "#  ACTIVE  NAME    ADDRESS                  NAMESPACE    ALLOW HTTP  COLOR\n" +
+		"1  *       team-a  https://vault-a.example  engineering  no          #112233\n" +
+		"2          team-b  https://vault-b.example  -            no          -\n"
 
 	plain := profileListOutput(profiles, "team-a", fixedTerminal{color: false})
 	if plain != want {
@@ -79,12 +79,17 @@ func TestProfileListPresentationPlainAndStyledAreExact(t *testing.T) {
 	if got := ansi.Strip(styled); got != plain {
 		t.Fatalf("unstyled profile list = %q, want plain output %q", got, plain)
 	}
+	lines := strings.Split(styled, "\n")
+	colorCode := "\x1b[38;2;17;34;51m"
+	if strings.Contains(lines[0], colorCode) || strings.Count(lines[1], colorCode) != 7 || strings.Contains(lines[2], colorCode) {
+		t.Fatalf("profile list color placement = %q, want seven colored data values only", styled)
+	}
 }
 
 func TestProfileShowPresentationPlainAndStyledAreExact(t *testing.T) {
 	candidate := profile.Profile{
 		Name: "team-a", Address: "https://vault-a.example", Username: "alice",
-		AuthPath: "company-oidc", Namespace: "",
+		AuthPath: "company-oidc", Namespace: "", Color: "#112233",
 	}
 	want := "Name:       team-a\n" +
 		"Address:    https://vault-a.example\n" +
@@ -92,6 +97,7 @@ func TestProfileShowPresentationPlainAndStyledAreExact(t *testing.T) {
 		"Auth path:  company-oidc\n" +
 		"Namespace:  -\n" +
 		"Allow HTTP: no\n" +
+		"Color:      #112233\n" +
 		"Active:     yes\n"
 
 	plain := profileShowOutput(candidate, true, fixedTerminal{color: false})
@@ -107,6 +113,15 @@ func TestProfileShowPresentationPlainAndStyledAreExact(t *testing.T) {
 	}
 	if got := ansi.Strip(styled); got != plain {
 		t.Fatalf("unstyled profile show = %q, want plain output %q", got, plain)
+	}
+	colorCode := "\x1b[38;2;17;34;51m"
+	if count := strings.Count(styled, colorCode); count != 8 {
+		t.Fatalf("profile show colored values = %d, want eight: %q", count, styled)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(styled, "\n"), "\n") {
+		if strings.Index(line, colorCode) < strings.Index(line, ":") {
+			t.Fatalf("profile show colored a label: %q", line)
+		}
 	}
 }
 
