@@ -264,27 +264,24 @@ _vlt() {
     local command="${words[2]-}"
     local subcommand="${words[3]-}"
     local previous="${words[CURRENT-1]-}"
+    local -a commands
+    commands=(
+        'profile:manage profiles'
+        'switch:select the active profile'
+        'favorite:manage favorites'
+        'completion:generate shell completion'
+        '--profile:use one profile for a delegated command'
+        '-h:show help' '--help:show help'
+    )
 
     if (( CURRENT == 2 )); then
-        _values 'vlt command' \
-            'profile:manage profiles' \
-            'switch:select the active profile' \
-            'favorite:manage favorites' \
-            'completion:generate shell completion' \
-            '--profile:use one profile for a delegated command' \
-            '-h:show help' '--help:show help'
+        _describe 'vlt command' commands
         return 0
     fi
 
     case "$command" in
         "")
-            _values 'vlt command' \
-                'profile:manage profiles' \
-                'switch:select the active profile' \
-                'favorite:manage favorites' \
-                'completion:generate shell completion' \
-                '--profile:use one profile for a delegated command' \
-                '-h:show help' '--help:show help'
+            _describe 'vlt command' commands
             ;;
         completion)
             if (( CURRENT == 3 )); then
