@@ -90,6 +90,122 @@ func TestCompletionHandlerRejectsUnsafeVaultRootPrefix(t *testing.T) {
 	}
 }
 
+func TestCompletionHandlerRequestsVaultArgumentCandidates(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		line       string
+		vaultLine  string
+		candidates string
+	}{
+		{name: "nested command", line: "vlt kv g", vaultLine: "vault kv g", candidates: "get\n"},
+		{name: "profile override", line: "vlt --profile team-a kv g", vaultLine: "vault kv g", candidates: "get\n"},
+		{name: "flag", line: "vlt kv get -m", vaultLine: "vault kv get -m", candidates: "-mfa\n-mount\n"},
+		{name: "local flag value", line: "vlt kv get -format=j", vaultLine: "vault kv get -format=j", candidates: "json\n"},
+		{name: "quoted argument", line: `vlt kv get -field="a b" j`, vaultLine: `vault kv get -field="a b" j`, candidates: "json\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			vault := &completionVaultStub{result: vaultexec.Result{Stdout: []byte(tt.candidates)}}
+			var output bytes.Buffer
+			handler := NewCompletionHandler(CompletionDependencies{Vault: vault, Output: &output})
+
+			if err := handler(context.Background(), []string{"__vault_args", tt.line}); err != nil {
+				t.Fatalf("Vault argument completion error = %v", err)
+			}
+			if got := output.String(); got != tt.candidates {
+				t.Errorf("Vault arguments = %q, want %q", got, tt.candidates)
+			}
+			if vault.calls != 1 || len(vault.invocation.Arguments) != 0 || vault.invocation.Mode != vaultexec.Captured {
+				t.Errorf("Vault invocation = %#v, calls = %d", vault.invocation, vault.calls)
+			}
+			if got := vault.invocation.Environment.Set["COMP_LINE"]; got != tt.vaultLine {
+				t.Errorf("COMP_LINE = %q, want %q", got, tt.vaultLine)
+			}
+			if got := vault.invocation.Environment.Set["COMP_POINT"]; got != fmt.Sprint(len(tt.vaultLine)) {
+				t.Errorf("COMP_POINT = %q, want %d", got, len(tt.vaultLine))
+			}
+		})
+	}
+}
+
+func TestCompletionHandlerFiltersVaultArgumentFailuresAndControlText(t *testing.T) {
+	vault := &completionVaultStub{result: vaultexec.Result{Stdout: []byte("get\nget\nbad\x1b[31m\njson\n")}}
+	var output bytes.Buffer
+	handler := NewCompletionHandler(CompletionDependencies{Vault: vault, Output: &output})
+	if err := handler(context.Background(), []string{"__vault_args", "vlt kv g"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := output.String(), "get\njson\n"; got != want {
+		t.Errorf("filtered Vault arguments = %q, want %q", got, want)
+	}
+
+	output.Reset()
+	vault.err = errors.New("private failure")
+	if err := handler(context.Background(), []string{"__vault_args", "vlt kv g"}); err != nil || output.Len() != 0 {
+		t.Errorf("failed Vault completion returned error %v or output %q", err, output.String())
+	}
+	for _, line := range []string{"vlt --profile team-a", "vlt profile show", "vlt kv\nget", "other kv get"} {
+		if err := handler(context.Background(), []string{"__vault_args", line}); err != nil {
+			t.Errorf("invalid completion line %q returned %v", line, err)
+		}
+	}
+	if vault.calls != 2 {
+		t.Errorf("Vault calls = %d, want 2 valid requests", vault.calls)
+	}
+}
+
+func TestBashCompletionRequestsVaultArguments(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not installed")
+	}
+	for _, tt := range []struct {
+		name     string
+		line     string
+		words    string
+		index    int
+		point    int
+		wantLine string
+		want     string
+	}{
+		{name: "nested command", line: "vlt kv g", words: "vlt kv g", index: 2, want: "get"},
+		{name: "profile override", line: "vlt --profile team-a kv g", words: "vlt --profile team-a kv g", index: 4, want: "get"},
+		{name: "flag", line: "vlt kv get -m", words: "vlt kv get -m", index: 3, want: "-mount"},
+		{name: "local flag value", line: "vlt kv get -format=j", words: "vlt kv get -format = j", index: 5, want: "json"},
+		{name: "cursor before later words", line: "vlt kv g ignored", words: "vlt kv g ignored", index: 2, point: len("vlt kv g"), wantLine: "vlt kv g", want: "get"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			point := tt.point
+			if point == 0 {
+				point = len(tt.line)
+			}
+			wantLine := tt.wantLine
+			if wantLine == "" {
+				wantLine = tt.line
+			}
+			invocation := bashCompletionScript + `
+vlt() {
+    if [[ "$1 $2" == "completion __vault_args" && "$3" == ` + fmt.Sprintf("%q", wantLine) + ` ]]; then
+        printf '%s\n' ` + fmt.Sprintf("%q", tt.want) + `
+    fi
+}
+COMP_LINE=` + fmt.Sprintf("%q", tt.line) + `
+COMP_POINT=` + fmt.Sprint(point) + `
+COMP_WORDS=(` + tt.words + `)
+COMP_CWORD=` + fmt.Sprint(tt.index) + `
+_vlt_completion
+printf '%s\n' "${COMPREPLY[@]}"
+`
+			output, err := exec.Command(bash, "-c", invocation).CombinedOutput()
+			if err != nil {
+				t.Fatalf("Bash completion error = %v: %s", err, output)
+			}
+			if got := strings.TrimSpace(string(output)); got != tt.want {
+				t.Errorf("Bash completion = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBashCompletionCombinesManagementAndVaultCommands(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {
