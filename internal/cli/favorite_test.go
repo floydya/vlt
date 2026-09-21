@@ -423,9 +423,9 @@ func TestFavoriteAddRejectsInvalidSyntaxWithContext(t *testing.T) {
 
 func TestFavoriteListDisplaysStableNumberedColumns(t *testing.T) {
 	store := &fakeFavoriteStore{configuration: favorite.Configuration{Favorites: []favorite.Favorite{
-		{Profile: "team-b", Operation: favorite.OperationRead, Path: "secret/z", Note: ""},
-		{Profile: "team-b", Operation: favorite.OperationRead, Path: "secret/a", Note: "reporting"},
-		{Profile: "team-a", Operation: favorite.OperationKVGet, Path: "secret/a", Note: "daily"},
+		{Profile: "team-b", Operation: favorite.OperationRead, Path: "secret/z", Note: "", RunCount: 9},
+		{Profile: "team-b", Operation: favorite.OperationRead, Path: "secret/a", Note: "reporting", RunCount: 7},
+		{Profile: "team-a", Operation: favorite.OperationKVGet, Path: "secret/a", Note: "daily", RunCount: 7},
 	}}}
 	var output bytes.Buffer
 	handler := NewFavoriteHandler(FavoriteDependencies{Favorites: store, Output: &output, Terminal: fixedTerminal{}})
@@ -434,10 +434,10 @@ func TestFavoriteListDisplaysStableNumberedColumns(t *testing.T) {
 		t.Fatalf("favorite list error = %v", err)
 	}
 	want := "" +
-		"#  OPERATION  PROFILE  PATH      NOTE\n" +
-		"1  kv-get     team-a   secret/a  daily\n" +
-		"2  read       team-b   secret/a  reporting\n" +
-		"3  read       team-b   secret/z  -\n"
+		"#  RUNS  OPERATION  PROFILE  PATH      NOTE\n" +
+		"1  9     read       team-b   secret/z  -\n" +
+		"2  7     kv-get     team-a   secret/a  daily\n" +
+		"3  7     read       team-b   secret/a  reporting\n"
 	if got := output.String(); got != want {
 		t.Fatalf("favorite list output = %q, want %q", got, want)
 	}
