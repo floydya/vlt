@@ -87,7 +87,7 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 			Selector: favoriteSelector, Vault: delegate, ManagementSelector: favoriteManagementSelector,
 			Form: favoriteForm, RemovalConfirmer: favoriteRemovalConfirmer,
 		}),
-		Completion: cli.NewCompletionHandler(cli.CompletionDependencies{Profiles: profiles, Favorites: favorites, Vault: completionVault, Output: stdout}),
+		Completion: cli.NewCompletionHandler(cli.CompletionDependencies{Profiles: profiles, Favorites: favorites, Credentials: credentials, Vault: completionVault, Output: stdout}),
 		Vault:      delegate,
 	})
 }
