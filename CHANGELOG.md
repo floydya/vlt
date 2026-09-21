@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.0](https://github.com/floydya/vlt/compare/v0.2.1...v0.3.0) (2026-09-21)
+
+
+### Features
+
+* **completion:** complete Vault arguments in Bash ([#33](https://github.com/floydya/vlt/issues/33)) ([c7bb131](https://github.com/floydya/vlt/commit/c7bb131d75a712eaa36e4cee3010dfa3709a81a2))
+* **completion:** complete Vault commands in Bash ([#32](https://github.com/floydya/vlt/issues/32)) ([9b04e61](https://github.com/floydya/vlt/commit/9b04e610ff75e4c1419713b36969f61865c1a6af))
+* **completion:** complete Vault commands in Fish ([#36](https://github.com/floydya/vlt/issues/36)) ([7629e5a](https://github.com/floydya/vlt/commit/7629e5a9d3a7b860a584533195c864c930ebd5ea))
+* **completion:** complete Vault commands in Zsh ([#35](https://github.com/floydya/vlt/issues/35)) ([c0968b3](https://github.com/floydya/vlt/commit/c0968b38c4052aa80c502417fa9afa32d4d0b402))
+* **completion:** filter generic read paths ([#42](https://github.com/floydya/vlt/issues/42)) ([6870c98](https://github.com/floydya/vlt/commit/6870c98f01238a6de2012cca9dcfc4a329b7eed2))
+* **completion:** filter KV v1 paths by read access ([#39](https://github.com/floydya/vlt/issues/39)) ([a8c79f3](https://github.com/floydya/vlt/commit/a8c79f3de931df4a09e4612613b2e2cede069aea))
+* **completion:** map KV v2 paths for read checks ([#40](https://github.com/floydya/vlt/issues/40)) ([d932756](https://github.com/floydya/vlt/commit/d932756fefd860280838b10bae2a7564362d79cf))
+* **completion:** resolve selected profile for paths ([#38](https://github.com/floydya/vlt/issues/38)) ([51646ba](https://github.com/floydya/vlt/commit/51646ba39806c684b0346e5ba8696df60ff68136))
+* **VLT-411:** improve CLI experience ([#29](https://github.com/floydya/vlt/issues/29)) ([a55d2b9](https://github.com/floydya/vlt/commit/a55d2b96365d7aa5f600f9b3f25d1211e52c0c26))
+
+
+### Fixes
+
+* **completion:** keep Bash completion alive under errexit ([#34](https://github.com/floydya/vlt/issues/34)) ([440992b](https://github.com/floydya/vlt/commit/440992b49c39a08baa17d2a986bf47a897226449))
+
 ## [0.2.1](https://github.com/floydya/vlt/compare/v0.2.0...v0.2.1) (2026-09-21)
 
 
