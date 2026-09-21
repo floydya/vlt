@@ -131,6 +131,9 @@ func TestCompleteKVv1PathsChecksListedLeavesInOneCapabilityRequest(t *testing.T)
 		case request.Method == "LIST" && request.URL.Path == "/v1/secret/team/":
 			listCalls.Add(1)
 			_, _ = writer.Write([]byte(`{"data":{"keys":["allowed","denied","other","folder/"]}}`))
+		case request.Method == "LIST" && request.URL.Path == "/v1/secret/team/folder/":
+			listCalls.Add(1)
+			_, _ = writer.Write([]byte(`{"data":{"keys":[]}}`))
 		case request.Method == http.MethodPost && request.URL.Path == "/v1/sys/capabilities-self":
 			capabilityCalls.Add(1)
 			if request.Header.Get("Content-Type") != "application/json" {
@@ -158,8 +161,8 @@ func TestCompleteKVv1PathsChecksListedLeavesInOneCapabilityRequest(t *testing.T)
 	if !reflect.DeepEqual(got, []string{"secret/team/allowed"}) {
 		t.Errorf("KV v1 candidates = %q, want only the listed readable leaf", got)
 	}
-	if listCalls.Load() != 1 || capabilityCalls.Load() != 1 {
-		t.Errorf("list calls = %d, capability calls = %d; want one each", listCalls.Load(), capabilityCalls.Load())
+	if listCalls.Load() != 2 || capabilityCalls.Load() != 1 {
+		t.Errorf("list calls = %d, capability calls = %d; want two lists and one capability batch", listCalls.Load(), capabilityCalls.Load())
 	}
 }
 
@@ -264,6 +267,9 @@ func TestCompleteKVv2PathsMapsMetadataListToDataReadForBothForms(t *testing.T) {
 				case request.Method == "LIST" && request.URL.Path == "/v1/secret/metadata/team/":
 					listCalls.Add(1)
 					_, _ = writer.Write([]byte(`{"data":{"keys":["allowed","denied","folder/"]}}`))
+				case request.Method == "LIST" && request.URL.Path == "/v1/secret/metadata/team/folder/":
+					listCalls.Add(1)
+					_, _ = writer.Write([]byte(`{"data":{"keys":[]}}`))
 				case request.Method == http.MethodPost && request.URL.Path == "/v1/sys/capabilities-self":
 					capabilityCalls.Add(1)
 					var body struct {
@@ -287,8 +293,8 @@ func TestCompleteKVv2PathsMapsMetadataListToDataReadForBothForms(t *testing.T) {
 			if !reflect.DeepEqual(got, []string{tt.want}) {
 				t.Errorf("KV v2 candidates = %q, want %q", got, tt.want)
 			}
-			if listCalls.Load() != 1 || capabilityCalls.Load() != 1 {
-				t.Errorf("list calls = %d, capability calls = %d; want one each", listCalls.Load(), capabilityCalls.Load())
+			if listCalls.Load() != 2 || capabilityCalls.Load() != 1 {
+				t.Errorf("list calls = %d, capability calls = %d; want two lists and one capability batch", listCalls.Load(), capabilityCalls.Load())
 			}
 		})
 	}
@@ -387,6 +393,9 @@ func TestCompleteReadPathsShowsOnlyListedReadableTargets(t *testing.T) {
 		case request.Method == "LIST" && request.URL.Path == "/v1/identity/entity/id/":
 			listCalls.Add(1)
 			_, _ = writer.Write([]byte(`{"data":{"keys":["allowed","denied","folder/"]}}`))
+		case request.Method == "LIST" && request.URL.Path == "/v1/identity/entity/id/folder/":
+			listCalls.Add(1)
+			_, _ = writer.Write([]byte(`{"data":{"keys":[]}}`))
 		case request.Method == http.MethodPost && request.URL.Path == "/v1/sys/capabilities-self":
 			capabilityCalls.Add(1)
 			var body struct {
@@ -410,8 +419,8 @@ func TestCompleteReadPathsShowsOnlyListedReadableTargets(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{"identity/entity/id/allowed"}) {
 		t.Errorf("read candidates = %q, want only listed readable target", got)
 	}
-	if listCalls.Load() != 1 || capabilityCalls.Load() != 1 {
-		t.Errorf("list calls = %d, capability calls = %d; want one each", listCalls.Load(), capabilityCalls.Load())
+	if listCalls.Load() != 2 || capabilityCalls.Load() != 1 {
+		t.Errorf("list calls = %d, capability calls = %d; want two lists and one capability batch", listCalls.Load(), capabilityCalls.Load())
 	}
 }
 
@@ -434,5 +443,119 @@ func TestCompleteReadPathsHidesUnsupportedOrDeniedBackends(t *testing.T) {
 				t.Errorf("calls = %d, want LIST only", calls.Load())
 			}
 		})
+	}
+}
+
+func TestCompleteReadPathsProvesDeepFolderAndHidesUnreadableFolders(t *testing.T) {
+	var listCalls, capabilityCalls atomic.Int32
+	transport := completionTestTransport{handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == "LIST":
+			listCalls.Add(1)
+			switch request.URL.Path {
+			case "/v1/secret/":
+				_, _ = writer.Write([]byte(`{"data":{"keys":["direct","branch/","empty/","denied/"]}}`))
+			case "/v1/secret/branch/":
+				_, _ = writer.Write([]byte(`{"data":{"keys":["nested/"]}}`))
+			case "/v1/secret/branch/nested/":
+				_, _ = writer.Write([]byte(`{"data":{"keys":["allowed"]}}`))
+			case "/v1/secret/empty/":
+				_, _ = writer.Write([]byte(`{"data":{"keys":["nope"]}}`))
+			case "/v1/secret/denied/":
+				_, _ = writer.Write([]byte(`{"data":{"keys":["hidden"]}}`))
+			default:
+				t.Errorf("unexpected list path: %s", request.URL.Path)
+				http.Error(writer, "unexpected list", http.StatusBadRequest)
+			}
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/sys/capabilities-self":
+			capabilityCalls.Add(1)
+			_, _ = writer.Write([]byte(`{"secret/direct":["read"],"secret/branch/nested/allowed":["read"],"secret/empty/nope":["deny"],"secret/denied/hidden":["deny"]}`))
+		default:
+			t.Errorf("unexpected request: %s %s", request.Method, request.URL.Path)
+			http.Error(writer, "unexpected request", http.StatusBadRequest)
+		}
+	})}
+	selected := pathCompletionContext{profile: profile.Profile{Address: "http://vault.example.invalid", AllowInsecure: true}, token: "synthetic-token"}
+	got := completeReadPaths(context.Background(), selected, "secret/", transport)
+	want := []string{"secret/branch/", "secret/direct"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("folder candidates = %q, want %q", got, want)
+	}
+	if listCalls.Load() != 5 || capabilityCalls.Load() != 1 {
+		t.Errorf("list calls = %d, capability calls = %d; want five lists and one batch", listCalls.Load(), capabilityCalls.Load())
+	}
+}
+
+func TestCompleteReadPathsStopsFolderTraversalOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var capabilityCalls atomic.Int32
+	transport := completionTestTransport{handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v1/secret/":
+			_, _ = writer.Write([]byte(`{"data":{"keys":["branch/","direct"]}}`))
+		case "/v1/secret/branch/":
+			cancel()
+			_, _ = writer.Write([]byte(`{"data":{"keys":["allowed"]}}`))
+		case "/v1/sys/capabilities-self":
+			capabilityCalls.Add(1)
+		default:
+			t.Errorf("unexpected request after cancellation: %s", request.URL.Path)
+		}
+	})}
+	selected := pathCompletionContext{profile: profile.Profile{Address: "http://vault.example.invalid", AllowInsecure: true}, token: "synthetic-token"}
+	if got := completeReadPaths(ctx, selected, "secret/", transport); len(got) != 0 {
+		t.Errorf("canceled traversal returned %q, want no candidates", got)
+	}
+	if capabilityCalls.Load() != 0 {
+		t.Error("canceled traversal queried capabilities")
+	}
+}
+
+func TestCompleteReadPathsHidesFolderWhenDescendantsCannotBeChecked(t *testing.T) {
+	transport := completionTestTransport{handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v1/secret/":
+			_, _ = writer.Write([]byte(`{"data":{"keys":["unknown/"]}}`))
+		case "/v1/secret/unknown/":
+			writer.WriteHeader(http.StatusForbidden)
+		default:
+			t.Errorf("unexpected request after denied folder: %s", request.URL.Path)
+		}
+	})}
+	selected := pathCompletionContext{profile: profile.Profile{Address: "http://vault.example.invalid", AllowInsecure: true}, token: "synthetic-token"}
+	if got := completeReadPaths(context.Background(), selected, "secret/", transport); len(got) != 0 {
+		t.Errorf("unchecked folder returned %q, want no candidates", got)
+	}
+}
+
+func TestCompleteKVPathsProvesV2FolderThroughMetadataAndDataPaths(t *testing.T) {
+	transport := completionTestTransport{handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sys/internal/ui/mounts/secret/":
+			_, _ = writer.Write([]byte(`{"path":"secret/","type":"kv","options":{"version":"2"}}`))
+		case request.Method == "LIST" && request.URL.Path == "/v1/secret/metadata/":
+			_, _ = writer.Write([]byte(`{"data":{"keys":["branch/"]}}`))
+		case request.Method == "LIST" && request.URL.Path == "/v1/secret/metadata/branch/":
+			_, _ = writer.Write([]byte(`{"data":{"keys":["allowed"]}}`))
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/sys/capabilities-self":
+			var body struct {
+				Paths []string `json:"paths"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Errorf("decode capabilities: %v", err)
+			}
+			if !reflect.DeepEqual(body.Paths, []string{"secret/data/branch/allowed"}) {
+				t.Errorf("KV v2 folder read paths = %q, want data path", body.Paths)
+			}
+			_, _ = writer.Write([]byte(`{"secret/data/branch/allowed":["read"]}`))
+		default:
+			t.Errorf("unexpected KV v2 folder request: %s %s", request.Method, request.URL.Path)
+			http.Error(writer, "unexpected request", http.StatusBadRequest)
+		}
+	})}
+	selected := pathCompletionContext{profile: profile.Profile{Address: "http://vault.example.invalid", AllowInsecure: true}, token: "synthetic-token"}
+	if got := completeKVPaths(context.Background(), selected, "", "secret/", transport); !reflect.DeepEqual(got, []string{"secret/branch/"}) {
+		t.Errorf("KV v2 folder candidates = %q, want proven branch", got)
 	}
 }

@@ -127,36 +127,15 @@ func completeListedReadablePaths(ctx context.Context, selected pathCompletionCon
 	if client == nil || !validCompletionPath(listDirectory) || !validCompletionPath(readDirectory) || !validCompletionPartial(partial) {
 		return nil
 	}
-	listed, ok := requestVaultCompletionJSON(ctx, client, selected, "LIST", listDirectory, nil)
-	if !ok {
+	collector := completionProofCollector{ctx: ctx, client: client, selected: selected}
+	if !collector.collect(listDirectory, readDirectory, displayDirectory, partial, "", 0) || len(collector.proofs) == 0 {
 		return nil
 	}
-	var listing struct {
-		Data struct {
-			Keys []string `json:"keys"`
-		} `json:"data"`
-	}
-	if json.Unmarshal(listed, &listing) != nil {
-		return nil
-	}
-	seen := make(map[string]bool)
-	var keys []string
-	for _, key := range listing.Data.Keys {
-		if !validCompletionLeaf(key) || !strings.HasPrefix(key, partial) {
-			continue
-		}
-		if !seen[key] {
-			seen[key] = true
-			keys = append(keys, key)
-		}
-	}
-	if len(keys) == 0 {
-		return nil
-	}
-	sort.Strings(keys)
-	paths := make([]string, 0, len(keys))
-	for _, key := range keys {
-		paths = append(paths, readDirectory+key)
+	proofs := collector.proofs
+	sort.Slice(proofs, func(left, right int) bool { return proofs[left].readPath < proofs[right].readPath })
+	paths := make([]string, 0, len(proofs))
+	for _, proof := range proofs {
+		paths = append(paths, proof.readPath)
 	}
 	requestBody, err := json.Marshal(struct {
 		Paths []string `json:"paths"`
@@ -172,7 +151,7 @@ func completeListedReadablePaths(ctx context.Context, selected pathCompletionCon
 	if json.Unmarshal(checked, &capabilityMap) != nil {
 		return nil
 	}
-	var readable []string
+	readable := make(map[string]bool)
 	for index, path := range paths {
 		entry := capabilityMap[path]
 		if len(entry) == 0 && len(paths) == 1 {
@@ -192,10 +171,84 @@ func completeListedReadablePaths(ctx context.Context, selected pathCompletionCon
 			}
 		}
 		if canRead && !denied {
-			readable = append(readable, displayDirectory+keys[index])
+			readable[proofs[index].candidate] = true
 		}
 	}
-	return readable
+	if ctx.Err() != nil {
+		return nil
+	}
+	var candidates []string
+	for candidate := range readable {
+		candidates = append(candidates, candidate)
+	}
+	sort.Strings(candidates)
+	return candidates
+}
+
+type completionPathProof struct {
+	readPath  string
+	candidate string
+}
+
+type completionProofCollector struct {
+	ctx       context.Context
+	client    *http.Client
+	selected  pathCompletionContext
+	listCount int
+	proofs    []completionPathProof
+}
+
+func (collector *completionProofCollector) collect(listDirectory, readDirectory, displayDirectory, partial, parentCandidate string, depth int) bool {
+	const maxLists = 64
+	const maxProofs = 256
+	const maxDepth = 16
+	if collector.ctx.Err() != nil || depth > maxDepth || collector.listCount >= maxLists {
+		return false
+	}
+	collector.listCount++
+	listed, ok := requestVaultCompletionJSON(collector.ctx, collector.client, collector.selected, "LIST", listDirectory, nil)
+	if !ok || collector.ctx.Err() != nil {
+		return false
+	}
+	var listing struct {
+		Data struct {
+			Keys []string `json:"keys"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(listed, &listing) != nil {
+		return false
+	}
+	seen := make(map[string]bool)
+	var keys []string
+	for _, key := range listing.Data.Keys {
+		name := strings.TrimSuffix(key, "/")
+		if !validCompletionLeaf(name) || depth == 0 && !strings.HasPrefix(key, partial) || seen[key] {
+			continue
+		}
+		seen[key] = true
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if collector.ctx.Err() != nil {
+			return false
+		}
+		candidate := parentCandidate
+		if depth == 0 {
+			candidate = displayDirectory + key
+		}
+		if strings.HasSuffix(key, "/") {
+			if !collector.collect(listDirectory+key, readDirectory+key, displayDirectory+key, "", candidate, depth+1) {
+				return false
+			}
+			continue
+		}
+		if len(collector.proofs) >= maxProofs {
+			return false
+		}
+		collector.proofs = append(collector.proofs, completionPathProof{readPath: readDirectory + key, candidate: candidate})
+	}
+	return true
 }
 
 func newPathCompletionClient(selected pathCompletionContext, transport http.RoundTripper) *http.Client {
