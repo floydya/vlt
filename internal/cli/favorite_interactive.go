@@ -100,15 +100,20 @@ func (f huhFavoriteForm) Run(ctx context.Context, request FavoriteFormRequest) (
 		if namespace == "" {
 			namespace = "-"
 		}
+		color := candidateProfile.Color
+		if color == "" {
+			color = "-"
+		}
 		label := fmt.Sprintf(
-			"%d  %s  %s  %s",
+			"%d  %s  %s  %s  %s",
 			index+1,
 			candidateProfile.Name,
 			candidateProfile.Address,
 			namespace,
+			color,
 		)
 		profileItems = append(profileItems, SharedSelectorItem{
-			ID: candidateProfile.Name, Label: label, SearchText: label,
+			ID: candidateProfile.Name, Label: label, SearchText: label, Color: candidateProfile.Color,
 		})
 	}
 	selectedProfile, err := f.selector.Select(ctx, "Select a profile", profileItems, candidate.Profile)
