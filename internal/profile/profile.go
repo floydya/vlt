@@ -12,6 +12,7 @@ import (
 var (
 	namePattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 	numericNamePattern = regexp.MustCompile(`^[0-9]+$`)
+	colorPattern       = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 )
 
 // Profile contains the non-secret metadata needed to use a Vault profile.
@@ -22,6 +23,7 @@ type Profile struct {
 	AuthPath      string `json:"auth_path"`
 	Namespace     string `json:"namespace"`
 	AllowInsecure bool   `json:"allow_insecure"`
+	Color         string `json:"color,omitempty"`
 }
 
 // ValidateName checks the stable, case-sensitive profile identifier.
@@ -89,6 +91,9 @@ func (p Profile) Validate() error {
 	}
 	if containsControl(p.Namespace) {
 		return fmt.Errorf("namespace must not contain control characters")
+	}
+	if p.Color != "" && !colorPattern.MatchString(p.Color) {
+		return fmt.Errorf("color must be #RRGGBB")
 	}
 	return nil
 }

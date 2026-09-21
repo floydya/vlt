@@ -146,6 +146,16 @@ func TestProfileValidation(t *testing.T) {
 			p.AllowInsecure = true
 		}},
 		{name: "HTTPS ignores opt-in", mutate: func(p *Profile) { p.AllowInsecure = true }},
+		{name: "empty color", mutate: func(p *Profile) { p.Color = "" }},
+		{name: "uppercase color", mutate: func(p *Profile) { p.Color = "#A1B2C3" }},
+		{name: "lowercase color", mutate: func(p *Profile) { p.Color = "#a1b2c3" }},
+		{name: "mixed color", mutate: func(p *Profile) { p.Color = "#a1B2c3" }},
+		{name: "missing color hash", mutate: func(p *Profile) { p.Color = "A1B2C3" }, wantErr: "color"},
+		{name: "short color", mutate: func(p *Profile) { p.Color = "#A1B2C" }, wantErr: "color"},
+		{name: "long color", mutate: func(p *Profile) { p.Color = "#A1B2C34" }, wantErr: "color"},
+		{name: "nonhex color", mutate: func(p *Profile) { p.Color = "#A1B2CG" }, wantErr: "color"},
+		{name: "surrounding color whitespace", mutate: func(p *Profile) { p.Color = " #A1B2C3 " }, wantErr: "color"},
+		{name: "color newline", mutate: func(p *Profile) { p.Color = "#A1B2C3\n" }, wantErr: "color"},
 	}
 
 	for _, tt := range tests {
