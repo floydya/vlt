@@ -21,22 +21,6 @@ type terminalCapabilities struct {
 	colorEnabled    bool
 }
 
-type accentTerminal struct {
-	Terminal
-	color string
-}
-
-func WithAccent(terminal Terminal, color string) Terminal {
-	if terminal == nil || color == "" {
-		return terminal
-	}
-	return accentTerminal{Terminal: terminal, color: color}
-}
-
-func (t accentTerminal) AccentColor() string {
-	return t.color
-}
-
 type terminalDetector func(uintptr) bool
 type colorProfileDetector func(io.Writer, []string) colorprofile.Profile
 

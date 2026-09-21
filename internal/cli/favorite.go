@@ -290,13 +290,20 @@ func favoriteList(ctx context.Context, dependencies FavoriteDependencies, args [
 	if err != nil {
 		return safeManagementError(fmt.Errorf("list favorites: load configuration: %w", err))
 	}
-	if _, err := io.WriteString(dependencies.Output, favoriteListOutput(configuration.Favorites, dependencies.Terminal)); err != nil {
+	var colors map[string]string
+	if dependencies.Terminal != nil && dependencies.Terminal.ColorEnabled() {
+		colors, err = loadProfileColors(ctx, dependencies.Profiles)
+		if err != nil {
+			return safeManagementError(fmt.Errorf("list favorites: %w", err))
+		}
+	}
+	if _, err := io.WriteString(dependencies.Output, favoriteListOutput(configuration.Favorites, colors, dependencies.Terminal)); err != nil {
 		return fmt.Errorf("display favorites: %w", err)
 	}
 	return nil
 }
 
-func favoriteListOutput(favorites []favorite.Favorite, terminal Terminal) string {
+func favoriteListOutput(favorites []favorite.Favorite, colors map[string]string, terminal Terminal) string {
 	rows := [][]presentationCell{{
 		{value: "#", role: presentationHeading},
 		{value: "RUNS", role: presentationHeading},
@@ -310,14 +317,18 @@ func favoriteListOutput(favorites []favorite.Favorite, terminal Terminal) string
 		if note == "" {
 			note = "-"
 		}
-		rows = append(rows, []presentationCell{
+		row := []presentationCell{
 			{value: strconv.Itoa(index + 1)},
 			{value: strconv.FormatInt(candidate.RunCount, 10)},
 			{value: sanitizeFavoriteDisplay(candidate.Operation)},
 			{value: sanitizeFavoriteDisplay(candidate.Profile)},
 			{value: sanitizeFavoriteDisplay(candidate.Path)},
 			{value: sanitizeFavoriteDisplay(note)},
-		})
+		}
+		for index := range row {
+			row[index].color = colors[candidate.Profile]
+		}
+		rows = append(rows, row)
 	}
 	return newPresentation(terminal).renderTable(rows)
 }

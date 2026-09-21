@@ -10,6 +10,7 @@ import (
 
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 var (
@@ -28,7 +29,7 @@ type SharedSelectorItem struct {
 }
 
 type SharedSelector interface {
-	Select(context.Context, string, []SharedSelectorItem, string) (string, error)
+	Select(context.Context, string, string, []SharedSelectorItem, string) (string, error)
 }
 
 type sharedSelector struct {
@@ -39,6 +40,7 @@ type sharedSelector struct {
 
 type sharedSelectorModel struct {
 	title        string
+	header       string
 	items        []SharedSelectorItem
 	visible      []SharedSelectorItem
 	query        string
@@ -59,10 +61,11 @@ func NewSharedSelector(input io.Reader, output io.Writer, terminal Terminal) Sha
 func (s sharedSelector) Select(
 	ctx context.Context,
 	title string,
+	header string,
 	items []SharedSelectorItem,
 	preselectedID string,
 ) (string, error) {
-	model, err := newSharedSelectorModel(title, items, preselectedID, s.presentation)
+	model, err := newSharedSelectorModel(title, header, items, preselectedID, s.presentation)
 	if err != nil {
 		return "", err
 	}
@@ -109,6 +112,7 @@ func (s sharedSelector) Select(
 
 func newSharedSelectorModel(
 	title string,
+	header string,
 	items []SharedSelectorItem,
 	preselectedID string,
 	presentation presentation,
@@ -119,6 +123,7 @@ func newSharedSelectorModel(
 	cloned := append([]SharedSelectorItem(nil), items...)
 	model := sharedSelectorModel{
 		title:        title,
+		header:       header,
 		items:        cloned,
 		visible:      append([]SharedSelectorItem(nil), cloned...),
 		presentation: presentation,
@@ -174,6 +179,33 @@ func filterSharedSelectorItems(query string, items []SharedSelectorItem) []Share
 	return filtered
 }
 
+func selectorTableRows(headers []string, rows [][]string) (string, []string) {
+	widths := make([]int, len(headers))
+	for index, header := range headers {
+		widths[index] = lipgloss.Width(header)
+	}
+	for _, row := range rows {
+		for index, value := range row {
+			widths[index] = max(widths[index], lipgloss.Width(value))
+		}
+	}
+	format := func(row []string) string {
+		var text strings.Builder
+		for index, value := range row {
+			text.WriteString(value)
+			if index < len(row)-1 {
+				text.WriteString(strings.Repeat(" ", widths[index]-lipgloss.Width(value)+2))
+			}
+		}
+		return text.String()
+	}
+	labels := make([]string, len(rows))
+	for index, row := range rows {
+		labels[index] = format(row)
+	}
+	return format(headers), labels
+}
+
 func (m sharedSelectorModel) Init() tea.Cmd {
 	return nil
 }
@@ -223,6 +255,11 @@ func (m sharedSelectorModel) View() tea.View {
 	output.WriteByte(' ')
 	output.WriteString(m.query)
 	output.WriteByte('\n')
+	if m.header != "" {
+		output.WriteString("  ")
+		output.WriteString(m.presentation.render(presentationHeading, m.header))
+		output.WriteByte('\n')
+	}
 
 	if len(m.visible) == 0 {
 		output.WriteString(m.presentation.render(presentationMuted, "  No matches."))

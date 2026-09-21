@@ -38,6 +38,7 @@ type FavoriteRemovalConfirmer interface {
 
 type sharedFavoriteManagementSelector struct {
 	selector SharedSelector
+	profiles ConfigurationLoader
 }
 
 type huhFavoriteForm struct {
@@ -55,8 +56,8 @@ type huhFavoriteRemovalConfirmer struct {
 	presentation presentation
 }
 
-func NewSharedFavoriteManagementSelector(selector SharedSelector) FavoriteManagementSelector {
-	return sharedFavoriteManagementSelector{selector: selector}
+func NewSharedFavoriteManagementSelector(selector SharedSelector, profiles ConfigurationLoader) FavoriteManagementSelector {
+	return sharedFavoriteManagementSelector{selector: selector, profiles: profiles}
 }
 
 func NewHuhFavoriteForm(input io.Reader, output io.Writer, selector SharedSelector, terminal Terminal) FavoriteForm {
@@ -94,7 +95,7 @@ func (f huhFavoriteForm) Run(ctx context.Context, request FavoriteFormRequest) (
 	if candidate.Operation == "" {
 		candidate.Operation = favorite.OperationRead
 	}
-	profileItems := make([]SharedSelectorItem, 0, len(profiles))
+	profileRows := make([][]string, 0, len(profiles))
 	for index, candidateProfile := range profiles {
 		namespace := candidateProfile.Namespace
 		if namespace == "" {
@@ -104,19 +105,16 @@ func (f huhFavoriteForm) Run(ctx context.Context, request FavoriteFormRequest) (
 		if color == "" {
 			color = "-"
 		}
-		label := fmt.Sprintf(
-			"%d  %s  %s  %s  %s",
-			index+1,
-			candidateProfile.Name,
-			candidateProfile.Address,
-			namespace,
-			color,
-		)
+		profileRows = append(profileRows, []string{fmt.Sprint(index + 1), candidateProfile.Name, candidateProfile.Address, namespace, color})
+	}
+	profileHeader, profileLabels := selectorTableRows([]string{"#", "NAME", "ADDRESS", "NAMESPACE", "COLOR"}, profileRows)
+	profileItems := make([]SharedSelectorItem, 0, len(profiles))
+	for index, candidateProfile := range profiles {
 		profileItems = append(profileItems, SharedSelectorItem{
-			ID: candidateProfile.Name, Label: label, SearchText: label, Color: candidateProfile.Color,
+			ID: candidateProfile.Name, Label: profileLabels[index], SearchText: profileLabels[index], Color: candidateProfile.Color,
 		})
 	}
-	selectedProfile, err := f.selector.Select(ctx, "Select a profile", profileItems, candidate.Profile)
+	selectedProfile, err := f.selector.Select(ctx, "Select a profile", profileHeader, profileItems, candidate.Profile)
 	if err != nil {
 		return favorite.Favorite{}, fmt.Errorf("favorite form: select profile: %w", err)
 	}
@@ -126,7 +124,7 @@ func (f huhFavoriteForm) Run(ctx context.Context, request FavoriteFormRequest) (
 		{ID: favorite.OperationRead, Label: favorite.OperationRead, SearchText: favorite.OperationRead},
 		{ID: favorite.OperationKVGet, Label: favorite.OperationKVGet, SearchText: favorite.OperationKVGet},
 	}
-	selectedOperation, err := f.selector.Select(ctx, "Select an operation", operationItems, candidate.Operation)
+	selectedOperation, err := f.selector.Select(ctx, "Select an operation", "", operationItems, candidate.Operation)
 	if err != nil {
 		return favorite.Favorite{}, fmt.Errorf("favorite form: select operation: %w", err)
 	}
@@ -171,7 +169,7 @@ func (c huhFavoriteRemovalConfirmer) Confirm(ctx context.Context, request Favori
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().Title(title).Affirmative("Remove").Negative("Keep").Value(&confirmed),
 	)).WithInput(c.input).WithOutput(c.output).WithAccessible(c.accessible)
-	if !c.presentation.colorEnabled || c.presentation.accentColor != "" {
+	if !c.presentation.colorEnabled {
 		form = form.WithTheme(c.presentation.huhTheme())
 	}
 	if err := form.RunWithContext(ctx); err != nil {

@@ -91,7 +91,7 @@ $ vlt favorite list
 
 Vault profiles use HTTPS by default. To connect to a trusted local test Vault over HTTP, add the profile with `--allow-insecure`. Clear the opt-in with `vlt profile update NAME --address https://... --allow-insecure=false`.
 
-Set a profile accent with `--color '#3366CC'` on `profile add` or `profile update`. Clear it with `vlt profile update NAME --color=`. A color-only update keeps the stored token. `NO_COLOR` and redirected output remain plain.
+Set a profile row color with `--color '#3366CC'` on `profile add` or `profile update`. Profile and favorite rows linked to it use that color in lists and pickers. The `switch` and `favorite` pickers show column headings below search. Clear a color with `vlt profile update NAME --color=`. A color-only update keeps the stored token. `NO_COLOR` and redirected output remain plain.
 
 `vlt favorite list` shows each favorite's successful run count. Favorites with more runs appear first, with path, profile, and operation breaking ties. After Vault succeeds, `vlt` records one run when it can save local metadata. A failed count save does not change Vault's output or exit status. Changing a favorite's profile, operation, or path resets the count; changing its note keeps it.
 

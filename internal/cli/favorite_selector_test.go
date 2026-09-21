@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"vlt/internal/config"
 	"vlt/internal/favorite"
+	"vlt/internal/profile"
 )
 
 func TestSharedFavoriteSelectorUsesDeterministicSearchableRowsAndOpaqueSelection(t *testing.T) {
@@ -17,7 +19,7 @@ func TestSharedFavoriteSelectorUsesDeterministicSearchableRowsAndOpaqueSelection
 	}
 	ordered := favorite.NewService(favorites).List()
 	shared := &recordingSharedSelector{selectedID: "favorite-000002"}
-	selector := NewSharedFavoriteSelector(shared)
+	selector := NewSharedFavoriteSelector(shared, nil)
 
 	selected, err := selector.Select(context.Background(), favorites)
 	if err != nil {
@@ -59,7 +61,7 @@ func TestSharedFavoriteSelectorUsesDeterministicSearchableRowsAndOpaqueSelection
 			t.Errorf("filter %q = %#v, want one match", tt.query, matches)
 			continue
 		}
-		selected, selectErr := NewSharedFavoriteSelector(&recordingSharedSelector{selectedID: matches[0].ID}).Select(context.Background(), favorites)
+		selected, selectErr := NewSharedFavoriteSelector(&recordingSharedSelector{selectedID: matches[0].ID}, nil).Select(context.Background(), favorites)
 		if selectErr != nil || selected != tt.want {
 			t.Errorf("filter %q selected %#v, %v; want %#v", tt.query, selected, selectErr, tt.want)
 		}
@@ -73,14 +75,17 @@ func TestSharedFavoriteSelectorShowsCountFirstRowsAndSearchesCounts(t *testing.T
 		{Profile: "team-a", Operation: favorite.OperationKVGet, Path: "secret/a", RunCount: 8},
 	}
 	shared := &recordingSharedSelector{selectedID: "favorite-000002"}
-	selected, err := NewSharedFavoriteSelector(shared).Select(context.Background(), favorites)
+	selected, err := NewSharedFavoriteSelector(shared, nil).Select(context.Background(), favorites)
 	if err != nil {
 		t.Fatalf("Select() error = %v", err)
 	}
 	wantRows := []string{
-		"1  127  read  team-b  secret/z  -",
-		"2  8  kv-get  team-a  secret/a  -",
-		"3  8  read  team-b  secret/a  -",
+		"1  127   read       team-b   secret/z  -",
+		"2  8     kv-get     team-a   secret/a  -",
+		"3  8     read       team-b   secret/a  -",
+	}
+	if want := "#  RUNS  OPERATION  PROFILE  PATH      NOTE"; shared.header != want {
+		t.Errorf("favorite selector header = %q, want %q", shared.header, want)
 	}
 	if len(shared.items) != len(wantRows) {
 		t.Fatalf("selector rows = %#v, want %d rows", shared.items, len(wantRows))
@@ -98,9 +103,54 @@ func TestSharedFavoriteSelectorShowsCountFirstRowsAndSearchesCounts(t *testing.T
 	}
 }
 
+func TestSharedFavoriteSelectorColorsEachRowFromItsOwnProfile(t *testing.T) {
+	profiles := &fakeProfileStore{configuration: config.Configuration{
+		Profiles:      []profile.Profile{{Name: "nc", Color: "#FF8800"}, {Name: "sps", Color: "#008844"}, {Name: "zz"}},
+		ActiveProfile: "sps",
+	}}
+	favorites := []favorite.Favorite{
+		{Profile: "nc", Operation: favorite.OperationRead, Path: "secret/nc"},
+		{Profile: "sps", Operation: favorite.OperationRead, Path: "secret/sps"},
+		{Profile: "zz", Operation: favorite.OperationRead, Path: "secret/zz"},
+	}
+	shared := &recordingSharedSelector{selectedID: "favorite-000001"}
+	selected, err := NewSharedFavoriteSelector(shared, profiles).Select(context.Background(), favorites)
+	if err != nil || selected != favorites[0] {
+		t.Fatalf("selected = %#v, %v, want nc favorite", selected, err)
+	}
+	if len(shared.items) != 3 || shared.items[0].Color != "#FF8800" || shared.items[1].Color != "#008844" || shared.items[2].Color != "" {
+		t.Fatalf("favorite row colors = %#v, want nc, sps, and uncolored rows", shared.items)
+	}
+	for _, tt := range []struct {
+		name  string
+		color bool
+	}{
+		{name: "color", color: true},
+		{name: "plain"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			model, err := newSharedSelectorModel(shared.title, shared.header, shared.items, shared.items[0].ID, newPresentation(fixedTerminal{color: tt.color}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(model.View().Content, "\n")
+			if tt.color {
+				if strings.Contains(lines[2], "38;2;255;136;0m") || !strings.Contains(lines[3], "38;2;255;136;0m") || !strings.Contains(lines[4], "38;2;0;136;68m") || strings.Contains(lines[5], "\x1b[") {
+					t.Errorf("favorite selector colors = %#v, want only matching row colors", lines)
+				}
+			} else if strings.Contains(model.View().Content, "\x1b[") {
+				t.Errorf("plain selector contains ANSI: %q", model.View().Content)
+			}
+			if !strings.Contains(lines[3], "> ") {
+				t.Errorf("selected row lost its marker: %q", lines[3])
+			}
+		})
+	}
+}
+
 func TestSharedFavoriteSelectorShowsDashForEmptyNote(t *testing.T) {
 	shared := &recordingSharedSelector{selectedID: "favorite-000001"}
-	selector := NewSharedFavoriteSelector(shared)
+	selector := NewSharedFavoriteSelector(shared, nil)
 	candidate := favorite.Favorite{Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/a"}
 
 	selected, err := selector.Select(context.Background(), []favorite.Favorite{candidate})
@@ -137,7 +187,7 @@ func TestSharedFavoriteSelectorMapsCancellationAndContext(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			selected, err := NewSharedFavoriteSelector(tt.shared).Select(tt.ctx, []favorite.Favorite{candidate})
+			selected, err := NewSharedFavoriteSelector(tt.shared, nil).Select(tt.ctx, []favorite.Favorite{candidate})
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("Select() error = %v, want %v", err, tt.want)
 			}
@@ -150,7 +200,7 @@ func TestSharedFavoriteSelectorMapsCancellationAndContext(t *testing.T) {
 
 func TestSharedFavoriteSelectorRejectsEmptyAndUnknownSelections(t *testing.T) {
 	shared := &recordingSharedSelector{selectedID: "favorite-999999"}
-	selector := NewSharedFavoriteSelector(shared)
+	selector := NewSharedFavoriteSelector(shared, nil)
 
 	_, err := selector.Select(context.Background(), nil)
 	if err == nil || !strings.Contains(err.Error(), "favorite add") {
@@ -169,7 +219,7 @@ func TestSharedFavoriteSelectorRejectsEmptyAndUnknownSelections(t *testing.T) {
 }
 
 func TestSharedFavoriteSelectorRequiresSharedComponent(t *testing.T) {
-	selector := NewSharedFavoriteSelector(nil)
+	selector := NewSharedFavoriteSelector(nil, nil)
 	_, err := selector.Select(context.Background(), []favorite.Favorite{{
 		Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/a",
 	}})
