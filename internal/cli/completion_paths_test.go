@@ -238,3 +238,90 @@ func TestCompleteKVv1PathsDoesNotFollowListRedirect(t *testing.T) {
 		t.Error("path lookup followed a redirect toward a secret value")
 	}
 }
+
+func TestCompleteKVv2PathsMapsMetadataListToDataReadForBothForms(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		mount      string
+		prefix     string
+		lookupPath string
+		want       string
+	}{
+		{name: "combined path", prefix: "secret/team/", lookupPath: "/v1/sys/internal/ui/mounts/secret/team/", want: "secret/team/allowed"},
+		{name: "mount flag", mount: "secret", prefix: "team/", lookupPath: "/v1/sys/internal/ui/mounts/secret", want: "team/allowed"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var listCalls, capabilityCalls atomic.Int32
+			transport := completionTestTransport{handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.Header.Get("X-Vault-Token") != "synthetic-token" || request.Header.Get("X-Vault-Namespace") != "dept/" {
+					t.Error("KV v2 request did not use selected credentials and namespace")
+				}
+				switch {
+				case request.Method == http.MethodGet && request.URL.Path == tt.lookupPath:
+					_, _ = writer.Write([]byte(`{"path":"secret/","type":"kv","options":{"version":"2"}}`))
+				case request.Method == "LIST" && request.URL.Path == "/v1/secret/metadata/team/":
+					listCalls.Add(1)
+					_, _ = writer.Write([]byte(`{"data":{"keys":["allowed","denied","folder/"]}}`))
+				case request.Method == http.MethodPost && request.URL.Path == "/v1/sys/capabilities-self":
+					capabilityCalls.Add(1)
+					var body struct {
+						Paths []string `json:"paths"`
+					}
+					if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+						t.Errorf("decode capability request: %v", err)
+					}
+					want := []string{"secret/data/team/allowed", "secret/data/team/denied"}
+					if !reflect.DeepEqual(body.Paths, want) {
+						t.Errorf("KV v2 capability paths = %q, want %q", body.Paths, want)
+					}
+					_, _ = writer.Write([]byte(`{"secret/data/team/allowed":["read"],"secret/data/team/denied":["deny"],"secret/metadata/team/denied":["read"]}`))
+				default:
+					t.Errorf("unexpected request: %s %s", request.Method, request.URL.Path)
+					http.Error(writer, "unexpected request", http.StatusBadRequest)
+				}
+			})}
+			selected := pathCompletionContext{profile: profile.Profile{Address: "http://vault.example.invalid", Namespace: "dept/", AllowInsecure: true}, token: "synthetic-token"}
+			got := completeKVPaths(context.Background(), selected, tt.mount, tt.prefix, transport)
+			if !reflect.DeepEqual(got, []string{tt.want}) {
+				t.Errorf("KV v2 candidates = %q, want %q", got, tt.want)
+			}
+			if listCalls.Load() != 1 || capabilityCalls.Load() != 1 {
+				t.Errorf("list calls = %d, capability calls = %d; want one each", listCalls.Load(), capabilityCalls.Load())
+			}
+		})
+	}
+}
+
+func TestCompleteKVPathsFailsClosedWithoutConfirmedKVMount(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{name: "mount unavailable", status: http.StatusForbidden},
+		{name: "wrong engine", body: `{"path":"secret/","type":"transit","options":{"version":"2"}}`},
+		{name: "unknown version", body: `{"path":"secret/","type":"kv","options":{"version":"3"}}`},
+		{name: "wrong mount path", body: `{"path":"other/","type":"kv","options":{"version":"2"}}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var requests atomic.Int32
+			transport := completionTestTransport{handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				requests.Add(1)
+				if request.URL.Path != "/v1/sys/internal/ui/mounts/secret/team/" {
+					t.Errorf("unexpected path request: %s", request.URL.Path)
+				}
+				if tt.status != 0 {
+					writer.WriteHeader(tt.status)
+				}
+				_, _ = writer.Write([]byte(tt.body))
+			})}
+			selected := pathCompletionContext{profile: profile.Profile{Address: "http://vault.example.invalid", AllowInsecure: true}, token: "synthetic-token"}
+			if got := completeKVPaths(context.Background(), selected, "", "secret/team/", transport); len(got) != 0 {
+				t.Errorf("unconfirmed KV mount returned %q, want no candidates", got)
+			}
+			if requests.Load() != 1 {
+				t.Errorf("request count = %d, want mount lookup only", requests.Load())
+			}
+		})
+	}
+}

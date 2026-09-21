@@ -49,23 +49,81 @@ func resolvePathCompletionContext(ctx context.Context, explicitName string, depe
 }
 
 func completeKVv1Paths(ctx context.Context, selected pathCompletionContext, prefix string, transport http.RoundTripper) []string {
-	if transport == nil || selected.token == "" || profile.ValidateAddress(selected.profile.Address) != nil {
-		return nil
-	}
-	address, err := url.Parse(selected.profile.Address)
-	if err != nil || strings.EqualFold(address.Scheme, "http") && !selected.profile.AllowInsecure {
-		return nil
-	}
 	separator := strings.LastIndexByte(prefix, '/')
 	if separator < 0 {
 		return nil
 	}
 	directory, partial := prefix[:separator+1], prefix[separator+1:]
-	if !validCompletionPath(directory) || strings.IndexFunc(partial, unicode.IsControl) >= 0 || strings.ContainsAny(partial, `/\`) {
+	return completeListedReadablePaths(ctx, selected, directory, directory, directory, partial, transport)
+}
+
+func completeKVPaths(ctx context.Context, selected pathCompletionContext, mountFlag, prefix string, transport http.RoundTripper) []string {
+	client := newPathCompletionClient(selected, transport)
+	if client == nil {
 		return nil
 	}
-	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	listed, ok := requestVaultCompletionJSON(ctx, client, selected, "LIST", directory, nil)
+	hint := prefix
+	if mountFlag != "" {
+		hint = strings.TrimSuffix(mountFlag, "/")
+		if !validCompletionPath(hint + "/") {
+			return nil
+		}
+	} else {
+		separator := strings.LastIndexByte(prefix, '/')
+		if separator < 0 || !validCompletionPath(prefix[:separator+1]) || !validCompletionPartial(prefix[separator+1:]) {
+			return nil
+		}
+	}
+	response, ok := requestVaultCompletionJSON(ctx, client, selected, http.MethodGet, "sys/internal/ui/mounts/"+hint, nil)
+	if !ok {
+		return nil
+	}
+	var mount struct {
+		Path    string `json:"path"`
+		Type    string `json:"type"`
+		Options struct {
+			Version string `json:"version"`
+		} `json:"options"`
+	}
+	if json.Unmarshal(response, &mount) != nil || mount.Type != "kv" || !validCompletionPath(mount.Path) {
+		return nil
+	}
+	if mountFlag != "" && mount.Path != hint+"/" || mountFlag == "" && !strings.HasPrefix(prefix, mount.Path) {
+		return nil
+	}
+	relative := prefix
+	if mountFlag == "" {
+		relative = strings.TrimPrefix(prefix, mount.Path)
+	}
+	separator := strings.LastIndexByte(relative, '/')
+	relativeDirectory, partial := "", relative
+	if separator >= 0 {
+		relativeDirectory, partial = relative[:separator+1], relative[separator+1:]
+	}
+	if relativeDirectory != "" && !validCompletionPath(relativeDirectory) || !validCompletionPartial(partial) {
+		return nil
+	}
+	displayDirectory := relativeDirectory
+	if mountFlag == "" {
+		displayDirectory = mount.Path + relativeDirectory
+	}
+	switch mount.Options.Version {
+	case "", "1":
+		apiDirectory := mount.Path + relativeDirectory
+		return completeListedReadablePaths(ctx, selected, apiDirectory, apiDirectory, displayDirectory, partial, transport)
+	case "2":
+		return completeListedReadablePaths(ctx, selected, mount.Path+"metadata/"+relativeDirectory, mount.Path+"data/"+relativeDirectory, displayDirectory, partial, transport)
+	default:
+		return nil
+	}
+}
+
+func completeListedReadablePaths(ctx context.Context, selected pathCompletionContext, listDirectory, readDirectory, displayDirectory, partial string, transport http.RoundTripper) []string {
+	client := newPathCompletionClient(selected, transport)
+	if client == nil || !validCompletionPath(listDirectory) || !validCompletionPath(readDirectory) || !validCompletionPartial(partial) {
+		return nil
+	}
+	listed, ok := requestVaultCompletionJSON(ctx, client, selected, "LIST", listDirectory, nil)
 	if !ok {
 		return nil
 	}
@@ -78,21 +136,24 @@ func completeKVv1Paths(ctx context.Context, selected pathCompletionContext, pref
 		return nil
 	}
 	seen := make(map[string]bool)
-	var paths []string
+	var keys []string
 	for _, key := range listing.Data.Keys {
 		if !validCompletionLeaf(key) || !strings.HasPrefix(key, partial) {
 			continue
 		}
-		path := directory + key
-		if !seen[path] {
-			seen[path] = true
-			paths = append(paths, path)
+		if !seen[key] {
+			seen[key] = true
+			keys = append(keys, key)
 		}
 	}
-	if len(paths) == 0 {
+	if len(keys) == 0 {
 		return nil
 	}
-	sort.Strings(paths)
+	sort.Strings(keys)
+	paths := make([]string, 0, len(keys))
+	for _, key := range keys {
+		paths = append(paths, readDirectory+key)
+	}
 	requestBody, err := json.Marshal(struct {
 		Paths []string `json:"paths"`
 	}{Paths: paths})
@@ -108,7 +169,7 @@ func completeKVv1Paths(ctx context.Context, selected pathCompletionContext, pref
 		return nil
 	}
 	var readable []string
-	for _, path := range paths {
+	for index, path := range paths {
 		entry := capabilityMap[path]
 		if len(entry) == 0 && len(paths) == 1 {
 			entry = capabilityMap["capabilities"]
@@ -127,10 +188,25 @@ func completeKVv1Paths(ctx context.Context, selected pathCompletionContext, pref
 			}
 		}
 		if canRead && !denied {
-			readable = append(readable, path)
+			readable = append(readable, displayDirectory+keys[index])
 		}
 	}
 	return readable
+}
+
+func newPathCompletionClient(selected pathCompletionContext, transport http.RoundTripper) *http.Client {
+	if transport == nil || selected.token == "" || profile.ValidateAddress(selected.profile.Address) != nil {
+		return nil
+	}
+	address, err := url.Parse(selected.profile.Address)
+	if err != nil || strings.EqualFold(address.Scheme, "http") && !selected.profile.AllowInsecure {
+		return nil
+	}
+	return &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+}
+
+func validCompletionPartial(value string) bool {
+	return value != "." && value != ".." && !strings.ContainsAny(value, `/\`) && strings.IndexFunc(value, unicode.IsControl) < 0
 }
 
 func requestVaultCompletionJSON(ctx context.Context, client *http.Client, selected pathCompletionContext, method, path string, body []byte) ([]byte, bool) {
