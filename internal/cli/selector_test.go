@@ -247,6 +247,46 @@ func TestSharedSelectorUsesActiveAccentAndKeepsPlainSelectionVisible(t *testing.
 	}
 }
 
+func TestSharedSelectorColorsEachProfileRowAndKeepsSelectionVisible(t *testing.T) {
+	items := []SharedSelectorItem{
+		{ID: "first", Label: "team-a", Color: "#112233"},
+		{ID: "second", Label: "team-b", Color: "#445566"},
+		{ID: "third", Label: "team-c"},
+	}
+	for _, tt := range []struct {
+		name     string
+		terminal Terminal
+		colored  bool
+	}{
+		{name: "color", terminal: WithAccent(fixedTerminal{color: true}, "#AABBCC"), colored: true},
+		{name: "plain", terminal: WithAccent(fixedTerminal{color: false}, "#AABBCC")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			model, err := newSharedSelectorModel("Select", items, "second", newPresentation(tt.terminal))
+			if err != nil {
+				t.Fatalf("new selector model error = %v", err)
+			}
+			lines := strings.Split(model.View().Content, "\n")
+			if len(lines) < 5 {
+				t.Fatalf("selector lines = %#v, want three rows", lines)
+			}
+			if tt.colored {
+				if !strings.Contains(lines[2], "38;2;17;34;51m") || !strings.Contains(lines[3], "38;2;68;85;102m") {
+					t.Errorf("profile rows lack their saved colors: %#v", lines[2:4])
+				}
+				if strings.Contains(lines[4], "\x1b[") {
+					t.Errorf("uncolored row changed style: %q", lines[4])
+				}
+			} else if strings.Contains(model.View().Content, "\x1b[") {
+				t.Errorf("plain selector contains ANSI: %q", model.View().Content)
+			}
+			if got := ansi.Strip(lines[3]); got != "> team-b" {
+				t.Errorf("selected row = %q, want visible marker", got)
+			}
+		})
+	}
+}
+
 func TestSharedSelectorAdapterRequiresConfiguredStreams(t *testing.T) {
 	items := []SharedSelectorItem{{ID: "one", Label: "one"}}
 	tests := []struct {

@@ -97,8 +97,12 @@ func (s sharedProfileSelector) Select(ctx context.Context, candidates []profile.
 		if namespace == "" {
 			namespace = "-"
 		}
-		label := fmt.Sprintf("%d  %s  %s  %s  %s  %s", index+1, marker, candidate.Name, candidate.Address, namespace, yesNo(candidate.AllowInsecure))
-		items = append(items, SharedSelectorItem{ID: candidate.Name, Label: label, SearchText: label})
+		color := candidate.Color
+		if color == "" {
+			color = "-"
+		}
+		label := fmt.Sprintf("%d  %s  %s  %s  %s  %s  %s", index+1, marker, candidate.Name, candidate.Address, namespace, yesNo(candidate.AllowInsecure), color)
+		items = append(items, SharedSelectorItem{ID: candidate.Name, Label: label, SearchText: label, Color: candidate.Color})
 	}
 	selected, err := s.selector.Select(ctx, "Select a profile", items, active)
 	if err != nil {
