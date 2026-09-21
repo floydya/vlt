@@ -79,6 +79,43 @@ func TestExecutorPreservesArgumentVectorAndProfileEnvironment(t *testing.T) {
 	}
 }
 
+func TestOSCompletionExecutorClearsInheritedVaultEnvironment(t *testing.T) {
+	t.Setenv("VAULT_ADDR", "https://inherited.example")
+	t.Setenv("VAULT_TOKEN", "completion-test-token")
+	t.Setenv("VAULT_NAMESPACE", "inherited-namespace")
+	t.Setenv("VAULT_CACERT", "/tmp/inherited-ca")
+	runner := &recordingRunner{}
+	executor := NewOSCompletionExecutor()
+	executor.lookPath = func(string) (string, error) { return "/opt/bin/vault", nil }
+	executor.runner = runner
+
+	_, err := executor.Execute(context.Background(), Invocation{
+		Environment: EnvironmentOverlay{Set: map[string]string{
+			"VAULT_ADDR": "not-a-url",
+			"COMP_LINE":  "vault kv g",
+			"COMP_POINT": "10",
+		}},
+		Mode: Captured,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if runner.calls != 1 || runner.command.Mode != Captured || len(runner.command.Arguments) != 0 {
+		t.Errorf("completion process called %d times with mode %d and %d arguments", runner.calls, runner.command.Mode, len(runner.command.Arguments))
+	}
+	seen := make(map[string]string)
+	for _, entry := range runner.command.Environment {
+		key, value, _ := strings.Cut(entry, "=")
+		seen[key] = value
+		if strings.HasPrefix(strings.ToUpper(key), "VAULT_") && key != "VAULT_ADDR" {
+			t.Errorf("completion process inherited Vault environment key %q", key)
+		}
+	}
+	if seen["VAULT_ADDR"] != "not-a-url" || seen["COMP_LINE"] != "vault kv g" || seen["COMP_POINT"] != "10" {
+		t.Errorf("completion process did not receive the local-only request")
+	}
+}
+
 func TestExecutorEnvironmentOverlayIsCaseInsensitive(t *testing.T) {
 	runner := &recordingRunner{}
 	executor := NewExecutor(Dependencies{
