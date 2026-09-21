@@ -123,6 +123,12 @@ On 2026-09-21, `just check` and `just build-all` passed with Fish 4.9.3 availabl
 
 `TestOSCompletionExecutorClearsInheritedVaultEnvironment` checks that local completion removes inherited `VAULT_*` settings, passes no command arguments, and uses an invalid address. A process trace with a fake inherited token and remote address showed no IP connection during argument completion. It showed one local `/dev/log` connection. No live Vault server, native credential store, or native macOS or Windows shell ran in this checkpoint.
 
+### KV path filtering checkpoint
+
+On 2026-09-21, focused profile, KV v1, KV v2, and security tests passed, followed by `just check`. In-memory Vault API checks covered active and explicit profile selection, missing tokens and keyring errors, HTTP opt-in, readable and denied leaves, and both `kv get` path forms. The checkpoint test read one existing token and made only a mount lookup, a LIST request, and a batched capability request. The token stayed out of URLs, request bodies, and candidates; no secret value endpoint, OIDC flow, token renewal, or keyring write ran.
+
+Shell path completion is not connected yet. Vault's mount lookup endpoint has no backward-compatibility guarantee, so the representative-host check remains open. No live Vault host or native keyring was used for this checkpoint.
+
 ## Dependency review
 
 The approved direct integrations are `github.com/zalando/go-keyring v0.2.6`, `charm.land/huh/v2 v2.0.3`, `charm.land/lipgloss/v2 v2.0.6`, `charm.land/bubbles/v2 v2.0.0`, and `charm.land/bubbletea/v2 v2.0.2`. The terminal boundary also imports the pinned `colorprofile`, `x/ansi`, and `x/term` support modules. The in-process selector uses Bubble Tea for the inline event loop and the Bubbles fuzzy matcher. It does not invoke or require `fzf`. `go mod verify` passed.

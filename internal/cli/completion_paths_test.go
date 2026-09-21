@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -323,5 +325,57 @@ func TestCompleteKVPathsFailsClosedWithoutConfirmedKVMount(t *testing.T) {
 				t.Errorf("request count = %d, want mount lookup only", requests.Load())
 			}
 		})
+	}
+}
+
+func TestKVPathCheckpointRoutesV1AndKeepsTokenOutOfPathsAndBodies(t *testing.T) {
+	const token = "hvs.synthetic-checkpoint-token"
+	selected := profile.Profile{Name: "team-a", Address: "http://vault.example.invalid", Username: "a", AuthPath: "oidc", Namespace: "dept/", AllowInsecure: true}
+	loader := &completionProfileLoader{configuration: config.Configuration{Profiles: []profile.Profile{selected}, ActiveProfile: selected.Name}}
+	credentials := &completionCredentialGetter{token: token}
+	completion, ok := resolvePathCompletionContext(context.Background(), "", CompletionDependencies{Profiles: loader, Credentials: credentials})
+	if !ok {
+		t.Fatal("selected KV v1 profile was unavailable")
+	}
+	var calls atomic.Int32
+	transport := completionTestTransport{handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		if request.Header.Get("X-Vault-Token") != token || request.Header.Get("X-Vault-Namespace") != "dept/" {
+			t.Error("KV v1 request lost the selected token or namespace")
+		}
+		if strings.Contains(request.URL.String(), token) || strings.Contains(string(body), token) {
+			t.Error("KV path request placed the token outside its header")
+		}
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sys/internal/ui/mounts/secret/team/":
+			_, _ = writer.Write([]byte(`{"path":"secret/","type":"kv","options":{}}`))
+		case request.Method == "LIST" && request.URL.Path == "/v1/secret/team/":
+			_, _ = writer.Write([]byte(`{"data":{"keys":["allowed","denied"]}}`))
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/sys/capabilities-self":
+			var capabilityRequest struct {
+				Paths []string `json:"paths"`
+			}
+			if err := json.Unmarshal(body, &capabilityRequest); err != nil {
+				t.Errorf("decode capability body: %v", err)
+			}
+			if !reflect.DeepEqual(capabilityRequest.Paths, []string{"secret/team/allowed", "secret/team/denied"}) {
+				t.Errorf("KV v1 read paths = %q, want the listed leaves", capabilityRequest.Paths)
+			}
+			_, _ = writer.Write([]byte(`{"secret/team/allowed":["read"],"secret/team/denied":["deny"]}`))
+		default:
+			t.Errorf("unexpected KV request: %s %s", request.Method, request.URL.Path)
+			http.Error(writer, "unexpected request", http.StatusBadRequest)
+		}
+	})}
+	got := completeKVPaths(context.Background(), completion, "", "secret/team/", transport)
+	if !reflect.DeepEqual(got, []string{"secret/team/allowed"}) || strings.Contains(strings.Join(got, ""), token) {
+		t.Errorf("KV v1 candidates are missing or contain the token")
+	}
+	if calls.Load() != 3 || !reflect.DeepEqual(credentials.names, []string{"team-a"}) {
+		t.Errorf("requests = %d and credential reads = %q, want three requests and one read", calls.Load(), credentials.names)
 	}
 }
