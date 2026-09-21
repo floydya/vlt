@@ -187,6 +187,9 @@ func applyFavoriteChanges(original Favorite, changes FavoriteChanges) Favorite {
 	if changes.Note != nil {
 		updated.Note = *changes.Note
 	}
+	if !updated.SameIdentity(original) {
+		updated.RunCount = 0
+	}
 	return updated
 }
 
