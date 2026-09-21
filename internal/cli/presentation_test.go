@@ -136,19 +136,59 @@ func TestFavoriteListPresentationPlainAndStyledAreExact(t *testing.T) {
 		"2  0     read       team-b   secret/a  line break [31m\n" +
 		"3  0     read       team-b   secret/z  -\n"
 
-	plain := favoriteListOutput(favorites, fixedTerminal{color: false})
+	plain := favoriteListOutput(favorites, nil, fixedTerminal{color: false})
 	if plain != want {
 		t.Fatalf("plain favorite list = %q, want %q", plain, want)
 	}
 	if strings.Contains(plain, "\x1b[") {
 		t.Fatalf("plain favorite list contains ANSI: %q", plain)
 	}
-	styled := favoriteListOutput(favorites, fixedTerminal{color: true})
+	styled := favoriteListOutput(favorites, nil, fixedTerminal{color: true})
 	if !strings.Contains(styled, "\x1b[") {
 		t.Fatalf("styled favorite list contains no ANSI: %q", styled)
 	}
 	if got := ansi.Strip(styled); got != plain {
 		t.Fatalf("unstyled favorite list = %q, want plain output %q", got, plain)
+	}
+}
+
+func TestFavoriteListColorsRowsByTheirOwnProfiles(t *testing.T) {
+	profiles := &fakeProfileStore{configuration: config.Configuration{
+		Profiles: []profile.Profile{
+			{Name: "profile-a", Color: "#FF8800"},
+			{Name: "profile-b", Color: "#008844"},
+		},
+		ActiveProfile: "profile-b",
+	}}
+	favorites := &fakeFavoriteStore{configuration: favorite.Configuration{Favorites: []favorite.Favorite{
+		{Profile: "profile-a", Operation: favorite.OperationRead, Path: "secret/profile-a"},
+		{Profile: "profile-b", Operation: favorite.OperationRead, Path: "secret/profile-b"},
+	}}}
+	var output bytes.Buffer
+	handler := NewFavoriteHandler(FavoriteDependencies{
+		Profiles: profiles, Favorites: favorites, Output: &output, Terminal: fixedTerminal{color: true},
+	})
+	if err := handler(context.Background(), []string{"list"}); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(output.String(), "\n")
+	if strings.Contains(lines[0], "38;2;255;136;0m") || !strings.Contains(lines[1], "38;2;255;136;0m") || !strings.Contains(lines[2], "38;2;0;136;68m") {
+		t.Errorf("favorite list colors = %q, want profile colors only on their rows", output.String())
+	}
+	styled := output.String()
+	profileLoads := profiles.loads
+	output.Reset()
+	handler = NewFavoriteHandler(FavoriteDependencies{
+		Profiles: profiles, Favorites: favorites, Output: &output, Terminal: fixedTerminal{color: false},
+	})
+	if err := handler(context.Background(), []string{"list"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "\x1b[") || ansi.Strip(styled) != output.String() {
+		t.Errorf("plain favorite list = %q, want ANSI-free rows matching styled output", output.String())
+	}
+	if profiles.loads != profileLoads {
+		t.Errorf("plain favorite list loaded profiles %d extra times, want none", profiles.loads-profileLoads)
 	}
 }
 
@@ -225,47 +265,6 @@ func TestPresentationStyledPrimitivesStripExactlyToPlain(t *testing.T) {
 	}
 	if got := ansi.Strip(styledOutput); got != plainOutput {
 		t.Fatalf("unstyled presentation = %q, want plain output %q", got, plainOutput)
-	}
-}
-
-func TestPresentationUsesActiveAccentWithoutChangingStatusColors(t *testing.T) {
-	base := newPresentation(fixedTerminal{color: true})
-	accented := newPresentation(WithAccent(fixedTerminal{color: true}, "#112233"))
-	colorCode := "38;2;17;34;51m"
-	for _, role := range []presentationRole{presentationHeading, presentationLabel, presentationSelected} {
-		if got := accented.render(role, "Value"); !strings.Contains(got, colorCode) {
-			t.Fatalf("accented role %d = %q, want active color", role, got)
-		}
-	}
-	for _, role := range []presentationRole{presentationSuccess, presentationError} {
-		if got, want := accented.render(role, "Value"), base.render(role, "Value"); got != want {
-			t.Fatalf("status role %d = %q, want %q", role, got, want)
-		}
-	}
-	if got := newPresentation(WithAccent(fixedTerminal{color: false}, "#112233")).render(presentationSelected, "Value"); strings.Contains(got, "\x1b[") {
-		t.Fatalf("plain presentation used accent: %q", got)
-	}
-	if got, want := newPresentation(WithAccent(fixedTerminal{color: true}, "")).render(presentationSelected, "Value"), base.render(presentationSelected, "Value"); got != want {
-		t.Fatalf("empty accent = %q, want default %q", got, want)
-	}
-}
-
-func TestPresentationHuhThemeColorsFocusedBorderAndFields(t *testing.T) {
-	accented := newPresentation(WithAccent(fixedTerminal{color: true}, "#112233")).huhTheme().Theme(true)
-	colorCode := "38;2;17;34;51m"
-	for name, value := range map[string]string{
-		"border":   accented.Focused.Base.Render("Field"),
-		"title":    accented.Focused.Title.Render("Field"),
-		"prompt":   accented.Focused.TextInput.Prompt.Render("Field"),
-		"selected": accented.Focused.SelectedOption.Render("Field"),
-	} {
-		if !strings.Contains(value, colorCode) {
-			t.Errorf("focused %s = %q, want active accent", name, value)
-		}
-	}
-	plain := newPresentation(WithAccent(fixedTerminal{color: false}, "#112233")).huhTheme().Theme(true)
-	if got := plain.Focused.Base.Render("Field") + plain.Focused.SelectedOption.Render("Field"); strings.Contains(got, "\x1b[") {
-		t.Fatalf("plain focused theme contains ANSI: %q", got)
 	}
 }
 

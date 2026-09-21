@@ -87,7 +87,7 @@ func (s sharedProfileSelector) Select(ctx context.Context, candidates []profile.
 		return "", errors.New("select profile: shared selector is not configured")
 	}
 	ordered := profile.NewService(candidates).List()
-	items := make([]SharedSelectorItem, 0, len(ordered))
+	rows := make([][]string, 0, len(ordered))
 	for index, candidate := range ordered {
 		marker := ""
 		if candidate.Name == active {
@@ -101,10 +101,14 @@ func (s sharedProfileSelector) Select(ctx context.Context, candidates []profile.
 		if color == "" {
 			color = "-"
 		}
-		label := fmt.Sprintf("%d  %s  %s  %s  %s  %s  %s", index+1, marker, candidate.Name, candidate.Address, namespace, yesNo(candidate.AllowInsecure), color)
-		items = append(items, SharedSelectorItem{ID: candidate.Name, Label: label, SearchText: label, Color: candidate.Color})
+		rows = append(rows, []string{fmt.Sprint(index + 1), marker, candidate.Name, candidate.Address, namespace, yesNo(candidate.AllowInsecure), color})
 	}
-	selected, err := s.selector.Select(ctx, "Select a profile", items, active)
+	header, labels := selectorTableRows([]string{"#", "ACTIVE", "NAME", "ADDRESS", "NAMESPACE", "ALLOW HTTP", "COLOR"}, rows)
+	items := make([]SharedSelectorItem, 0, len(ordered))
+	for index, candidate := range ordered {
+		items = append(items, SharedSelectorItem{ID: candidate.Name, Label: labels[index], SearchText: labels[index], Color: candidate.Color})
+	}
+	selected, err := s.selector.Select(ctx, "Select a profile", header, items, active)
 	if err != nil {
 		return "", fmt.Errorf("select profile: %w", err)
 	}
@@ -157,7 +161,7 @@ func (f huhProfileForm) Run(ctx context.Context, request ProfileFormRequest) (pr
 		WithInput(f.input).
 		WithOutput(f.output).
 		WithAccessible(f.accessible)
-	if !f.presentation.colorEnabled || f.presentation.accentColor != "" {
+	if !f.presentation.colorEnabled {
 		form = form.WithTheme(f.presentation.huhTheme())
 	}
 	if err := form.RunWithContext(ctx); err != nil {
@@ -206,7 +210,7 @@ func (c huhProfileRemovalConfirmer) Confirm(ctx context.Context, request Profile
 		WithInput(c.input).
 		WithOutput(c.output).
 		WithAccessible(c.accessible)
-	if !c.presentation.colorEnabled || c.presentation.accentColor != "" {
+	if !c.presentation.colorEnabled {
 		form = form.WithTheme(c.presentation.huhTheme())
 	}
 	if err := form.RunWithContext(ctx); err != nil {

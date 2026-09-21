@@ -35,7 +35,6 @@ type presentationStyles struct {
 type presentation struct {
 	styles       presentationStyles
 	colorEnabled bool
-	accentColor  string
 }
 
 type presentationCell struct {
@@ -62,7 +61,6 @@ func newPresentation(terminal Terminal) presentation {
 		error:    lipgloss.NewStyle(),
 	}
 	colorEnabled := terminal != nil && terminal.ColorEnabled()
-	accentColor := ""
 	if colorEnabled {
 		styles.heading = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Cyan)
 		styles.label = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Cyan)
@@ -70,17 +68,8 @@ func newPresentation(terminal Terminal) presentation {
 		styles.muted = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 		styles.success = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Green)
 		styles.error = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Red)
-		if accented, ok := terminal.(interface{ AccentColor() string }); ok {
-			if color := accented.AccentColor(); color != "" {
-				accentColor = color
-				accent := lipgloss.Color(color)
-				styles.heading = styles.heading.Foreground(accent)
-				styles.label = styles.label.Foreground(accent)
-				styles.selected = styles.selected.Foreground(accent)
-			}
-		}
 	}
-	return presentation{styles: styles, colorEnabled: colorEnabled, accentColor: accentColor}
+	return presentation{styles: styles, colorEnabled: colorEnabled}
 }
 
 func presentationForOptionalTerminal(terminals []Terminal) presentation {
@@ -181,10 +170,6 @@ func (p presentation) style(role presentationRole) lipgloss.Style {
 func (p presentation) huhTheme() huh.Theme {
 	return huh.ThemeFunc(func(isDark bool) *huh.Styles {
 		styles := huh.ThemeBase(isDark)
-		if p.accentColor != "" {
-			styles.Focused.Base = styles.Focused.Base.BorderForeground(lipgloss.Color(p.accentColor))
-			styles.Focused.Card = styles.Focused.Base
-		}
 		styles.Group.Title = p.styles.heading
 		styles.Group.Description = p.styles.muted
 
