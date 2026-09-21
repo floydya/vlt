@@ -8,6 +8,8 @@
 
 **Unified terminal UX revision:** Approved
 
+**Favorite usage, profile color, and Zsh completion revision:** Approved
+
 **Scope:** Initial cross-platform release with guided terminal workflows
 
 **Primary verification platform:** Linux
@@ -17,6 +19,8 @@
 Build `vlt`, a cross-platform command-line profile manager and transparent launcher for the official HashiCorp Vault CLI. It lets a user switch frequently between Vault hosts without repeatedly completing OIDC authentication or manually changing `VAULT_ADDR` and `VAULT_TOKEN`. Its own commands must be self-explanatory during interactive terminal use, while explicit commands remain fast and predictable for automation.
 
 The unified terminal UX revision replaces the visually separate `fzf` favorite picker with the same compact component system used by forms and brings every `vlt`-owned output surface under one restrained presentation contract. It improves the human experience without changing delegated Vault output or introducing a machine-readable output API.
+
+The favorite usage, profile color, and Zsh completion revision puts frequently used favorites first, removes a Zsh completion artifact, and lets a user choose an accent color for each profile. It keeps delegated Vault output and exit status under Vault's control.
 
 The initial user is a developer who uses multiple independent Vault hosts with the same or different usernames and OIDC settings.
 
@@ -84,16 +88,17 @@ Each profile has:
 - `auth_path`: required OIDC mount path, defaulting to `oidc` during creation;
 - `namespace`: optional Vault Enterprise namespace.
 - `allow_insecure`: explicit per-profile permission to use an unencrypted HTTP address, defaulting to false.
+- `color`: optional `#RRGGBB` text value for the profile's terminal accent, empty by default.
 
-Profile names must contain only ASCII letters, digits, hyphens, and underscores, must start with a letter or digit, must not consist entirely of digits, and are case-sensitive. Numeric-only names are invalid because they conflict with numbered profile selection. Secret values, including Vault tokens, must never be stored in profile configuration.
+Profile names must contain only ASCII letters, digits, hyphens, and underscores, must start with a letter or digit, must not consist entirely of digits, and are case-sensitive. Numeric-only names are invalid because they conflict with numbered profile selection. A non-empty color must start with `#` and contain exactly six hexadecimal digits; uppercase and lowercase digits are valid. Invalid colors fail before persistence. Secret values, including Vault tokens, must never be stored in profile configuration.
 
 #### Profile commands
 
 ```text
-vlt profile add NAME --address URL --username USER [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure]
+vlt profile add NAME --address URL --username USER [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure] [--color COLOR]
 vlt profile list
 vlt profile show NAME
-vlt profile update NAME [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure=BOOL]
+vlt profile update NAME [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure=BOOL] [--color COLOR]
 vlt profile remove NAME
 ```
 
@@ -102,6 +107,7 @@ Behavior:
 - `profile add` validates and persists metadata, then immediately performs OIDC authentication. If authentication fails, the incomplete profile and any token are removed.
 - Adding a duplicate name fails without modifying the existing profile.
 - `profile update` changes only supplied fields. If address, username, auth path, namespace, or the insecure-transport opt-in changes, the existing token is deleted and OIDC authentication runs immediately. Failed reauthentication leaves the original profile and token intact.
+- `--color '#RRGGBB'` sets or changes the color. `profile update NAME --color ''` clears it. A color-only update does not delete the token or start OIDC authentication.
 - HTTPS addresses need no transport opt-in. HTTP addresses, including loopback addresses, are rejected unless the profile has `allow_insecure` enabled. Add and update can enable it with `--allow-insecure` and update can clear it with `--allow-insecure=false`.
 - `profile remove` deletes both metadata and its keyring token. Removing the active profile leaves no active profile; another profile is never selected implicitly.
 - `profile list` sorts names lexicographically and uses one-based display numbers.
@@ -156,14 +162,14 @@ For example, `vlt profile` prints only the profile help for `add`, `list`, `show
 `profile list` displays one lexicographically sorted row per profile with these columns:
 
 ```text
-#  ACTIVE  NAME    ADDRESS                    NAMESPACE  ALLOW HTTP
-1  *       team-a  https://vault.example.com  platform   no
-2          team-b  https://vault.example.net  -          no
+#  ACTIVE  NAME    ADDRESS                    NAMESPACE  ALLOW HTTP  COLOR
+1  *       team-a  https://vault.example.com  platform   no          #AABBCC
+2          team-b  https://vault.example.net  -          no          -
 ```
 
-The one-based number remains a valid `switch` selector. `*` marks the active profile. Empty namespaces display as `-`. `ALLOW HTTP` shows the persisted insecure-transport opt-in. The table never includes usernames, credentials, keyring identifiers, or token-derived state.
+The one-based number remains a valid `switch` selector. `*` marks the active profile. Empty namespaces and unset colors display as `-`. `ALLOW HTTP` shows the persisted insecure-transport opt-in. When color is enabled, all text in a profile's data row uses that profile's color, including the number and active marker. A profile without a color keeps the current row style. The heading keeps the shared heading style. The table never includes usernames, credentials, keyring identifiers, or token-derived state.
 
-`profile show` displays aligned labels for name, address, username, auth path, namespace, the HTTP opt-in, and active status.
+`profile show` displays aligned labels for name, address, username, auth path, namespace, the HTTP opt-in, color, and active status. It shows an unset color as `-`. When color is enabled and the profile has a color, all field values use that color; labels keep their shared label style.
 
 #### Shared presentation contract
 
@@ -188,6 +194,8 @@ Existing `vlt` wording and layouts may change to satisfy this contract. Plain ou
 - Disable color when output is redirected or `NO_COLOR` is set to a non-empty value.
 - Keep spacing, markers, and wording understandable without color.
 - Forms and selectors use the same semantic style set as non-interactive output.
+- The active profile's saved color replaces the interactive accent on focused fields, borders, and selected items. Success and error styles keep their existing colors. If no active profile or no saved color exists, forms and selectors keep their current accent.
+- Profile rows in selectors use each profile's saved color for all row text, whether or not that profile is active. An unset color keeps the current row style. The selected row remains visibly selected with and without color.
 - Keep delegated Vault output byte-for-byte under Vault's control; `vlt` must not restyle it.
 
 ### `interactive-profile-workflows`
@@ -205,7 +213,7 @@ vlt profile update
 vlt profile remove
 ```
 
-The selector uses the shared searchable-selector contract. It shows the same number, active marker, name, address, namespace, and HTTP opt-in information as `profile list`. It preselects the active profile when one exists. Selecting an entry supplies its stable profile name to the existing operation. If no profiles exist, the command does not open an empty selector; it explains how to run `vlt profile add`.
+The selector uses the shared searchable-selector contract. It shows the same number, active marker, name, address, namespace, HTTP opt-in, and color information as `profile list`. It preselects the active profile when one exists. Selecting an entry supplies its stable profile name to the existing operation. If no profiles exist, the command does not open an empty selector; it explains how to run `vlt profile add`.
 
 Cancelling with the interface's cancel action or an interrupt changes no configuration or credential state, prints a concise cancellation message, and exits non-zero.
 
@@ -219,12 +227,13 @@ Cancelling with the interface's cancel action or an interrupt changes no configu
 - auth path: optional input defaulting to `oidc`;
 - namespace: optional and empty by default.
 - allow insecure HTTP: disabled by default and required before the form accepts an HTTP address.
+- color: optional and empty by default; a non-empty answer must be `#RRGGBB`.
 
 Each invalid answer is explained next to its field and can be corrected without restarting the command. When name, address, and username are supplied explicitly, the command runs directly with the existing auth-path and namespace defaults. The form submits through the same mutation and authentication behavior as the explicit command.
 
 #### Update form
 
-`profile update NAME` without change flags opens a form populated with the current address, username, auth path, namespace, and insecure-transport opt-in. The stable profile name is displayed but cannot be changed. The form validates changed values before submission and writes nothing until the complete form is valid.
+`profile update NAME` without change flags opens a form populated with the current address, username, auth path, namespace, insecure-transport opt-in, and color. The stable profile name is displayed but cannot be changed. The user can replace or clear the color. The form validates changed values before submission and writes nothing until the complete form is valid.
 
 Supplying `NAME` and one or more update flags remains a direct partial update and does not open the form. This preserves the existing script-safe command contract. Running `profile update` without `NAME` first opens the selector and then the populated form.
 
@@ -251,9 +260,10 @@ A favorite is local metadata owned by one operating-system user. It has:
 - `profile`: required stable name of an existing profile;
 - `operation`: required value of `read` or `kv-get`;
 - `path`: required non-blank Vault secret path;
-- `note`: optional plain-text context for display and search.
+- `note`: optional plain-text context for display and search;
+- `run_count`: non-negative count of successful executions through `vlt favorite`, initially zero.
 
-The exact tuple `(profile, operation, path)` identifies a favorite. Adding the same tuple twice fails without modifying the existing favorite, even when the new note differs. The error directs the user to `favorite update`. Profile names and paths retain their existing case-sensitive meaning. Notes do not participate in identity or ordering.
+The exact tuple `(profile, operation, path)` identifies a favorite. Adding the same tuple twice fails without modifying the existing favorite, even when the new note differs. The error directs the user to `favorite update`. Profile names and paths retain their existing case-sensitive meaning. Notes and run counts do not participate in identity. Existing favorites without a saved count load with a count of zero. Invalid or negative saved counts fail validation; a count never wraps to a lower value.
 
 Favorites are stored in the user's local `vlt` configuration. Writes are atomic and use the same platform permissions as profile metadata. Favorite storage must never contain Vault values, tokens, or other credentials. Paths and notes are intentionally displayable metadata and are not a secure place for secret values.
 
@@ -277,19 +287,19 @@ Behavior:
 - In an interactive terminal, `vlt favorite` opens the searchable selector defined below. Outside a terminal, it writes its full help to standard error and exits non-zero. It does not accept a favorite number or name for direct execution.
 - `favorite add` with no values opens the guided add form in an interactive terminal.
 - Supplying any explicit add value selects direct command-line mode. `PATH`, `--profile`, and `--operation` are then required; `--note` remains optional. Missing required input follows the standard automatic-help contract and never falls back to the active profile.
-- `favorite list` sorts entries lexicographically by path, then profile, then operation, and assigns one-based numbers from that order.
+- `favorite list` sorts entries by descending run count, then lexicographically by path, profile, and operation. New and unused favorites have a count of zero. It assigns one-based numbers from the current order.
 - A number accepted by `update` or `remove` refers to the current `favorite list` order. An unknown or out-of-range number fails without changing state.
-- `favorite update NUMBER` with one or more update flags changes only supplied values. Omitted values remain unchanged, while `--note=` explicitly clears the note. Every update revalidates the profile, operation, path, and duplicate tuple before persistence.
+- `favorite update NUMBER` with one or more update flags changes only supplied values. Omitted values remain unchanged, while `--note=` explicitly clears the note. Changing only the note keeps the count. Changing the profile, operation, or path resets the count to zero; supplying an unchanged value does not reset it. Every update revalidates the profile, operation, path, and duplicate tuple before persistence.
 - `favorite update` without a number opens the selector and then the populated update form. `favorite update NUMBER` without change flags opens the populated form in an interactive terminal and follows automatic-help behavior outside a terminal.
 - `favorite remove` without a number opens the selector and asks for confirmation. `favorite remove NUMBER` is an explicit immediate removal. Declining or cancelling changes nothing.
 - Successful add, update, and remove operations print one concise message after persistence succeeds. They never read or print the Vault secret.
 
-`favorite list` displays the stable number and all searchable metadata:
+`favorite list` displays the current number, successful run count, and all searchable metadata:
 
 ```text
-#  OPERATION  PROFILE  PATH                           NOTE
-1  read       team-b   database/creds/reporting       reporting credentials
-2  kv-get     team-a   secret/data/platform/database  daily database credentials
+#  RUNS  OPERATION  PROFILE  PATH                           NOTE
+1  7     read       team-b   database/creds/reporting       reporting credentials
+2  2     kv-get     team-a   secret/data/platform/database  daily database credentials
 ```
 
 An empty note displays as `-`. Human-readable favorite output is not a stable machine-readable interface.
@@ -305,11 +315,11 @@ Interactive favorite workflows require terminal input and display streams. The a
 
 The update form shows the current values and allows every field to change. Both forms validate before writing and use the same mutation behavior as explicit commands. If no profiles exist, the workflow does not open an empty form; it explains how to run `vlt profile add`.
 
-The profile and operation fields, plus the update and removal selectors, use the shared searchable-selector contract. The update and removal selectors use the same path-first order and row metadata as `favorite list`. Cancellation follows the existing interactive cancellation contract and leaves persistent state unchanged.
+The profile and operation fields, plus the update and removal selectors, use the shared searchable-selector contract. The update and removal selectors use the same count-first order and row metadata as `favorite list`. Cancellation follows the existing interactive cancellation contract and leaves persistent state unchanged.
 
 #### Searchable read selector
 
-In an interactive terminal, `vlt favorite` opens the shared searchable selector. Search covers every visible field: path, note, profile, and operation. The selector starts with all favorites visible in deterministic path-first order. If no favorites exist, it explains how to run `vlt favorite add` instead of opening an empty selector.
+In an interactive terminal, `vlt favorite` opens the shared searchable selector. Search covers every visible field: path, note, profile, operation, and run count. The selector shows the run count and starts with all favorites visible in descending count order with the path-profile-operation tie-breaker. If no favorites exist, it explains how to run `vlt favorite add` instead of opening an empty selector.
 
 #### Shared searchable-selector contract
 
@@ -335,6 +345,8 @@ Cancelling the selector performs no credential preflight or Vault operation, pri
 
 The favorite's profile acts as a one-command override. It never changes the active profile. Credential preflight, environment isolation, attached streams, Vault output, exit status, and error redaction follow the existing `credential-lifecycle` and `vault-delegation` contracts. `vlt` does not parse, extract, restyle, or copy fields from the returned secret.
 
+After Vault exits successfully with status zero, `vlt` records one use of the selected favorite. A failed or cancelled Vault operation records no use. The count persists across CLI runs. Concurrent successful executions each add one use. If the favorite was removed or its identity changed while Vault ran, the old execution does not recreate it or change a different favorite. If recording fails after Vault succeeds, `vlt` silently skips the count update: it emits no warning, does not retry Vault, and preserves Vault's output and exit status.
+
 ### `shell-completion`
 
 ```text
@@ -355,6 +367,8 @@ Completion covers:
 - favorite subcommands and flags, stored profile names for favorite profile flags, and the valid `read` and `kv-get` operation values.
 
 Completion does not suggest existing names for `profile add`. After an invocation enters delegated Vault arguments, `vlt` supplies no Vault command, flag, path, or secret completion and does not invoke the Vault executable. Failure to load profile configuration returns no dynamic candidates and does not corrupt the user's shell prompt with diagnostics.
+
+In Zsh, completing the first command after `vlt` inserts only the command name. In particular, completing `completion` yields `vlt completion` with no trailing `=`. The fix applies to first-command completion without changing the supported candidate set or argument completion.
 
 ### `credential-lifecycle`
 
@@ -445,7 +459,7 @@ Behavior:
 - Tokens must be handled as secrets at every boundary.
 - Error messages and debug output must be redacted before display.
 - Config writes must be atomic to avoid truncation or partial profile state.
-- Profile, favorite, active-selection, and cascade mutations share one advisory lock in the private `vlt` directory. The lock covers metadata, authentication, credential changes, compensation, and rollback. Waiting honors command cancellation. Read-only and delegated Vault commands do not acquire this lock.
+- Profile, favorite, active-selection, and cascade mutations share one advisory lock in the private `vlt` directory. The lock covers metadata, authentication, credential changes, compensation, and rollback. Waiting honors command cancellation. Read-only commands and ordinary delegated Vault commands do not acquire this lock. A successful favorite execution uses it only to save the count after Vault exits; the lock does not cover Vault execution.
 - On Unix-like systems, newly created config directories and files use user-only permissions (`0700` directories and `0600` files). Profile and favorite storage rejects application directories or metadata files with group or other access, an unexpected owner, a symbolic link, or a non-regular type.
 - On Windows, profile and favorite storage relies on the current user's standard profile-directory ACLs. It still rejects symbolic links and non-regular metadata files and performs reads and atomic replacements through one held application-directory handle.
 - Subprocess arguments must be passed as an argument vector, never through shell interpolation.
@@ -567,7 +581,7 @@ Conventions:
 
 Use table-driven tests for:
 
-- profile-name, URL, insecure-transport opt-in, username, auth-path, and namespace validation;
+- profile-name, URL, insecure-transport opt-in, username, auth-path, namespace, and `#RRGGBB` color validation;
 - deterministic sorting and numeric profile resolution;
 - active-profile selection and one-command override precedence;
 - Vault environment construction and removal of leaked namespace values;
@@ -577,21 +591,24 @@ Use table-driven tests for:
 - exact explicit and automatic help text, command-specific output streams and exit status, absence of duplicate missing-input diagnostics, and unambiguous subcommand suggestions;
 - exact plain output for help, diagnostics, tables, details, mutation confirmations, cancellation, and empty states;
 - consistent table headings, detail labels, mutation wording, diagnostic prefixes, and output streams across profile and favorite commands;
-- profile table ordering, columns, active markers, and empty namespace display;
+- profile table ordering, columns, active markers, empty namespace and color display, and per-profile row colors;
 - color enablement for terminals and suppression for redirection or `NO_COLOR`;
+- active-profile accents in forms and selectors, per-profile picker rows, colored detail values, and unchanged success and error colors;
 - shared semantic styles across non-interactive output, forms, and selectors;
 - interactive versus non-interactive dispatch at injected terminal boundaries;
 - add and update form defaults, in-place validation, and cancellation;
 - shared selector ordering, active preselection, keyboard navigation, fuzzy ranking, filtering across visible fields, stable identity mapping, empty states, and cancellation;
 - removal confirmation and unchanged state after decline or cancellation;
-- Bash, Zsh, and Fish script generation and completion candidates;
+- Bash, Zsh, and Fish script generation and completion candidates, including the Zsh first-command completion suffix;
 - silent dynamic-completion failure when profile configuration cannot load.
-- favorite validation, exact tuple uniqueness, path-first ordering, and one-based numeric resolution;
+- favorite validation, exact tuple uniqueness, saved count defaults and invalid values, descending count order, path-profile-operation ties, and one-based numeric resolution;
 - direct add requirements, partial updates, explicit note clearing, and duplicate rejection;
-- favorite list columns and empty-note display;
+- count preservation for note-only updates, count reset for changed command identity, and unchanged counts for unchanged values;
+- favorite list and picker count display, columns, and empty-note display;
 - fuzzy matching across path, note, profile, and operation;
 - operation mapping from `read` to `read PATH` and from `kv-get` to `kv get PATH`;
 - favorite selectors and forms at injected terminal boundaries, including defaults, empty states, and cancellation;
+- successful execution counting, no count on failed or cancelled execution, concurrent increments, and silent post-execution save failures;
 - linked-favorite profile removal, explicit cascade approval, and unchanged state after rejection or failure;
 - absence of any external selector process or runtime dependency.
 
@@ -611,9 +628,11 @@ Use temporary directories, a fake keyring, a controllable clock, and a fake `vau
 - bare `vlt` and missing management input outside a terminal return non-zero, write only the relevant full help to standard error, and do not read input;
 - explicit `-h` and `--help` write the same command-specific text to standard output and return zero;
 - profile and favorite output use the same presentation rules in both terminal and redirected modes;
+- profile colors survive process restarts, and changing only color leaves the token and login state intact;
 - interactive add, update, show, switch, and remove reach the same services as their explicit forms;
 - cancelled or declined interactive operations do not change metadata, active selection, or credentials;
 - generated completion scripts expose `vlt` commands, flags, shells, and stored profile names;
+- Zsh first-command completion inserts no `=` suffix;
 - completion never invokes Vault or exposes credentials;
 - delegated exit status and standard streams are preserved;
 - tokens never appear in output or persisted config.
@@ -621,6 +640,8 @@ Use temporary directories, a fake keyring, a controllable clock, and a fake `vau
 - guided and explicit favorite CRUD reach the same persistence behavior;
 - selecting a `read` favorite delegates with its stored profile and path without changing the active profile;
 - selecting a `kv-get` favorite delegates `kv get` with its stored profile and path without changing the active profile;
+- successful favorite use moves it according to its saved count on the next list or picker load; failed use does not;
+- a failed count save after successful Vault execution leaves Vault output and status unchanged and prints no warning;
 - selector cancellation performs no credential lookup or Vault process execution;
 - removing a profile with linked favorites either removes the complete cascade after explicit approval or leaves all state unchanged;
 - favorite metadata never contains or exposes a Vault value or token.
@@ -630,6 +651,7 @@ Use temporary directories, a fake keyring, a controllable clock, and a fake `vau
 - All unit/component tests must pass on supported CI operating systems when CI is introduced.
 - Cross-compilation must succeed for Linux, macOS, and Windows.
 - Generated completion scripts receive syntax or smoke checks with Bash, Zsh, and Fish when those shell executables are available. Unit tests remain the portable requirement when a shell is unavailable.
+- When Zsh is available, an interactive completion smoke check confirms that completing the first command after `vlt` adds no `=` suffix.
 - Shared selector integration receives contract tests on all supported targets without requiring a live Vault server or external selector executable. Manual Linux verification confirms compact rendering, filtering, selection, and cancellation in a real terminal.
 - Before the initial release, manually verify Linux Secret Service integration and a real OIDC login/delegated read on this development machine.
 - Real macOS and Windows keyring/OIDC verification is deferred until those environments are available and must be documented as unverified meanwhile.
@@ -652,7 +674,7 @@ No numeric coverage target is imposed initially. Every success criterion and sec
 - Route vlt-owned output through the shared presentation and selector contracts.
 - Keep selectors in-process and independent of an installed `fzf` or other selector executable.
 - Keep completion limited to non-secret `vlt` metadata and command structure.
-- Keep favorites local, reference only existing profiles, and store only profile, operation, path, and optional note metadata.
+- Keep favorites local, reference only existing profiles, and store only profile, operation, path, optional note, and successful run count metadata.
 - Use a favorite's profile only for its delegated operation and leave the active profile unchanged.
 - Require explicit approval before profile removal cascades to linked favorites.
 - Add or update tests for every behavior change.
@@ -682,7 +704,7 @@ No numeric coverage target is imposed initially. Every success criterion and sec
 - Mutate the official Vault CLI's token-helper state during `vlt` login.
 - Change direct `vault ...` behavior or the parent shell's environment.
 - Prompt for input when either the input or display stream is not a terminal.
-- Add ANSI styling to redirected output or when `NO_COLOR` is set.
+- Add ANSI styling to redirected output or when `NO_COLOR` is set, even when profiles have saved colors.
 - Give different commands ad hoc headings, table conventions, detail layouts, success wording, or diagnostic prefixes.
 - Restyle, parse for presentation, or complete delegated Vault arguments.
 - Modify shell startup files or install completion scripts automatically.
@@ -712,16 +734,20 @@ The initial release is complete when all of the following are demonstrably true:
 14. Every interactive profile or favorite choice uses the same compact in-process selector with deterministic initial order, keyboard navigation, immediate case-insensitive fuzzy filtering across visible fields, stable identity mapping, and safe empty and cancellation behavior. The corresponding incomplete invocations outside a terminal fail promptly with the relevant standard help and no separate missing-input diagnostic.
 15. Interactive add and update validate fields in place, use the specified defaults, and reach the same persistence and authentication behavior as explicit commands.
 16. Cancelling or declining an interactive operation leaves profile metadata, active selection, and credential entries unchanged.
-17. `vlt completion bash`, `vlt completion zsh`, and `vlt completion fish` generate sourceable scripts that complete `vlt` commands, flags, supported shells, and stored profile names.
+17. `vlt completion bash`, `vlt completion zsh`, and `vlt completion fish` generate sourceable scripts that complete `vlt` commands, flags, supported shells, and stored profile names. Zsh first-command completion adds no `=` suffix.
 18. Completion and presentation changes neither invoke nor restyle delegated Vault operations and never expose credentials.
 19. A user can add, list, update, and remove a local favorite through both guided and explicit command-line workflows, and incomplete non-interactive commands fail with contextual help instead of prompting.
-20. Favorite identity is the exact profile, operation, and path tuple; duplicates are rejected; list numbers remain deterministic under path-profile-operation sorting; and changing a note does not change ordering.
+20. Favorite identity is the exact profile, operation, and path tuple; duplicates are rejected; list numbers follow descending successful run count with path-profile-operation ties; and changing a note preserves its count and ordering.
 21. `vlt favorite` supports fuzzy type-to-filter search across path, note, profile, and operation without invoking or requiring `fzf` or another external selector executable.
 22. Selecting a `read` favorite delegates `read PATH`, and selecting a `kv-get` favorite delegates `kv get PATH`, using the stored profile once without changing the active profile.
 23. Favorite execution preserves Vault output, attached streams, exit status, credential preflight, environment isolation, and diagnostic redaction without parsing secret fields.
 24. Removing a profile with linked favorites reports their count and requires interactive confirmation or `--remove-favorites`; decline, cancellation, or cascade failure leaves profile and favorite state unchanged.
 25. Favorite metadata persists locally with atomic writes and user-only permissions, contains no secret values or tokens, and cannot normally reference a missing profile.
 26. HTTPS profiles work without extra options. HTTP profiles fail before credential or Vault access unless they persist an explicit opt-in that add and update can enable and update can clear.
+27. A user can set, change, and clear a validated `#RRGGBB` profile color through explicit commands and forms. Saved colors survive restarts. A color-only update does not delete a token or start authentication.
+28. Profile list and picker rows show saved color strings and use each profile's color for row text when color is enabled. `profile show` colors every field value. The active profile's color controls interactive accents, while success and error colors keep their meanings. Unset color, redirected output, and `NO_COLOR` follow the existing plain-output contract.
+29. Favorite list and picker show saved run counts. Each successful Vault execution adds exactly one count; failed or cancelled executions add none. Counts survive restarts, concurrent successful runs are not lost, and a changed favorite command resets its count.
+30. A failed count save after a successful favorite execution prints no warning and does not change Vault output or exit status or retry Vault.
 
 ## Out of Scope
 
@@ -738,7 +764,7 @@ The initial release is complete when all of the following are demonstrably true:
 - Installers, package-manager publication, automatic updates, telemetry, and CI configuration.
 - A stable machine-readable output API.
 - JSON, YAML, or other structured management output.
-- Configurable themes, formatting flags, or output-style modes.
+- Global theme selection, formatting flags, or output-style modes.
 - A persistent full-screen profile-management TUI.
 - External selector executables or automatic installation of terminal UI tools.
 - Completion for delegated Vault commands, flags, paths, or secrets.

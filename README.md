@@ -75,16 +75,25 @@ nix profile install github:floydya/vlt
 $ vlt profile add team-a \
     --address https://vault.example.com \
     --username example-user \
-    --auth-path oidc
+    --auth-path oidc \
+    --color '#3366CC'
 
 $ vlt switch team-a
 $ vlt read secret/example
 $ vlt --profile team-b read secret/example
+
+$ vlt favorite add secret/data/example --profile team-a --operation kv-get --note daily
+$ vlt favorite
+$ vlt favorite list
 ```
 
 `vlt` will not reimplement Vault data operations. It will resolve a profile, manage its credential lifecycle, and execute the installed `vault` binary with the original arguments and attached streams.
 
 Vault profiles use HTTPS by default. To connect to a trusted local test Vault over HTTP, add the profile with `--allow-insecure`. Clear the opt-in with `vlt profile update NAME --address https://... --allow-insecure=false`.
+
+Set a profile accent with `--color '#3366CC'` on `profile add` or `profile update`. Clear it with `vlt profile update NAME --color=`. A color-only update keeps the stored token. `NO_COLOR` and redirected output remain plain.
+
+`vlt favorite list` shows each favorite's successful run count. Favorites with more runs appear first, with path, profile, and operation breaking ties. After Vault succeeds, `vlt` records one run when it can save local metadata. A failed count save does not change Vault's output or exit status. Changing a favorite's profile, operation, or path resets the count; changing its note keeps it.
 
 ## Security model
 
