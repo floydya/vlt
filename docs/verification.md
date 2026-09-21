@@ -135,6 +135,8 @@ On 2026-09-21, focused completion and security tests, `just check`, `just build-
 
 Fake-backed handler tests covered `read`, KV v1 and KV v2 `kv get`, active and explicit profiles, denied leaves, readable folders, and timeout cleanup. They confirmed that completion makes only mount lookup, LIST, and capability requests. Tokens stayed out of URLs, request bodies, candidate text, and diagnostics. Shell tests confirmed that spaces and shell metacharacters remain quoted without execution. No live Vault host, native keyring, OIDC flow, or native macOS or Windows shell ran in this checkpoint. The representative-host latency and permission check remains open.
 
+The README setup examples loaded the generated functions in isolated Bash, Zsh, and Fish sessions. The documentation review passed `git diff --check` and `just check`. These checks verify the scripts and local behavior; they do not prove latency or permissions on a live Vault host.
+
 ## Dependency review
 
 The approved direct integrations are `github.com/zalando/go-keyring v0.2.6`, `charm.land/huh/v2 v2.0.3`, `charm.land/lipgloss/v2 v2.0.6`, `charm.land/bubbles/v2 v2.0.0`, and `charm.land/bubbletea/v2 v2.0.2`. The terminal boundary also imports the pinned `colorprofile`, `x/ansi`, and `x/term` support modules. The in-process selector uses Bubble Tea for the inline event loop and the Bubbles fuzzy matcher. It does not invoke or require `fzf`. `go mod verify` passed.

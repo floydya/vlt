@@ -10,6 +10,7 @@ It lets you keep metadata for multiple Vault hosts, store tokens only in your op
   - [Homebrew on macOS](#homebrew-on-macos)
   - [Nix](#nix)
 - [Usage](#usage)
+  - [Shell completion](#shell-completion)
 - [Security model](#security-model)
 - [Development](#development)
 
@@ -91,7 +92,30 @@ $ vlt favorite update f_0123456789abcdef --note reviewed
 
 `vlt` will not reimplement Vault data operations. It will resolve a profile, manage its credential lifecycle, and execute the installed `vault` binary with the original arguments and attached streams.
 
-Bash, Zsh, and Fish completion suggest command names from the installed Vault CLI beside `vlt` commands. They also follow Vault for nested commands, flags, and supported local values. This works with or without `--profile NAME` and does not require Vault's separate shell completion hook.
+### Shell completion
+
+The Homebrew formula installs completion for Bash, Zsh, and Fish. To enable it in the current shell after another installation, run the matching command:
+
+```bash
+source <(vlt completion bash)
+```
+
+```zsh
+autoload -Uz compinit && compinit
+source <(vlt completion zsh)
+```
+
+```fish
+vlt completion fish | source
+```
+
+Completion uses the installed `vault` executable for commands, nested commands, flags, and local values. You do not need to run `vault -autocomplete-install`.
+
+For `vlt read` and `vlt kv get`, completion can suggest paths. Enter a mount and `/` for a combined path, or use `kv get -mount=NAME` with a path inside that mount. It uses the active profile or the name in `vlt --profile NAME`.
+
+Completion shows a listed path only when the selected token has `read` permission. It shows a folder only when it finds a readable path below it. KV v2 checks read permission on the data path. Completion does not read secret values, log in, or renew tokens.
+
+Path lookup stops after 500 ms. If listing or permission checks fail, or the profile, token, keyring, or server is unavailable, completion quietly returns no paths. Commands, flags, and other local suggestions remain available. A readable path may still be absent when Vault denies listing.
 
 Vault profiles use HTTPS by default. To connect to a trusted local test Vault over HTTP, add the profile with `--allow-insecure`. Clear the opt-in with `vlt profile update NAME --address https://... --allow-insecure=false`.
 
