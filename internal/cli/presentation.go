@@ -68,6 +68,14 @@ func newPresentation(terminal Terminal) presentation {
 		styles.muted = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 		styles.success = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Green)
 		styles.error = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Red)
+		if accented, ok := terminal.(interface{ AccentColor() string }); ok {
+			if color := accented.AccentColor(); color != "" {
+				accent := lipgloss.Color(color)
+				styles.heading = styles.heading.Foreground(accent)
+				styles.label = styles.label.Foreground(accent)
+				styles.selected = styles.selected.Foreground(accent)
+			}
+		}
 	}
 	return presentation{styles: styles, colorEnabled: colorEnabled}
 }

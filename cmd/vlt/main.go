@@ -50,6 +50,9 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 	favorites := favorite.NewStore(filepath.Join(configDirectory, "vlt", "favorites.json"))
 	mutationLock := statelock.New(filepath.Join(configDirectory, "vlt"))
 	terminal := cli.NewTerminal(stdin, stdout, os.Environ())
+	if terminal.PromptsEnabled() && terminal.ColorEnabled() {
+		terminal = cli.WithAccent(terminal, activeProfileAccent(profiles))
+	}
 	sharedSelector := cli.NewSharedSelector(stdin, stdout, terminal)
 	selector := cli.NewSharedProfileSelector(sharedSelector)
 	favoriteSelector := cli.NewSharedFavoriteSelector(sharedSelector)
@@ -89,6 +92,19 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 		Completion: cli.NewCompletionHandler(cli.CompletionDependencies{Profiles: profiles, Output: stdout}),
 		Vault:      delegate,
 	})
+}
+
+func activeProfileAccent(store *config.Store) string {
+	configuration, err := store.Load(context.Background())
+	if err != nil || configuration.ActiveProfile == "" {
+		return ""
+	}
+	for _, candidate := range configuration.Profiles {
+		if candidate.Name == configuration.ActiveProfile {
+			return candidate.Color
+		}
+	}
+	return ""
 }
 
 func dispatch(ctx context.Context, dispatcher *cli.Dispatcher, args []string, stderr io.Writer) int {

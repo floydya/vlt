@@ -93,6 +93,33 @@ func TestNewDispatcherWiresProfileManagement(t *testing.T) {
 	}
 }
 
+func TestActiveProfileAccentFollowsSavedSelection(t *testing.T) {
+	store := config.NewStore(filepath.Join(t.TempDir(), "vlt", "profiles.json"))
+	colored := profile.Profile{Name: "team-a", Address: "https://vault.example.com", Username: "alice", AuthPath: "oidc", Color: "#112233"}
+	plain := profile.Profile{Name: "team-b", Address: "https://vault.example.net", Username: "bob", AuthPath: "oidc"}
+	configuration := config.Configuration{Profiles: []profile.Profile{colored, plain}, ActiveProfile: "team-a"}
+	if err := store.Save(context.Background(), configuration); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if got := activeProfileAccent(store); got != "#112233" {
+		t.Fatalf("active accent = %q, want #112233", got)
+	}
+	configuration.ActiveProfile = "team-b"
+	if err := store.Save(context.Background(), configuration); err != nil {
+		t.Fatalf("Save() after switch error = %v", err)
+	}
+	if got := activeProfileAccent(store); got != "" {
+		t.Fatalf("plain active accent = %q, want empty", got)
+	}
+	configuration.ActiveProfile = ""
+	if err := store.Save(context.Background(), configuration); err != nil {
+		t.Fatalf("Save() after clear error = %v", err)
+	}
+	if got := activeProfileAccent(store); got != "" {
+		t.Fatalf("missing active accent = %q, want empty", got)
+	}
+}
+
 func TestNewDispatcherWiresFavoriteManagement(t *testing.T) {
 	configDirectory := t.TempDir()
 	profiles := config.NewStore(filepath.Join(configDirectory, "vlt", "profiles.json"))
