@@ -32,7 +32,7 @@ type SharedSelectorItem struct {
 }
 
 type SharedSelector interface {
-	Select(context.Context, string, []SharedSelectorItem, string) (string, error)
+	Select(context.Context, string, string, []SharedSelectorItem, string) (string, error)
 }
 
 type sharedSelector struct {
@@ -43,6 +43,7 @@ type sharedSelector struct {
 
 type sharedSelectorModel struct {
 	title        string
+	header       string
 	items        []SharedSelectorItem
 	visible      []SharedSelectorItem
 	query        string
@@ -63,10 +64,11 @@ func NewSharedSelector(input io.Reader, output io.Writer, terminal Terminal) Sha
 func (s sharedSelector) Select(
 	ctx context.Context,
 	title string,
+	header string,
 	items []SharedSelectorItem,
 	preselectedID string,
 ) (string, error) {
-	model, err := newSharedSelectorModel(title, items, preselectedID, s.presentation)
+	model, err := newSharedSelectorModel(title, header, items, preselectedID, s.presentation)
 	if err != nil {
 		return "", err
 	}
@@ -113,6 +115,7 @@ func (s sharedSelector) Select(
 
 func newSharedSelectorModel(
 	title string,
+	header string,
 	items []SharedSelectorItem,
 	preselectedID string,
 	presentation presentation,
@@ -123,6 +126,7 @@ func newSharedSelectorModel(
 	cloned := append([]SharedSelectorItem(nil), items...)
 	model := sharedSelectorModel{
 		title:        title,
+		header:       header,
 		items:        cloned,
 		visible:      append([]SharedSelectorItem(nil), cloned...),
 		presentation: presentation,
@@ -225,6 +229,11 @@ func (m sharedSelectorModel) View() tea.View {
 	output.WriteByte('\n')
 	output.WriteString(wrapSelectorLine(m.presentation.render(presentationLabel, "Search:")+" "+m.query, m.presentation.width))
 	output.WriteByte('\n')
+	if m.header != "" {
+		output.WriteString("  ")
+		output.WriteString(m.presentation.render(presentationHeading, m.header))
+		output.WriteByte('\n')
+	}
 
 	if len(m.visible) == 0 {
 		output.WriteString(m.presentation.render(presentationMuted, "  No matches."))
@@ -244,8 +253,10 @@ func (m sharedSelectorModel) View() tea.View {
 				role = presentationSelected
 			}
 			item := m.visible[index]
-			if item.Name == "" || item.Color == "" {
+			if item.Color == "" {
 				row.WriteString(m.presentation.render(role, marker+item.Label))
+			} else if item.Name == "" {
+				row.WriteString(m.presentation.renderColored(role, marker+item.Label, item.Color))
 			} else {
 				prefix, suffix, found := strings.Cut(item.Label, item.Name)
 				if !found {

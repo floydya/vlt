@@ -19,6 +19,7 @@ type promptLineReader struct {
 
 type recordingSharedSelector struct {
 	title         string
+	header        string
 	items         []SharedSelectorItem
 	preselectedID string
 	selectedID    string
@@ -29,11 +30,13 @@ type recordingSharedSelector struct {
 func (s *recordingSharedSelector) Select(
 	_ context.Context,
 	title string,
+	header string,
 	items []SharedSelectorItem,
 	preselectedID string,
 ) (string, error) {
 	s.calls++
 	s.title = title
+	s.header = header
 	s.items = append([]SharedSelectorItem(nil), items...)
 	s.preselectedID = preselectedID
 	return s.selectedID, s.err
@@ -91,6 +94,9 @@ func TestSharedProfileSelectorBuildsDeterministicSearchRowsAndPreselectsActive(t
 	}
 	if shared.title != "Select a profile" || shared.preselectedID != "team-b" {
 		t.Errorf("shared selector request = title %q, preselected %q", shared.title, shared.preselectedID)
+	}
+	if want := "#  ACTIVE  NAME"; shared.header != want {
+		t.Errorf("profile selector header = %q, want %q", shared.header, want)
 	}
 	if len(shared.items) != 2 {
 		t.Fatalf("shared selector item count = %d, want 2", len(shared.items))

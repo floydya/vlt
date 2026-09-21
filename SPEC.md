@@ -22,7 +22,7 @@ Build `vlt`, a cross-platform command-line profile manager and transparent launc
 
 The unified terminal UX revision replaces the visually separate `fzf` favorite picker with the same compact component system used by forms and brings every `vlt`-owned output surface under one restrained presentation contract. It improves the human experience without changing delegated Vault output or introducing a machine-readable output API.
 
-The favorite usage, profile color, and Zsh completion revision puts frequently used favorites first, removes a Zsh completion artifact, and lets a user choose an accent color for each profile. It keeps delegated Vault output and exit status under Vault's control.
+The favorite usage, profile color, and Zsh completion revision puts frequently used favorites first, removes a Zsh completion artifact, and lets a user choose a row color for each profile. It keeps delegated Vault output and exit status under Vault's control.
 
 The terminal UX and stable favorite ID revision gives favorites an ID that survives edits, keeps complete list values readable in narrow terminals, shows picker details for the selected item, and makes guided defaults and command feedback clearer.
 
@@ -92,7 +92,7 @@ Each profile has:
 - `auth_path`: required OIDC mount path, defaulting to `oidc` during creation;
 - `namespace`: optional Vault Enterprise namespace.
 - `allow_insecure`: explicit per-profile permission to use an unencrypted HTTP address, defaulting to false.
-- `color`: optional `#RRGGBB` text value for the profile's name and active marker, empty by default.
+- `color`: optional `#RRGGBB` text value for the profile's name, active marker, and linked favorite rows, empty by default.
 
 Profile names must contain only ASCII letters, digits, hyphens, and underscores, must start with a letter or digit, must not consist entirely of digits, and are case-sensitive. Numeric-only names are invalid because they conflict with numbered profile selection. A non-empty color must start with `#` and contain exactly six hexadecimal digits; uppercase and lowercase digits are valid. Invalid colors fail before persistence. Secret values, including Vault tokens, must never be stored in profile configuration.
 
@@ -200,8 +200,8 @@ Existing `vlt` wording and layouts may change to satisfy this contract. Plain ou
 - Disable color when output is redirected or `NO_COLOR` is set to a non-empty value.
 - Keep spacing, markers, and wording understandable without color.
 - Forms and selectors use the same semantic style set as non-interactive output.
-- Shared headings, labels, selected items, form fields, borders, success text, and error text keep their semantic colors. A saved profile color applies only to that profile's name and active marker.
-- Profile rows in selectors use each profile's saved color for its name and active marker. An unset color keeps the current row style. The selected row remains visibly selected with and without color.
+- Shared headings, labels, form fields, borders, success text, and error text keep their semantic colors. A saved profile color applies to its name, active marker, and linked favorite rows.
+- Profile rows in selectors use each profile's saved color for its name and active marker. Favorite rows use the linked profile's color. An unset color keeps the current row style. The selected row remains visibly selected with and without color.
 - Keep delegated Vault output byte-for-byte under Vault's control; `vlt` must not restyle it.
 
 ### `interactive-profile-workflows`
@@ -303,7 +303,7 @@ Behavior:
 - `favorite remove` without a selector opens the selector and asks for confirmation. `favorite remove ID|NUMBER` is an explicit immediate removal. Declining or cancelling changes nothing. A guided action rejects a favorite that changed after selection.
 - Successful add, update, and remove operations print one concise message after persistence succeeds. They never read or print the Vault secret.
 
-`favorite list` displays the current number, stable ID, successful run count, and all searchable metadata:
+`favorite list` displays the current number, stable ID, successful run count, and all searchable metadata. Each row uses its linked profile's saved color when color is enabled:
 
 ```text
 #  ID                  RUNS  OPERATION  PROFILE  PATH                           NOTE
@@ -324,11 +324,11 @@ Interactive favorite workflows require terminal input and display streams. The a
 
 The update form shows the current values and allows every field to change. Both forms validate before writing and use the same mutation behavior as explicit commands. If no profiles exist, the workflow does not open an empty form; it explains how to run `vlt profile add`.
 
-The profile and operation fields, plus the update and removal selectors, use the shared searchable-selector contract. Favorite rows show a short path and run count; the selected entry shows ID, profile, operation, and note. Search includes those details. The update and removal selectors keep the same count-first order as `favorite list`. Cancellation follows the existing interactive cancellation contract and leaves persistent state unchanged.
+The profile and operation fields, plus the update and removal selectors, use the shared searchable-selector contract. Favorite rows show a short path and run count in the linked profile's color. The selected entry shows ID, profile, operation, and note. Search includes those details. The update and removal selectors keep the same count-first order as `favorite list`. Cancellation follows the existing interactive cancellation contract and leaves persistent state unchanged.
 
 #### Searchable read selector
 
-In an interactive terminal, `vlt favorite` opens the shared searchable selector. Search covers every visible field: path, note, profile, operation, and run count. The selector shows the run count and starts with all favorites visible in descending count order with the path-profile-operation tie-breaker. If no favorites exist, it explains how to run `vlt favorite add` instead of opening an empty selector.
+In an interactive terminal, `vlt favorite` opens the shared searchable selector. Search covers every visible field: path, note, profile, operation, and run count. It shows short rows in descending count order with the path-profile-operation tie-breaker, then details for the selected favorite. Each row uses its linked profile's saved color when color is enabled. If no favorites exist, it explains how to run `vlt favorite add` instead of opening an empty selector.
 
 #### Shared searchable-selector contract
 
@@ -755,7 +755,7 @@ The initial release is complete when all of the following are demonstrably true:
 26. HTTPS profiles work without extra options. HTTP profiles fail before credential or Vault access unless they persist an explicit opt-in that add and update can enable and update can clear.
 27. A user can set, change, and clear a validated `#RRGGBB` profile color through explicit commands and forms. Saved colors survive restarts. A color-only update does not delete a token or start authentication.
 28. Profile list and picker rows show saved color strings and use each profile's color for its name and active marker when color is enabled. `profile show` colors the name and active status when active. Shared UI text uses semantic colors. Unset color, redirected output, and `NO_COLOR` follow the existing plain-output contract.
-29. Favorite list and picker show saved run counts. Each successful Vault execution adds exactly one count; failed or cancelled executions add none. Counts survive restarts, concurrent successful runs are not lost, and a changed favorite command resets its count.
+29. Favorite list and picker show saved run counts and color each row from its linked profile. Each successful Vault execution adds exactly one count; failed or cancelled executions add none. Counts survive restarts, concurrent successful runs are not lost, and a changed favorite command resets its count.
 30. A failed count save after a successful favorite execution prints no warning and does not change Vault output or exit status or retry Vault.
 
 ## Out of Scope

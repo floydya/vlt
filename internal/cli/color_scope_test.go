@@ -71,7 +71,7 @@ func TestSavedProfileColorOnlyMarksIdentityInPickers(t *testing.T) {
 	if _, err := NewSharedProfileSelector(shared).Select(context.Background(), profiles, "team-a"); err != nil {
 		t.Fatal(err)
 	}
-	model, err := newSharedSelectorModel(shared.title, shared.items, "team-b", newPresentation(terminal))
+	model, err := newSharedSelectorModel(shared.title, shared.header, shared.items, "team-b", newPresentation(terminal))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestSavedProfileColorOnlyMarksIdentityInPickers(t *testing.T) {
 	if count := strings.Count(view, "38;2;57;78;255m"); count != 1 {
 		t.Errorf("other color in picker = %d, want name only: %q", count, view)
 	}
-	generic, err := newSharedSelectorModel("Select a favorite", []SharedSelectorItem{{ID: "one", Label: "secret/example", Detail: "Profile: team-a"}}, "", newPresentation(terminal))
+	generic, err := newSharedSelectorModel("Select a favorite", "", []SharedSelectorItem{{ID: "one", Label: "secret/example", Detail: "Profile: team-a"}}, "", newPresentation(terminal))
 	if err != nil {
 		t.Fatal(err)
 	}

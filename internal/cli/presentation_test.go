@@ -138,19 +138,59 @@ func TestFavoriteListPresentationPlainAndStyledAreExact(t *testing.T) {
 		"2  f_2222222222222222  0     read       team-b   secret/a  line break [31m\n" +
 		"3  f_3333333333333333  0     read       team-b   secret/z  -\n"
 
-	plain := favoriteListOutput(favorites, fixedTerminal{color: false})
+	plain := favoriteListOutput(favorites, nil, fixedTerminal{color: false})
 	if plain != want {
 		t.Fatalf("plain favorite list = %q, want %q", plain, want)
 	}
 	if strings.Contains(plain, "\x1b[") {
 		t.Fatalf("plain favorite list contains ANSI: %q", plain)
 	}
-	styled := favoriteListOutput(favorites, fixedTerminal{color: true})
+	styled := favoriteListOutput(favorites, nil, fixedTerminal{color: true})
 	if !strings.Contains(styled, "\x1b[") {
 		t.Fatalf("styled favorite list contains no ANSI: %q", styled)
 	}
 	if got := ansi.Strip(styled); got != plain {
 		t.Fatalf("unstyled favorite list = %q, want plain output %q", got, plain)
+	}
+}
+
+func TestFavoriteListColorsRowsByTheirOwnProfiles(t *testing.T) {
+	profiles := &fakeProfileStore{configuration: config.Configuration{
+		Profiles: []profile.Profile{
+			{Name: "nc", Color: "#FF8800"},
+			{Name: "sps", Color: "#008844"},
+		},
+		ActiveProfile: "sps",
+	}}
+	favorites := &fakeFavoriteStore{configuration: favorite.Configuration{Favorites: []favorite.Favorite{
+		{Profile: "nc", Operation: favorite.OperationRead, Path: "secret/nc"},
+		{Profile: "sps", Operation: favorite.OperationRead, Path: "secret/sps"},
+	}}}
+	var output bytes.Buffer
+	handler := NewFavoriteHandler(FavoriteDependencies{
+		Profiles: profiles, Favorites: favorites, Output: &output, Terminal: fixedTerminal{color: true},
+	})
+	if err := handler(context.Background(), []string{"list"}); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(output.String(), "\n")
+	if strings.Contains(lines[0], "38;2;255;136;0m") || !strings.Contains(lines[1], "38;2;255;136;0m") || !strings.Contains(lines[2], "38;2;0;136;68m") {
+		t.Errorf("favorite list colors = %q, want profile colors only on their rows", output.String())
+	}
+	styled := output.String()
+	profileLoads := profiles.loads
+	output.Reset()
+	handler = NewFavoriteHandler(FavoriteDependencies{
+		Profiles: profiles, Favorites: favorites, Output: &output, Terminal: fixedTerminal{color: false},
+	})
+	if err := handler(context.Background(), []string{"list"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "\x1b[") || ansi.Strip(styled) != output.String() {
+		t.Errorf("plain favorite list = %q, want ANSI-free rows matching styled output", output.String())
+	}
+	if profiles.loads != profileLoads {
+		t.Errorf("plain favorite list loaded profiles %d extra times, want none", profiles.loads-profileLoads)
 	}
 }
 

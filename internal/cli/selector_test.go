@@ -66,7 +66,7 @@ func TestSharedSelectorTypingFiltersImmediatelyAndReturnsStableIdentity(t *testi
 		{ID: "opaque-a", Label: "same display", SearchText: "team-a database"},
 		{ID: "opaque-b", Label: "same display", SearchText: "team-b reports"},
 	}
-	model, err := newSharedSelectorModel("Select a resource", items, "", newPresentation(fixedTerminal{}))
+	model, err := newSharedSelectorModel("Select a resource", "", items, "", newPresentation(fixedTerminal{}))
 	if err != nil {
 		t.Fatalf("new selector model error = %v", err)
 	}
@@ -95,7 +95,7 @@ func TestSharedSelectorNavigationStartsAtPreselectedIdentity(t *testing.T) {
 		{ID: "two", Label: "two", SearchText: "two"},
 		{ID: "three", Label: "three", SearchText: "three"},
 	}
-	model, err := newSharedSelectorModel("Select", items, "two", newPresentation(fixedTerminal{}))
+	model, err := newSharedSelectorModel("Select", "", items, "two", newPresentation(fixedTerminal{}))
 	if err != nil {
 		t.Fatalf("new selector model error = %v", err)
 	}
@@ -112,7 +112,7 @@ func TestSharedSelectorNavigationStartsAtPreselectedIdentity(t *testing.T) {
 
 func TestSharedSelectorNoMatchesAndBackspaceAreSafe(t *testing.T) {
 	items := []SharedSelectorItem{{ID: "one", Label: "one", SearchText: "one"}}
-	model, err := newSharedSelectorModel("Select", items, "", newPresentation(fixedTerminal{}))
+	model, err := newSharedSelectorModel("Select", "", items, "", newPresentation(fixedTerminal{}))
 	if err != nil {
 		t.Fatalf("new selector model error = %v", err)
 	}
@@ -134,7 +134,7 @@ func TestSharedSelectorNoMatchesAndBackspaceAreSafe(t *testing.T) {
 
 func TestSharedSelectorHandlesPasteCancellationAndInterrupt(t *testing.T) {
 	items := []SharedSelectorItem{{ID: "one", Label: "one", SearchText: "production database"}}
-	model, err := newSharedSelectorModel("Select", items, "", newPresentation(fixedTerminal{}))
+	model, err := newSharedSelectorModel("Select", "", items, "", newPresentation(fixedTerminal{}))
 	if err != nil {
 		t.Fatalf("new selector model error = %v", err)
 	}
@@ -147,7 +147,7 @@ func TestSharedSelectorHandlesPasteCancellationAndInterrupt(t *testing.T) {
 		tea.KeyPressMsg(tea.Key{Code: tea.KeyEsc}),
 		tea.InterruptMsg{},
 	} {
-		candidate, err := newSharedSelectorModel("Select", items, "", newPresentation(fixedTerminal{}))
+		candidate, err := newSharedSelectorModel("Select", "", items, "", newPresentation(fixedTerminal{}))
 		if err != nil {
 			t.Fatalf("new selector model error = %v", err)
 		}
@@ -177,7 +177,7 @@ func TestSharedSelectorRejectsInvalidItemsAndCanceledContext(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := selector.Select(tt.ctx, "Select", tt.items, "")
+			_, err := selector.Select(tt.ctx, "Select", "", tt.items, "")
 			if !errors.Is(err, tt.want) {
 				t.Errorf("Select() error = %v, want %v", err, tt.want)
 			}
@@ -194,7 +194,7 @@ func TestSharedSelectorRendersCompactInlinePlainView(t *testing.T) {
 			SearchText: "resource-" + string(rune('a'+index)),
 		}
 	}
-	model, err := newSharedSelectorModel("Select a resource", items, "", newPresentation(fixedTerminal{}))
+	model, err := newSharedSelectorModel("Select a resource", "", items, "", newPresentation(fixedTerminal{}))
 	if err != nil {
 		t.Fatalf("new selector model error = %v", err)
 	}
@@ -227,9 +227,9 @@ func TestSharedSelectorUsesSemanticSelectionAndKeepsPlainSelectionVisible(t *tes
 		{name: "plain", terminal: fixedTerminal{color: false}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			model, err := newSharedSelectorModel("Select", items, "second", newPresentation(tt.terminal))
+			model, err := newSharedSelectorModel("Select", "", items, "second", newPresentation(tt.terminal))
 			if err != nil {
-				t.Fatalf("new selector model error = %v", err)
+				t.Fatal(err)
 			}
 			view := model.View().Content
 			if tt.name == "styled" && !strings.Contains(view, "\x1b[") {
@@ -242,6 +242,16 @@ func TestSharedSelectorUsesSemanticSelectionAndKeepsPlainSelectionVisible(t *tes
 				t.Errorf("plain selector contains ANSI: %q", view)
 			}
 		})
+	}
+}
+
+func TestSharedSelectorShowsCompactHeaderBelowSearch(t *testing.T) {
+	model, err := newSharedSelectorModel("Select a profile", "#  ACTIVE  NAME", []SharedSelectorItem{{ID: "one", Label: "1    one"}}, "", newPresentation(fixedTerminal{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := model.View().Content; !strings.Contains(got, "Search: \n  #  ACTIVE  NAME\n> 1    one") {
+		t.Errorf("selector view = %q, want header between search and rows", got)
 	}
 }
 
@@ -260,7 +270,7 @@ func TestSharedSelectorColorsEachProfileRowAndKeepsSelectionVisible(t *testing.T
 		{name: "plain", terminal: fixedTerminal{color: false}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			model, err := newSharedSelectorModel("Select", items, "second", newPresentation(tt.terminal))
+			model, err := newSharedSelectorModel("Select", "", items, "second", newPresentation(tt.terminal))
 			if err != nil {
 				t.Fatalf("new selector model error = %v", err)
 			}
@@ -297,7 +307,7 @@ func TestSharedSelectorAdapterRequiresConfiguredStreams(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := tt.selector.Select(context.Background(), "Select", items, "")
+			_, err := tt.selector.Select(context.Background(), "Select", "", items, "")
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("Select() error = %v, want %q", err, tt.want)
 			}

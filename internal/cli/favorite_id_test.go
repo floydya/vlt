@@ -14,7 +14,7 @@ func TestFavoriteListShowsStableIDs(t *testing.T) {
 		ID: "f_0123456789abcdef", Profile: "team-a", Operation: favorite.OperationRead,
 		Path: "secret/a", RunCount: 4,
 	}
-	got := favoriteListOutput([]favorite.Favorite{selected}, fixedTerminal{})
+	got := favoriteListOutput([]favorite.Favorite{selected}, nil, fixedTerminal{})
 	if !strings.Contains(got, "ID") || !strings.Contains(got, selected.ID) {
 		t.Fatalf("favorite list = %q, want ID column and %q", got, selected.ID)
 	}

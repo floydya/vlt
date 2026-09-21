@@ -93,15 +93,15 @@ $ vlt favorite update f_0123456789abcdef --note reviewed
 
 Vault profiles use HTTPS by default. To connect to a trusted local test Vault over HTTP, add the profile with `--allow-insecure`. Clear the opt-in with `vlt profile update NAME --address https://... --allow-insecure=false`.
 
-Set a profile color with `--color '#3366CC'` on `profile add` or `profile update`. It colors that profile's name and active marker in vlt output. Shared headings, labels, forms, and status text keep their usual colors. Clear it with `vlt profile update NAME --color=`. A color-only update keeps the stored token. `NO_COLOR` and redirected output remain plain.
+Set a profile color with `--color '#3366CC'` on `profile add` or `profile update`. It colors that profile's name and active marker. Favorite rows linked to the profile use its color. Shared headings, labels, forms, and status text keep their usual colors. Clear it with `vlt profile update NAME --color=`. A color-only update keeps the stored token. `NO_COLOR` and redirected output remain plain.
 
 `vlt favorite list` shows each favorite's successful run count. Favorites with more runs appear first, with path, profile, and operation breaking ties. After Vault succeeds, `vlt` records one run when it can save local metadata. A failed count save does not change Vault's output or exit status. Changing a favorite's profile, operation, or path resets the count; changing its note keeps it.
 
 Each favorite has a stable ID shown by `vlt favorite list`. Use the ID with `favorite update` or `favorite remove` to target it after edits or list reordering. Current list numbers still work. Guided `favorite add` starts with the active profile selected. Narrow terminals wrap list entries, and pickers show details for the selected item. Redirected lists keep their full tables.
 
-### Upgrading from v0.2.0
+### Upgrading from v0.2.x
 
-Profile metadata needs no migration. The new version reads existing favorites without changing their file. The first favorite write saves version 2 metadata with stable IDs. v0.2.0 cannot read that new file, so keep a private copy of `favorites.json` before using the new version if you may need to roll back. Restoring that copy also discards favorite changes made after the copy. Vault tokens remain in the native credential store and are not part of this file.
+Profile metadata needs no migration. The new version reads existing favorites without changing their file. The first favorite write saves version 2 metadata with stable IDs. v0.2.x cannot read that new file, so keep a private copy of `favorites.json` before using the new version if you may need to roll back. Restoring that copy also discards favorite changes made after the copy. Vault tokens remain in the native credential store and are not part of this file.
 
 ## Security model
 

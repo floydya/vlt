@@ -39,6 +39,7 @@ type FavoriteRemovalConfirmer interface {
 
 type sharedFavoriteManagementSelector struct {
 	selector SharedSelector
+	profiles ConfigurationLoader
 }
 
 type huhFavoriteForm struct {
@@ -56,8 +57,8 @@ type huhFavoriteRemovalConfirmer struct {
 	presentation presentation
 }
 
-func NewSharedFavoriteManagementSelector(selector SharedSelector) FavoriteManagementSelector {
-	return sharedFavoriteManagementSelector{selector: selector}
+func NewSharedFavoriteManagementSelector(selector SharedSelector, profiles ConfigurationLoader) FavoriteManagementSelector {
+	return sharedFavoriteManagementSelector{selector: selector, profiles: profiles}
 }
 
 func NewHuhFavoriteForm(input io.Reader, output io.Writer, selector SharedSelector, terminal Terminal) FavoriteForm {
@@ -114,7 +115,7 @@ func (f huhFavoriteForm) Run(ctx context.Context, request FavoriteFormRequest) (
 			ID: candidateProfile.Name, Label: label, Detail: detail, SearchText: label + " " + detail, Color: candidateProfile.Color, Name: candidateProfile.Name,
 		})
 	}
-	selectedProfile, err := f.selector.Select(ctx, "Select a profile", profileItems, candidate.Profile)
+	selectedProfile, err := f.selector.Select(ctx, "Select a profile", "#  NAME", profileItems, candidate.Profile)
 	if err != nil {
 		return favorite.Favorite{}, fmt.Errorf("favorite form: select profile: %w", err)
 	}
@@ -124,7 +125,7 @@ func (f huhFavoriteForm) Run(ctx context.Context, request FavoriteFormRequest) (
 		{ID: favorite.OperationRead, Label: favorite.OperationRead, SearchText: favorite.OperationRead},
 		{ID: favorite.OperationKVGet, Label: favorite.OperationKVGet, SearchText: favorite.OperationKVGet},
 	}
-	selectedOperation, err := f.selector.Select(ctx, "Select an operation", operationItems, candidate.Operation)
+	selectedOperation, err := f.selector.Select(ctx, "Select an operation", "", operationItems, candidate.Operation)
 	if err != nil {
 		return favorite.Favorite{}, fmt.Errorf("favorite form: select operation: %w", err)
 	}

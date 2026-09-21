@@ -31,6 +31,7 @@ type queuedSharedSelector struct {
 func (s *queuedSharedSelector) Select(
 	_ context.Context,
 	title string,
+	_ string,
 	items []SharedSelectorItem,
 	preselectedID string,
 ) (string, error) {
@@ -437,7 +438,10 @@ func TestFavoriteManagementUsesSharedSelectorRowsAndStableIdentity(t *testing.T)
 		{Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/a", RunCount: 2},
 	}
 	shared := &recordingSharedSelector{selectedID: "favorite-000002"}
-	selector := NewSharedFavoriteManagementSelector(shared)
+	profiles := &fakeProfileStore{configuration: config.Configuration{Profiles: []profile.Profile{
+		{Name: "team-a", Color: "#112233"}, {Name: "team-b", Color: "#445566"},
+	}}}
+	selector := NewSharedFavoriteManagementSelector(shared, profiles)
 
 	selected, err := selector.Select(context.Background(), candidates)
 	if err != nil {
@@ -449,6 +453,9 @@ func TestFavoriteManagementUsesSharedSelectorRowsAndStableIdentity(t *testing.T)
 	}
 	if len(shared.items) != 2 || shared.items[0].Label != "1  secret/b  (12 runs)" || shared.items[1].Label != "2  secret/a  (2 runs)" {
 		t.Fatalf("management selector rows = %#v, want count-first rows", shared.items)
+	}
+	if shared.items[0].Color != "#445566" || shared.items[1].Color != "#112233" {
+		t.Errorf("management selector colors = %#v, want each favorite profile color", shared.items)
 	}
 	for _, text := range []string{"secret/a", "secret/b", "team-a", "team-b", "kv-get", "daily"} {
 		found := false
@@ -462,7 +469,7 @@ func TestFavoriteManagementUsesSharedSelectorRowsAndStableIdentity(t *testing.T)
 }
 
 func TestFavoriteManagementSharedCancellationReturnsNoFavorite(t *testing.T) {
-	selector := NewSharedFavoriteManagementSelector(&recordingSharedSelector{err: ErrSharedSelectorCanceled})
+	selector := NewSharedFavoriteManagementSelector(&recordingSharedSelector{err: ErrSharedSelectorCanceled}, nil)
 
 	selected, err := selector.Select(context.Background(), []favorite.Favorite{{
 		Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/a",

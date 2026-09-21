@@ -106,7 +106,7 @@ func (s sharedProfileSelector) Select(ctx context.Context, candidates []profile.
 		search := fmt.Sprintf("%d  %s  %s  %s  %s  %s  %s", index+1, marker, candidate.Name, candidate.Address, namespace, yesNo(candidate.AllowInsecure), color)
 		items = append(items, SharedSelectorItem{ID: candidate.Name, Label: label, Detail: detail, SearchText: search, Color: candidate.Color, Name: candidate.Name, Active: marker == "*"})
 	}
-	selected, err := s.selector.Select(ctx, "Select a profile", items, active)
+	selected, err := s.selector.Select(ctx, "Select a profile", "#  ACTIVE  NAME", items, active)
 	if err != nil {
 		return "", fmt.Errorf("select profile: %w", err)
 	}
