@@ -34,6 +34,9 @@ func TestStoreRoundTripPreservesAcceptedValues(t *testing.T) {
 		testFavorite("Team_B2", OperationKVGet, "secret/data/reporting", ""),
 	}}
 	want.Favorites[1].RunCount = 9
+	for index := range want.Favorites {
+		want.Favorites[index].ID = legacyID(want.Favorites[index], 0)
+	}
 
 	if err := store.Save(context.Background(), want); err != nil {
 		t.Fatalf("Save() error = %v", err)
@@ -55,8 +58,8 @@ func TestStoreRoundTripPreservesAcceptedValues(t *testing.T) {
 		t.Fatalf("saved favorites are not JSON: %v", err)
 	}
 	assertFavoriteJSONKeys(t, document, map[string]bool{"version": true, "favorites": true})
-	if gotVersion := document["version"]; gotVersion != float64(1) {
-		t.Fatalf("JSON version = %#v, want 1", gotVersion)
+	if gotVersion := document["version"]; gotVersion != float64(2) {
+		t.Fatalf("JSON version = %#v, want 2", gotVersion)
 	}
 	entries, ok := document["favorites"].([]any)
 	if !ok || len(entries) != 2 {
@@ -68,7 +71,7 @@ func TestStoreRoundTripPreservesAcceptedValues(t *testing.T) {
 			t.Fatalf("JSON favorite = %#v, want object", value)
 		}
 		wantKeys := map[string]bool{
-			"profile": true, "operation": true, "path": true, "note": true,
+			"id": true, "profile": true, "operation": true, "path": true, "note": true,
 		}
 		if index == 1 {
 			wantKeys["run_count"] = true
@@ -130,7 +133,7 @@ func TestStoreRejectsMalformedInvalidOrDuplicateConfiguration(t *testing.T) {
 		{name: "malformed JSON", contents: `{"version":1`, wantErr: "decode"},
 		{name: "trailing JSON", contents: `{"version":1,"favorites":[]} {}`, wantErr: "single JSON"},
 		{name: "missing version", contents: `{"favorites":[]}`, wantErr: "version"},
-		{name: "unsupported version", contents: `{"version":2,"favorites":[]}`, wantErr: "version"},
+		{name: "unsupported version", contents: `{"version":3,"favorites":[]}`, wantErr: "version"},
 		{name: "unknown top level field", contents: `{"version":1,"favorites":[],"token":"synthetic"}`, wantErr: "unknown field"},
 		{name: "unknown favorite field", contents: `{"version":1,"favorites":[{"profile":"team-a","operation":"read","path":"secret/a","note":"","value":"synthetic"}]}`, wantErr: "unknown field"},
 		{name: "invalid field type", contents: `{"version":1,"favorites":7}`, wantErr: "decode"},

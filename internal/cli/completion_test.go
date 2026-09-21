@@ -12,8 +12,29 @@ import (
 	"testing"
 
 	"vlt/internal/config"
+	"vlt/internal/favorite"
 	"vlt/internal/profile"
 )
+
+func TestCompletionListsFavoriteIDsWithoutPaths(t *testing.T) {
+	store := &fakeFavoriteStore{configuration: favorite.Configuration{Favorites: []favorite.Favorite{
+		{ID: "f_0123456789abcdef", Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/private"},
+	}}}
+	var output bytes.Buffer
+	handler := NewCompletionHandler(CompletionDependencies{Favorites: store, Output: &output})
+	if err := handler(context.Background(), []string{"__favorites"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := output.String(); got != "f_0123456789abcdef\n" {
+		t.Fatalf("favorite completion = %q", got)
+	}
+	for _, shell := range []string{"bash", "zsh", "fish"} {
+		script, err := completionScript(shell)
+		if err != nil || !strings.Contains(script, "completion __favorites") || !strings.Contains(script, "current") {
+			t.Errorf("%s completion misses favorite IDs or current: %v", shell, err)
+		}
+	}
+}
 
 type completionErrorWriter struct {
 	err error

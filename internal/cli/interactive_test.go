@@ -55,6 +55,22 @@ func (r *promptLineReader) Read(value []byte) (int, error) {
 	return n, nil
 }
 
+func TestInteractiveFormsAndConfirmationsUseSemanticSelection(t *testing.T) {
+	terminal := colorScopeTerminal{fixedTerminal{color: true}}
+	var output bytes.Buffer
+	forms := []presentation{
+		NewHuhProfileForm(strings.NewReader(""), &output, terminal).(huhProfileForm).presentation,
+		NewHuhProfileRemovalConfirmer(strings.NewReader(""), &output, terminal).(huhProfileRemovalConfirmer).presentation,
+		NewHuhFavoriteRemovalConfirmer(strings.NewReader(""), &output, terminal).(huhFavoriteRemovalConfirmer).presentation,
+	}
+	for index, form := range forms {
+		got := form.huhTheme().Theme(true).Focused.SelectedOption.Render("Selected")
+		if strings.Contains(got, "38;2;254;88;3m") || got != newPresentation(terminal).render(presentationSelected, "Selected") {
+			t.Errorf("interactive form %d selected style = %q, want semantic selection", index, got)
+		}
+	}
+}
+
 func TestSharedProfileSelectorBuildsDeterministicSearchRowsAndPreselectsActive(t *testing.T) {
 	shared := &recordingSharedSelector{selectedID: "team-a"}
 	selector := NewSharedProfileSelector(shared)
@@ -79,7 +95,7 @@ func TestSharedProfileSelectorBuildsDeterministicSearchRowsAndPreselectsActive(t
 	if shared.title != "Select a profile" || shared.preselectedID != "team-b" {
 		t.Errorf("shared selector request = title %q, preselected %q", shared.title, shared.preselectedID)
 	}
-	if want := "#  ACTIVE  NAME    ADDRESS                       NAMESPACE    ALLOW HTTP  COLOR"; shared.header != want {
+	if want := "#  ACTIVE  NAME"; shared.header != want {
 		t.Errorf("profile selector header = %q, want %q", shared.header, want)
 	}
 	if len(shared.items) != 2 {
@@ -91,20 +107,20 @@ func TestSharedProfileSelectorBuildsDeterministicSearchRowsAndPreselectsActive(t
 	if shared.items[0].Color != "#112233" || shared.items[1].Color != "#445566" {
 		t.Errorf("picker row colors = %q, %q, want saved colors independent of active status", shared.items[0].Color, shared.items[1].Color)
 	}
-	if got, want := shared.items[0].Label, "1          team-a  https://vault.team-a.example  engineering  no          #112233"; got != want {
+	if got, want := shared.items[0].Label, "1    team-a"; got != want {
 		t.Errorf("first profile row = %q, want %q", got, want)
 	}
-	if got, want := shared.items[1].Label, "2  *       team-b  https://vault.team-b.example  -            yes         #445566"; got != want {
+	if got, want := shared.items[1].Label, "2  *  team-b"; got != want {
 		t.Errorf("active profile row = %q, want %q", got, want)
 	}
 	for _, text := range []string{"1", "team-a", "https://vault.team-a.example", "engineering"} {
-		if !strings.Contains(shared.items[0].Label, text) {
-			t.Errorf("team-a label = %q, want %q", shared.items[0].Label, text)
+		if !strings.Contains(shared.items[0].Label+shared.items[0].Detail, text) {
+			t.Errorf("team-a item = %#v, want %q", shared.items[0], text)
 		}
 	}
 	for _, text := range []string{"2", "*", "team-b", "https://vault.team-b.example", "-", "yes"} {
-		if !strings.Contains(shared.items[1].Label, text) {
-			t.Errorf("team-b label = %q, want %q", shared.items[1].Label, text)
+		if !strings.Contains(shared.items[1].Label+shared.items[1].Detail, text) {
+			t.Errorf("team-b item = %#v, want %q", shared.items[1], text)
 		}
 	}
 	for _, item := range shared.items {
@@ -140,7 +156,6 @@ func TestSharedProfileSelectorPropagatesCancellationWithoutSelection(t *testing.
 func TestHuhProfileFormPreservesDefaultsAndCorrectsInvalidFields(t *testing.T) {
 	input := &promptLineReader{lines: [][]byte{
 		[]byte("\n"),
-		[]byte("n\n"),
 		[]byte("ftp://vault.example.com\n"),
 		[]byte("https://vault.example.com\n"),
 		[]byte("alice\n"),
@@ -163,10 +178,13 @@ func TestHuhProfileFormPreservesDefaultsAndCorrectsInvalidFields(t *testing.T) {
 	if got != want {
 		t.Errorf("profile form result = %#v, want %#v", got, want)
 	}
-	for _, text := range []string{"Name", "Allow insecure HTTP", "Address", "Username", "Auth path", "Namespace", "Color", "address scheme must be http or https"} {
+	for _, text := range []string{"Name", "Address", "Username", "Auth path", "Namespace", "Color", "address scheme must be http or https"} {
 		if !strings.Contains(output.String(), text) {
 			t.Errorf("profile form output = %q, want text %q", output.String(), text)
 		}
+	}
+	if strings.Contains(output.String(), "Allow insecure HTTP") {
+		t.Errorf("HTTPS form unexpectedly shows HTTP opt-in: %q", output.String())
 	}
 	for _, forbidden := range []string{"password", "credential", "token"} {
 		if strings.Contains(strings.ToLower(output.String()), forbidden) {
@@ -177,7 +195,6 @@ func TestHuhProfileFormPreservesDefaultsAndCorrectsInvalidFields(t *testing.T) {
 
 func TestHuhProfileFormKeepsUpdateNameReadOnly(t *testing.T) {
 	input := &promptLineReader{lines: [][]byte{
-		[]byte("n\n"),
 		[]byte("https://new.example.com\n"),
 		[]byte("\n"),
 		[]byte("\n"),
@@ -218,7 +235,7 @@ func TestHuhProfileFormCanEnableAndClearInsecureHTTPOptIn(t *testing.T) {
 			current: profile.Profile{
 				Name: "team-a", Address: "https://vault.example.com", Username: "alice", AuthPath: "oidc",
 			},
-			input: []string{"y\n", "http://127.0.0.1:8200\n", "\n", "\n", "\n", "\n"},
+			input: []string{"http://127.0.0.1:8200\n", "y\n", "\n", "\n", "\n", "\n"},
 			want: profile.Profile{
 				Name: "team-a", Address: "http://127.0.0.1:8200", Username: "alice", AuthPath: "oidc", AllowInsecure: true,
 			},
@@ -228,7 +245,7 @@ func TestHuhProfileFormCanEnableAndClearInsecureHTTPOptIn(t *testing.T) {
 			current: profile.Profile{
 				Name: "team-a", Address: "http://127.0.0.1:8200", Username: "alice", AuthPath: "oidc", AllowInsecure: true,
 			},
-			input: []string{"n\n", "https://vault.example.com\n", "\n", "\n", "\n", "\n"},
+			input: []string{"https://vault.example.com\n", "n\n", "\n", "\n", "\n", "\n"},
 			want: profile.Profile{
 				Name: "team-a", Address: "https://vault.example.com", Username: "alice", AuthPath: "oidc",
 			},
@@ -270,7 +287,7 @@ func TestHuhProfileFormValidatesAndEditsColor(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			current := profile.Profile{Name: "team-a", Address: "https://vault.example.com", Username: "alice", AuthPath: "oidc", Color: tt.currentColor}
-			lines := [][]byte{[]byte("n\n"), []byte("\n"), []byte("\n"), []byte("\n"), []byte("\n")}
+			lines := [][]byte{[]byte("\n"), []byte("\n"), []byte("\n"), []byte("\n")}
 			for _, line := range tt.colorInput {
 				lines = append(lines, []byte(line))
 			}

@@ -15,13 +15,14 @@ import (
 )
 
 const (
-	profileUsage       = "vlt profile COMMAND [ARGUMENT...]"
-	profileAddUsage    = "vlt profile add [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure] [--color COLOR]"
-	profileListUsage   = "vlt profile list"
-	profileShowUsage   = "vlt profile show [NAME]"
-	profileUpdateUsage = "vlt profile update [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure=BOOL] [--color COLOR]"
-	profileRemoveUsage = "vlt profile remove [NAME] [--remove-favorites]"
-	switchUsage        = "vlt switch [NAME|NUMBER]"
+	profileUsage        = "vlt profile COMMAND [ARGUMENT...]"
+	profileAddUsage     = "vlt profile add [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure] [--color COLOR]"
+	profileListUsage    = "vlt profile list"
+	profileCurrentUsage = "vlt profile current"
+	profileShowUsage    = "vlt profile show [NAME]"
+	profileUpdateUsage  = "vlt profile update [NAME] [--address URL] [--username USER] [--auth-path PATH] [--namespace NAMESPACE] [--allow-insecure=BOOL] [--color COLOR]"
+	profileRemoveUsage  = "vlt profile remove [NAME] [--remove-favorites]"
+	switchUsage         = "vlt switch [NAME|NUMBER]"
 )
 
 const profileHelpText = `Manage Vault profiles.
@@ -30,11 +31,12 @@ Usage:
   vlt profile COMMAND [ARGUMENT...]
 
 Commands:
-  add     Add and authenticate a profile
-  list    List configured profiles
-  show    Show profile metadata
-  update  Update and reauthenticate a profile
-  remove  Remove a profile and its stored credential
+  add      Add and authenticate a profile
+  list     List configured profiles
+  current  Print the active profile name
+  show     Show profile metadata
+  update   Update and reauthenticate a profile
+  remove   Remove a profile and its stored credential
 
 Options:
   -h, --help  Show help
@@ -73,6 +75,18 @@ Options:
 
 Examples:
   vlt profile list
+`
+
+const profileCurrentHelpText = `Print the active Vault profile name.
+
+Usage:
+  vlt profile current
+
+Options:
+  -h, --help  Show help
+
+Examples:
+  vlt profile current
 `
 
 const profileShowHelpText = `Show a Vault profile without credentials.
@@ -135,7 +149,7 @@ Examples:
   vlt switch 1
 `
 
-var profileCommands = []string{"add", "list", "show", "update", "remove"}
+var profileCommands = []string{"add", "list", "current", "show", "update", "remove"}
 
 type ProfileMutator interface {
 	Add(context.Context, profile.Profile) error
@@ -187,6 +201,8 @@ func NewProfileHandler(dependencies ProfileDependencies) Handler {
 			return profileAdd(ctx, dependencies, args[1:])
 		case "list":
 			return profileList(ctx, dependencies, args[1:])
+		case "current":
+			return profileCurrent(ctx, dependencies, args[1:])
 		case "show":
 			return profileShow(ctx, dependencies, args[1:])
 		case "update":
@@ -333,6 +349,32 @@ func profileList(ctx context.Context, dependencies ProfileDependencies, args []s
 	output := profileListOutput(configuration.Profiles, configuration.ActiveProfile, dependencies.Terminal)
 	if _, err := io.WriteString(dependencies.Output, output); err != nil {
 		return fmt.Errorf("display profiles: %w", err)
+	}
+	return nil
+}
+
+func profileCurrent(ctx context.Context, dependencies ProfileDependencies, args []string) error {
+	if containsHelpFlag(args) {
+		return writeManagementHelp(dependencies.Output, "profile current", profileCurrentHelpText)
+	}
+	if len(args) != 0 {
+		return managementUsageError(fmt.Sprintf("unexpected argument %q", args[0]), profileCurrentUsage, "vlt profile current")
+	}
+	if dependencies.Profiles == nil {
+		return errors.New("current profile: profile configuration is not configured")
+	}
+	if dependencies.Output == nil {
+		return errors.New("current profile: output is not configured")
+	}
+	configuration, err := dependencies.Profiles.Load(ctx)
+	if err != nil {
+		return safeManagementError(fmt.Errorf("current profile: load configuration: %w", err))
+	}
+	if configuration.ActiveProfile == "" {
+		return managementUsageError("no active profile; run 'vlt switch NAME'", profileCurrentUsage, "vlt profile current")
+	}
+	if _, err := fmt.Fprintln(dependencies.Output, configuration.ActiveProfile); err != nil {
+		return fmt.Errorf("display current profile: %w", err)
 	}
 	return nil
 }

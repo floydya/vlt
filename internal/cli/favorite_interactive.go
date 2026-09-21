@@ -20,8 +20,9 @@ type FavoriteManagementSelector interface {
 }
 
 type FavoriteFormRequest struct {
-	Favorite favorite.Favorite
-	Profiles []profile.Profile
+	Favorite      favorite.Favorite
+	Profiles      []profile.Profile
+	ActiveProfile string
 }
 
 type FavoriteForm interface {
@@ -90,12 +91,15 @@ func (f huhFavoriteForm) Run(ctx context.Context, request FavoriteFormRequest) (
 	profiles := profile.NewService(request.Profiles).List()
 	candidate := request.Favorite
 	if candidate.Profile == "" {
-		candidate.Profile = profiles[0].Name
+		candidate.Profile = request.ActiveProfile
+		if candidate.Profile == "" {
+			candidate.Profile = profiles[0].Name
+		}
 	}
 	if candidate.Operation == "" {
 		candidate.Operation = favorite.OperationRead
 	}
-	profileRows := make([][]string, 0, len(profiles))
+	profileItems := make([]SharedSelectorItem, 0, len(profiles))
 	for index, candidateProfile := range profiles {
 		namespace := candidateProfile.Namespace
 		if namespace == "" {
@@ -105,16 +109,13 @@ func (f huhFavoriteForm) Run(ctx context.Context, request FavoriteFormRequest) (
 		if color == "" {
 			color = "-"
 		}
-		profileRows = append(profileRows, []string{fmt.Sprint(index + 1), candidateProfile.Name, candidateProfile.Address, namespace, color})
-	}
-	profileHeader, profileLabels := selectorTableRows([]string{"#", "NAME", "ADDRESS", "NAMESPACE", "COLOR"}, profileRows)
-	profileItems := make([]SharedSelectorItem, 0, len(profiles))
-	for index, candidateProfile := range profiles {
+		label := fmt.Sprintf("%d  %s", index+1, candidateProfile.Name)
+		detail := fmt.Sprintf("Address: %s\nNamespace: %s\nColor: %s", candidateProfile.Address, namespace, color)
 		profileItems = append(profileItems, SharedSelectorItem{
-			ID: candidateProfile.Name, Label: profileLabels[index], SearchText: profileLabels[index], Color: candidateProfile.Color,
+			ID: candidateProfile.Name, Label: label, Detail: detail, SearchText: label + " " + detail, Color: candidateProfile.Color, Name: candidateProfile.Name,
 		})
 	}
-	selectedProfile, err := f.selector.Select(ctx, "Select a profile", profileHeader, profileItems, candidate.Profile)
+	selectedProfile, err := f.selector.Select(ctx, "Select a profile", "#  NAME", profileItems, candidate.Profile)
 	if err != nil {
 		return favorite.Favorite{}, fmt.Errorf("favorite form: select profile: %w", err)
 	}
@@ -168,10 +169,7 @@ func (c huhFavoriteRemovalConfirmer) Confirm(ctx context.Context, request Favori
 	)
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().Title(title).Affirmative("Remove").Negative("Keep").Value(&confirmed),
-	)).WithInput(c.input).WithOutput(c.output).WithAccessible(c.accessible)
-	if !c.presentation.colorEnabled {
-		form = form.WithTheme(c.presentation.huhTheme())
-	}
+	)).WithInput(c.input).WithOutput(c.output).WithAccessible(c.accessible).WithTheme(c.presentation.huhTheme())
 	if err := form.RunWithContext(ctx); err != nil {
 		return false, fmt.Errorf("confirm favorite removal: %w", err)
 	}
@@ -211,25 +209,29 @@ func selectFavoriteForManagement(ctx context.Context, dependencies FavoriteDepen
 	}
 	for index, candidate := range ordered {
 		if candidate.SameIdentity(selected) {
-			return favoriteSelection{favorite: candidate, selector: strconv.Itoa(index + 1)}, nil
+			selector := candidate.ID
+			if selector == "" {
+				selector = strconv.Itoa(index + 1)
+			}
+			return favoriteSelection{favorite: candidate, selector: selector}, nil
 		}
 	}
 	return favoriteSelection{}, errors.New("favorite selection: selected favorite is unavailable")
 }
 
-func favoriteFormProfiles(ctx context.Context, dependencies FavoriteDependencies) ([]profile.Profile, error) {
+func favoriteFormProfiles(ctx context.Context, dependencies FavoriteDependencies) ([]profile.Profile, string, error) {
 	if dependencies.Profiles == nil {
-		return nil, errors.New("favorite form: profile configuration is not configured")
+		return nil, "", errors.New("favorite form: profile configuration is not configured")
 	}
 	configuration, err := dependencies.Profiles.Load(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("favorite form: load profiles: %w", err)
+		return nil, "", fmt.Errorf("favorite form: load profiles: %w", err)
 	}
 	profiles := profile.NewService(configuration.Profiles).List()
 	if len(profiles) == 0 {
-		return nil, errNoProfilesConfigured
+		return nil, "", errNoProfilesConfigured
 	}
-	return profiles, nil
+	return profiles, configuration.ActiveProfile, nil
 }
 
 func interactiveFavoriteError(err error, usage, command string) error {

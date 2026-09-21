@@ -121,6 +121,10 @@ func TestNewDispatcherWiresFavoriteManagement(t *testing.T) {
 	want := []favorite.Favorite{{
 		Profile: "team-a", Operation: favorite.OperationKVGet, Path: "secret/data/app", Note: "daily",
 	}}
+	if len(configuration.Favorites) != 1 || !strings.HasPrefix(configuration.Favorites[0].ID, "f_") {
+		t.Fatalf("stored favorite ID = %#v", configuration.Favorites)
+	}
+	want[0].ID = configuration.Favorites[0].ID
 	if !reflect.DeepEqual(configuration.Favorites, want) {
 		t.Fatalf("stored favorites = %#v, want %#v", configuration.Favorites, want)
 	}
@@ -152,9 +156,13 @@ func TestNewDispatcherProfileRemoveProtectsLinkedFavorites(t *testing.T) {
 	if err := favorites.Save(context.Background(), favoriteConfiguration); err != nil {
 		t.Fatalf("save favorites: %v", err)
 	}
+	favoriteConfiguration, err := favorites.Load(context.Background())
+	if err != nil {
+		t.Fatalf("load seeded favorites: %v", err)
+	}
 	dispatcher := newDispatcherAt(configDirectory, strings.NewReader(""), io.Discard, io.Discard)
 
-	err := dispatcher.Dispatch(context.Background(), []string{"profile", "remove", "team-a"})
+	err = dispatcher.Dispatch(context.Background(), []string{"profile", "remove", "team-a"})
 	if err == nil || !strings.Contains(err.Error(), "--remove-favorites") {
 		t.Fatalf("profile remove error = %v, want cascade guidance", err)
 	}

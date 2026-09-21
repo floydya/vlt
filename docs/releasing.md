@@ -31,6 +31,7 @@ Protect the `main` branch in `floydya/homebrew-tap`. Require `Homebrew / Apple S
 
 1. Merge normal pull requests into `master` with conventional commit titles.
 2. Review the Release Please pull request and its generated `CHANGELOG.md`.
+   For the stable favorite ID release, state that the first favorite write upgrades `favorites.json` to version 2. A v0.2.x binary can read the file before that write but cannot read it afterward. Include the private backup and rollback limit from the README.
 3. Merge the release pull request only after direct release approval.
 4. Wait for the Homebrew tap pull request to pass Apple Silicon and Intel checks and auto-merge.
 5. Verify the installation on macOS:
