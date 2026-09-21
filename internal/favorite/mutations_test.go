@@ -218,6 +218,42 @@ func TestMutationServiceUpdateChangesOnlySuppliedFieldsAndClearsNote(t *testing.
 	}
 }
 
+func TestMutationServiceUpdateResetsRunCountOnlyWhenCommandChanges(t *testing.T) {
+	original := testFavorite("team-a", OperationRead, "secret/a", "original")
+	original.RunCount = 8
+	note := "updated"
+	profileName := "team-b"
+	operation := OperationKVGet
+	path := "secret/b"
+	tests := []struct {
+		name      string
+		changes   FavoriteChanges
+		want      Favorite
+		wantSaves int
+	}{
+		{name: "note only", changes: FavoriteChanges{Note: &note}, want: Favorite{Profile: original.Profile, Operation: original.Operation, Path: original.Path, Note: note, RunCount: 8}, wantSaves: 1},
+		{name: "unchanged command", changes: FavoriteChanges{Profile: &original.Profile, Operation: &original.Operation, Path: &original.Path}, want: original},
+		{name: "changed profile", changes: FavoriteChanges{Profile: &profileName}, want: Favorite{Profile: profileName, Operation: original.Operation, Path: original.Path, Note: original.Note}, wantSaves: 1},
+		{name: "changed operation", changes: FavoriteChanges{Operation: &operation}, want: Favorite{Profile: original.Profile, Operation: operation, Path: original.Path, Note: original.Note}, wantSaves: 1},
+		{name: "changed path", changes: FavoriteChanges{Path: &path}, want: Favorite{Profile: original.Profile, Operation: original.Operation, Path: path, Note: original.Note}, wantSaves: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			favorites := &mutationFavoriteStore{configuration: Configuration{Favorites: []Favorite{original}}}
+			service := NewMutationService(favorites, mutationProfiles("team-a", "team-b"))
+			if err := service.Update(context.Background(), "1", tt.changes); err != nil {
+				t.Fatalf("Update() error = %v", err)
+			}
+			if got := favorites.configuration.Favorites[0]; got != tt.want {
+				t.Fatalf("favorite after Update() = %#v, want %#v", got, tt.want)
+			}
+			if favorites.saveCalls != tt.wantSaves {
+				t.Fatalf("Save() calls = %d, want %d", favorites.saveCalls, tt.wantSaves)
+			}
+		})
+	}
+}
+
 func TestMutationServiceUpdateResolvesCurrentSortedOrder(t *testing.T) {
 	zulu := testFavorite("team-a", OperationRead, "secret/z", "z")
 	alpha := testFavorite("team-a", OperationRead, "secret/a", "a")
