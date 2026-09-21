@@ -689,6 +689,39 @@ const fishCompletionScript = `function __vlt_needs_command
     test (count $tokens) -eq 1
 end
 
+function __vlt_profile_needs_command
+    set -l tokens (commandline -opc)
+    test (count $tokens) -eq 3; and test "$tokens[2]" = --profile
+end
+
+function __vlt_using_vault_command
+    set -l tokens (commandline -opc)
+    set -l command
+    if test (count $tokens) -ge 4; and test "$tokens[2]" = --profile
+        set command "$tokens[4]"
+    else if test (count $tokens) -ge 2
+        set command "$tokens[2]"
+    end
+    switch "$command"
+        case '' profile switch favorite completion --profile -h --help
+            return 1
+    end
+    return 0
+end
+
+function __vlt_vault_arguments
+    set -l current (commandline -ct)
+    set -l candidates (vlt completion __vault_args (commandline -cp) 2>/dev/null)
+    if string match -q -- '-*=*' "$current"
+        set -l option (string split -m1 = -- "$current")[1]
+        for candidate in $candidates
+            printf '%s=%s\n' "$option" "$candidate"
+        end
+    else
+        printf '%s\n' $candidates
+    end
+end
+
 function __vlt_using_command
     set -l tokens (commandline -opc)
     test (count $tokens) -ge 2; and test "$tokens[2]" = "$argv[1]"
@@ -716,6 +749,8 @@ end
 
 complete -c vlt -f
 complete -c vlt -n '__vlt_needs_command' -a 'profile switch favorite completion'
+complete -c vlt -n '__vlt_needs_command; or __vlt_profile_needs_command' -a '(vlt completion __vault_commands (commandline -ct) 2>/dev/null)'
+complete -c vlt -n '__vlt_using_vault_command' -a '(__vlt_vault_arguments)'
 complete -c vlt -n '__vlt_needs_command' -s h -l help
 complete -c vlt -n '__vlt_needs_command' -l profile -r -a '(vlt completion __profiles 2>/dev/null)'
 
