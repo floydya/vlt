@@ -3,12 +3,75 @@ package favorite
 import (
 	"context"
 	"errors"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
 
 	"vlt/internal/profile"
 )
+
+func TestMutationServiceRecordUseReloadsAndIncrementsCurrentFavorite(t *testing.T) {
+	selected := testFavorite("team-a", OperationRead, "secret/a", "old note")
+	current := selected
+	current.Note = "new note"
+	current.RunCount = 4
+	other := testFavorite("team-a", OperationKVGet, "secret/b", "other")
+	other.RunCount = 2
+	store := &mutationFavoriteStore{configuration: Configuration{Favorites: []Favorite{other, current}}}
+	service := NewMutationService(store, mutationProfiles("team-a"))
+
+	if err := service.RecordUse(context.Background(), selected); err != nil {
+		t.Fatalf("RecordUse() error = %v", err)
+	}
+	current.RunCount = 5
+	if want := []Favorite{other, current}; !reflect.DeepEqual(store.configuration.Favorites, want) {
+		t.Fatalf("favorites after RecordUse() = %#v, want %#v", store.configuration.Favorites, want)
+	}
+	if store.loadCalls != 1 || store.saveCalls != 1 {
+		t.Fatalf("store calls: loads=%d saves=%d, want one each", store.loadCalls, store.saveCalls)
+	}
+}
+
+func TestMutationServiceRecordUseSkipsMissingChangedOrMaxCountFavorite(t *testing.T) {
+	selected := testFavorite("team-a", OperationRead, "secret/a", "")
+	changed := selected
+	changed.Path = "secret/b"
+	maxed := selected
+	maxed.RunCount = math.MaxInt64
+	for _, tt := range []struct {
+		name      string
+		favorites []Favorite
+	}{
+		{name: "removed"},
+		{name: "changed command", favorites: []Favorite{changed}},
+		{name: "maximum count", favorites: []Favorite{maxed}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &mutationFavoriteStore{configuration: Configuration{Favorites: tt.favorites}}
+			service := NewMutationService(store, mutationProfiles("team-a"))
+			if err := service.RecordUse(context.Background(), selected); err != nil {
+				t.Fatalf("RecordUse() error = %v", err)
+			}
+			if store.saveCalls != 0 || !reflect.DeepEqual(store.configuration.Favorites, tt.favorites) {
+				t.Fatalf("RecordUse() changed favorites: %#v, saves=%d", store.configuration.Favorites, store.saveCalls)
+			}
+		})
+	}
+}
+
+func TestMutationServiceRecordUseRestoresStateAfterSaveFailure(t *testing.T) {
+	selected := testFavorite("team-a", OperationRead, "secret/a", "")
+	original := Configuration{Favorites: []Favorite{selected}}
+	store := &mutationFavoriteStore{configuration: original, saveErrAt: 1, saveAfterErr: true}
+	service := NewMutationService(store, mutationProfiles("team-a"))
+	if err := service.RecordUse(context.Background(), selected); err == nil {
+		t.Fatal("RecordUse() error = nil, want save failure")
+	}
+	if !reflect.DeepEqual(store.configuration, original) {
+		t.Fatalf("favorites after failed RecordUse() = %#v, want %#v", store.configuration, original)
+	}
+}
 
 type mutationFavoriteStore struct {
 	configuration Configuration

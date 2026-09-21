@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"charm.land/huh/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -14,12 +16,39 @@ import (
 	"vlt/internal/config"
 	"vlt/internal/favorite"
 	"vlt/internal/profile"
+	"vlt/internal/statelock"
 )
 
 type fakeFavoriteStore struct {
 	configuration favorite.Configuration
 	err           error
 	loadCalls     int
+}
+
+type fakeFavoriteUseRecorder struct {
+	selected []favorite.Favorite
+	err      error
+	onRecord func()
+}
+
+func (r *fakeFavoriteUseRecorder) RecordUse(_ context.Context, selected favorite.Favorite) error {
+	r.selected = append(r.selected, selected)
+	if r.onRecord != nil {
+		r.onRecord()
+	}
+	return r.err
+}
+
+type fakeFavoriteUseLock struct {
+	held  bool
+	calls int
+}
+
+func (l *fakeFavoriteUseLock) WithLock(ctx context.Context, operation func(context.Context) error) error {
+	l.calls++
+	l.held = true
+	defer func() { l.held = false }()
+	return operation(ctx)
 }
 
 func (s *fakeFavoriteStore) Load(context.Context) (favorite.Configuration, error) {
@@ -656,14 +685,151 @@ func TestFavoriteExecutionDelegatesSelectedOperationExactlyOnce(t *testing.T) {
 	}
 }
 
+func TestFavoriteExecutionRecordsUseAfterSuccessfulVaultRun(t *testing.T) {
+	selected := favorite.Favorite{Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/a"}
+	lock := &fakeFavoriteUseLock{}
+	recorder := &fakeFavoriteUseRecorder{onRecord: func() {
+		if !lock.held {
+			t.Fatal("RecordUse() ran without the mutation lock")
+		}
+	}}
+	vaultCalls := 0
+	handler := NewFavoriteHandler(FavoriteDependencies{
+		Favorites: &fakeFavoriteStore{configuration: favorite.Configuration{Favorites: []favorite.Favorite{selected}}},
+		Terminal:  switchTerminal{prompts: true}, Selector: &fakeFavoriteExecutionSelector{selected: selected},
+		Lock: lock, Recorder: recorder,
+		Vault: func(context.Context, []string) error {
+			vaultCalls++
+			if lock.held {
+				t.Fatal("Vault ran while holding the mutation lock")
+			}
+			return nil
+		},
+	})
+	if err := handler(context.Background(), nil); err != nil {
+		t.Fatalf("favorite execution error = %v", err)
+	}
+	if vaultCalls != 1 || lock.calls != 1 || !reflect.DeepEqual(recorder.selected, []favorite.Favorite{selected}) {
+		t.Fatalf("calls: Vault=%d lock=%d recorded=%#v", vaultCalls, lock.calls, recorder.selected)
+	}
+}
+
+func TestFavoriteExecutionSkipsUseAfterVaultFailure(t *testing.T) {
+	selected := favorite.Favorite{Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/a"}
+	wantErr := errors.New("delegated failure")
+	lock := &fakeFavoriteUseLock{}
+	recorder := &fakeFavoriteUseRecorder{}
+	handler := NewFavoriteHandler(FavoriteDependencies{
+		Favorites: &fakeFavoriteStore{configuration: favorite.Configuration{Favorites: []favorite.Favorite{selected}}},
+		Terminal:  switchTerminal{prompts: true}, Selector: &fakeFavoriteExecutionSelector{selected: selected},
+		Lock: lock, Recorder: recorder, Vault: func(context.Context, []string) error { return wantErr },
+	})
+	if err := handler(context.Background(), nil); err != wantErr {
+		t.Fatalf("favorite execution error = %v, want delegated error", err)
+	}
+	if lock.calls != 0 || len(recorder.selected) != 0 {
+		t.Fatalf("failed Vault run recorded use: lock=%d recorded=%#v", lock.calls, recorder.selected)
+	}
+}
+
+func TestFavoriteExecutionIgnoresCountSaveFailureAndPreservesStreams(t *testing.T) {
+	selected := favorite.Favorite{Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/a"}
+	var stdout, stderr bytes.Buffer
+	recorder := &fakeFavoriteUseRecorder{err: errors.New("synthetic save failure")}
+	handler := NewFavoriteHandler(FavoriteDependencies{
+		Favorites: &fakeFavoriteStore{configuration: favorite.Configuration{Favorites: []favorite.Favorite{selected}}},
+		Terminal:  switchTerminal{prompts: true}, Selector: &fakeFavoriteExecutionSelector{selected: selected},
+		Lock: &fakeFavoriteUseLock{}, Recorder: recorder, Output: &stdout,
+		Vault: func(context.Context, []string) error {
+			_, _ = stdout.WriteString("Vault stdout\n")
+			_, _ = stderr.WriteString("Vault stderr\n")
+			return nil
+		},
+	})
+	if err := handler(context.Background(), nil); err != nil {
+		t.Fatalf("favorite execution error = %v, want Vault success", err)
+	}
+	if stdout.String() != "Vault stdout\n" || stderr.String() != "Vault stderr\n" || len(recorder.selected) != 1 {
+		t.Fatalf("streams or use changed: stdout=%q stderr=%q recorded=%#v", stdout.String(), stderr.String(), recorder.selected)
+	}
+}
+
+func TestConcurrentFavoriteExecutionsRecordEverySuccessfulRun(t *testing.T) {
+	selected := favorite.Favorite{Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/a"}
+	directory := filepath.Join(t.TempDir(), "vlt")
+	store := favorite.NewStore(filepath.Join(directory, "favorites.json"))
+	if err := store.Save(context.Background(), favorite.Configuration{Favorites: []favorite.Favorite{selected}}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	lock := statelock.New(directory)
+	recorder := favorite.NewMutationService(store, nil)
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	results := make(chan error, 2)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := lock.WithLock(ctx, func(ctx context.Context) error {
+		defer close(release)
+		for range 2 {
+			handler := NewFavoriteHandler(FavoriteDependencies{
+				Favorites: store, Terminal: switchTerminal{prompts: true},
+				Selector: &fakeFavoriteExecutionSelector{selected: selected},
+				Lock:     lock, Recorder: recorder,
+				Vault: func(ctx context.Context, _ []string) error {
+					entered <- struct{}{}
+					select {
+					case <-release:
+						return nil
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				},
+			})
+			go func() { results <- handler(ctx, nil) }()
+		}
+		for range 2 {
+			select {
+			case <-entered:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Vault runs did not finish while the mutation lock was held: %v", err)
+	}
+	for range 2 {
+		select {
+		case err := <-results:
+			if err != nil {
+				t.Fatalf("favorite execution error = %v", err)
+			}
+		case <-ctx.Done():
+			t.Fatalf("favorite execution timed out: %v", ctx.Err())
+		}
+	}
+	got, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(got.Favorites) != 1 || got.Favorites[0].RunCount != 2 {
+		t.Fatalf("favorites after concurrent runs = %#v, want two runs", got.Favorites)
+	}
+}
+
 func TestFavoriteExecutionCancellationDoesNotDelegate(t *testing.T) {
 	store := &fakeFavoriteStore{configuration: favorite.Configuration{Favorites: []favorite.Favorite{{
 		Profile: "team-a", Operation: favorite.OperationRead, Path: "secret/a",
 	}}}}
 	selector := &fakeFavoriteExecutionSelector{err: ErrFavoriteSelectionCanceled}
 	vaultCalls := 0
+	lock := &fakeFavoriteUseLock{}
+	recorder := &fakeFavoriteUseRecorder{}
 	handler := NewFavoriteHandler(FavoriteDependencies{
 		Favorites: store, Terminal: switchTerminal{prompts: true}, Selector: selector,
+		Lock: lock, Recorder: recorder,
 		Vault: func(context.Context, []string) error { vaultCalls++; return nil },
 	})
 
@@ -673,6 +839,9 @@ func TestFavoriteExecutionCancellationDoesNotDelegate(t *testing.T) {
 	}
 	if vaultCalls != 0 {
 		t.Fatalf("Vault calls = %d, want 0", vaultCalls)
+	}
+	if lock.calls != 0 || len(recorder.selected) != 0 {
+		t.Fatalf("canceled selection recorded use: lock=%d recorded=%#v", lock.calls, recorder.selected)
 	}
 }
 

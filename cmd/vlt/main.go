@@ -82,7 +82,7 @@ func newDispatcherAt(configDirectory string, stdin io.Reader, stdout, stderr io.
 		}),
 		Switch: cli.NewSwitchHandler(cli.SwitchDependencies{Profiles: profiles, Lock: mutationLock, Output: stdout, Terminal: terminal, Selector: selector}),
 		Favorite: cli.NewFavoriteHandler(cli.FavoriteDependencies{
-			Profiles: profiles, Favorites: favorites, Mutations: favoriteMutations, Lock: mutationLock, Output: stdout, Terminal: terminal,
+			Profiles: profiles, Favorites: favorites, Mutations: favoriteMutations, Recorder: favoriteMutations, Lock: mutationLock, Output: stdout, Terminal: terminal,
 			Selector: favoriteSelector, Vault: delegate, ManagementSelector: favoriteManagementSelector,
 			Form: favoriteForm, RemovalConfirmer: favoriteRemovalConfirmer,
 		}),
