@@ -228,6 +228,28 @@ func TestPresentationStyledPrimitivesStripExactlyToPlain(t *testing.T) {
 	}
 }
 
+func TestPresentationUsesActiveAccentWithoutChangingStatusColors(t *testing.T) {
+	base := newPresentation(fixedTerminal{color: true})
+	accented := newPresentation(WithAccent(fixedTerminal{color: true}, "#112233"))
+	colorCode := "38;2;17;34;51m"
+	for _, role := range []presentationRole{presentationHeading, presentationLabel, presentationSelected} {
+		if got := accented.render(role, "Value"); !strings.Contains(got, colorCode) {
+			t.Fatalf("accented role %d = %q, want active color", role, got)
+		}
+	}
+	for _, role := range []presentationRole{presentationSuccess, presentationError} {
+		if got, want := accented.render(role, "Value"), base.render(role, "Value"); got != want {
+			t.Fatalf("status role %d = %q, want %q", role, got, want)
+		}
+	}
+	if got := newPresentation(WithAccent(fixedTerminal{color: false}, "#112233")).render(presentationSelected, "Value"); strings.Contains(got, "\x1b[") {
+		t.Fatalf("plain presentation used accent: %q", got)
+	}
+	if got, want := newPresentation(WithAccent(fixedTerminal{color: true}, "")).render(presentationSelected, "Value"), base.render(presentationSelected, "Value"); got != want {
+		t.Fatalf("empty accent = %q, want default %q", got, want)
+	}
+}
+
 func TestPresentationHuhThemeUsesSemanticRolesAndHonorsPlainMode(t *testing.T) {
 	plainPresentation := newPresentation(fixedTerminal{color: false})
 	plainTheme := plainPresentation.huhTheme().Theme(true)
