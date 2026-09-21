@@ -764,32 +764,110 @@ func TestZshRootCompletionInsertsOnlyCommandNames(t *testing.T) {
 		name    string
 		current string
 		words   string
+		prefix  string
+		want    string
 	}{
-		{name: "first command", current: "2", words: "vlt ''"},
-		{name: "empty command fallback", current: "3", words: "vlt '' ''"},
+		{name: "first command", current: "2", words: "vlt ''", want: "profile\nswitch\nfavorite\ncompletion\n--profile\n-h\n--help\nkv\n"},
+		{name: "typed prefix", current: "2", words: "vlt k", prefix: "k", want: "kv\n"},
+		{name: "empty command fallback", current: "3", words: "vlt '' ''", want: "profile\nswitch\nfavorite\ncompletion\n--profile\n-h\n--help\nkv\n"},
+		{name: "after profile", current: "4", words: "vlt --profile team-a ''", want: "profile\nswitch\nfavorite\ncompletion\n--profile\n-h\n--help\nkv\n"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			invocation := `compdef() { :; }
 _describe() {
-    local entry
+    local entry candidate
     for entry in "${commands[@]}"; do
-        print -r -- "${entry%%:*}"
+        candidate="${entry%%:*}"
+        if [[ -z "$PREFIX" || "$candidate" == "$PREFIX"* ]]; then
+            print -r -- "$candidate"
+        fi
     done
+}
+vlt() {
+    if [[ "$1 $2" == "completion __vault_commands" ]]; then
+        print -rl -- kv profile kv
+    fi
 }
 ` + script + `
 words=(` + tt.words + `)
 CURRENT=` + tt.current + `
+PREFIX=` + fmt.Sprintf("%q", tt.prefix) + `
 _vlt
 `
 			output, err := exec.Command(zsh, "-fc", invocation).CombinedOutput()
 			if err != nil {
 				t.Fatalf("Zsh completion error = %v: %s", err, output)
 			}
-			want := "profile\nswitch\nfavorite\ncompletion\n--profile\n-h\n--help\n"
-			if got := string(output); got != want {
-				t.Fatalf("root completion = %q, want exact command names %q", got, want)
+			if got := string(output); got != tt.want {
+				t.Fatalf("root completion = %q, want exact command names %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestZshCompletionRequestsVaultArguments(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh is not installed")
+	}
+	for _, tt := range []struct {
+		name    string
+		words   string
+		current int
+		line    string
+		want    string
+	}{
+		{name: "nested command", words: "vlt kv g", current: 3, line: "vlt kv g", want: "get\n"},
+		{name: "flag", words: "vlt kv get -m", current: 4, line: "vlt kv get -m", want: "-mount\n"},
+		{name: "local value", words: "vlt kv get -format=j", current: 4, line: "vlt kv get -format=j", want: "-format=json\n"},
+		{name: "profile override", words: "vlt --profile team-a kv get -format=j", current: 6, line: "vlt --profile team-a kv get -format=j", want: "-format=json\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			invocation := `compdef() { :; }
+compadd() {
+    shift
+    print -rl -- "$@"
+}
+vlt() {
+    if [[ "$1 $2" == "completion __vault_args" ]]; then
+        case "$3" in
+            'vlt kv g') print -r -- get ;;
+            'vlt kv get -m') print -r -- -mount ;;
+            'vlt kv get -format=j'|'vlt --profile team-a kv get -format=j') print -r -- json ;;
+        esac
+    fi
+}
+` + zshCompletionScript + `
+words=(` + tt.words + `)
+CURRENT=` + fmt.Sprint(tt.current) + `
+LBUFFER=` + fmt.Sprintf("%q", tt.line) + `
+_vlt
+`
+			output, err := exec.Command(zsh, "-fc", invocation).CombinedOutput()
+			if err != nil || string(output) != tt.want {
+				t.Fatalf("Zsh completion = %q, error = %v; want %q", output, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestZshCompletionSilencesUnavailableVault(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh is not installed")
+	}
+	invocation := `compdef() { :; }
+compadd() { print -r -- unexpected; }
+vlt() { print -r -- private-failure >&2; return 1; }
+` + zshCompletionScript + `
+words=(vlt kv g)
+CURRENT=3
+LBUFFER='vlt kv g'
+_vlt
+`
+	output, err := exec.Command(zsh, "-fc", invocation).CombinedOutput()
+	if err != nil || len(output) != 0 {
+		t.Fatalf("unavailable Vault completion = %q, error = %v; want silence", output, err)
 	}
 }
 
