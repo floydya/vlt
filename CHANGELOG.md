@@ -1,11 +1,11 @@
 # Changelog
 
-## [0.2.1](https://github.com/floydya/vlt/compare/v0.2.0...v0.2.1) (2026-09-21)
+## [0.2.2](https://github.com/floydya/vlt/compare/v0.2.0...v0.2.2) (2026-09-23)
 
 
 ### Fixes
 
-* **VLT-32T:** color only linked records ([#27](https://github.com/floydya/vlt/issues/27))
+* **VLT-32T:** color only linked records.
 
 ## [0.2.0](https://github.com/floydya/vlt/compare/v0.1.1...v0.2.0) (2026-09-21)
 
